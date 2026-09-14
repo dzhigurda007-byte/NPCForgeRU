@@ -1,12 +1,12 @@
 /*
- * NPC Forge RU v2.4.6
+ * NPC Forge RU v2.5.0
  * Roll20 Mod for the legacy "D&D 5E by Roll20" (2014) character sheet.
  * Install in Roll20: Game Settings -> Mod (API) Scripts -> New Script.
  */
 var NPCForge = NPCForge || (function () {
     'use strict';
 
-    var VERSION = '2.4.6';
+    var VERSION = '2.5.0';
     var SCRIPT = 'NPC Forge RU';
     var STATE_KEY = 'NPCForgeRU';
     var repairJob = null;
@@ -168,7 +168,7 @@ var NPCForge = NPCForge || (function () {
                 if(x.targets!==undefined && (!Number.isInteger(Number(x.targets))||Number(x.targets)<1||Number(x.targets)>50))errors.push(x.name+': targets — целое 1–50.');
                 if(x.damage && !effectType(x.damageType) && !(!x.damageType&&inferEffectType(x.description||x.desc)))errors.push(x.name+': нужен стандартный damageType или лечение.');
                 if(x.damage2 && !effectType(x.damageType2) && !(!x.damageType2&&inferEffectType(x.description||x.desc)))errors.push(x.name+': нужен стандартный damageType2 или лечение.');
-                if(x.save && (ABILITIES.indexOf(x.save.ability)<0 || !numeric(x.save.dc) || Number(x.save.dc)<0 || ['half','none','full'].indexOf(x.save.onSuccess)<0)){errors.push(x.name+': save требует ability, dc и onSuccess half/none/full.');}
+                if(x.save && (ABILITIES.indexOf(x.save.ability)<0 || !numeric(x.save.dc) || Number(x.save.dc)<0 || (x.save.onSuccess!=null && x.save.onSuccess!=='' && ['half','none','full'].indexOf(x.save.onSuccess)<0))){errors.push(x.name+': save требует ability, dc; onSuccess: half/none/full или пустое поле.');}
             });
         });
         if(npc.rollMode && ['normal','advantage','disadvantage','query'].indexOf(npc.rollMode)<0) errors.push('Неизвестный rollMode.');
@@ -230,7 +230,7 @@ var NPCForge = NPCForge || (function () {
         var half=/половин/.test(effect),none=/нет урона|без урона|не получает урона|не наносится/.test(effect),full=/полный урон/.test(effect);
         return {ability:names[m[1].toLowerCase()],dc:Number(m[2]),onSuccess:Number(half)+Number(none)+Number(full)===1?(half?'half':none?'none':'full'):null};
     }
-    function saveEffectText(effect){return effect==='half'?'половина урона':effect==='none'?'нет урона':effect==='full'?'полный урон':'Результат успеха не указан';}
+    function saveEffectText(effect){return effect==='half'?'половина урона':effect==='none'?'нет урона':effect==='full'?'полный урон':'нет эффекта';}
     function npcPlayerOwned(id){
         var c=getObj('character',id);
         return String(c&&c.get('controlledby')||'').split(',').some(function(pid){pid=pid.trim();return pid==='all'||(getObj('player',pid)&&!playerIsGM(pid));});
@@ -264,7 +264,7 @@ var NPCForge = NPCForge || (function () {
         if(areaEncoded)roll+=' {{ad5area='+areaEncoded+'}}';
         if(targetLimit>1)roll+=' {{ad5targets='+targetLimit+'}}';
         if(saving && !attack && !damageOnly && !areaAttack){roll+=' {{ad5target=@{target|Цель способности|token_id}}}';}
-        if(!attack&&!saving&&!damageOnly&&(read('attack_damage')||read('attack_damage2'))&&!areaAttack){roll+=' {{ad5auto=1}} {{ad5target=@{target|Цель эффекта|token_id}}}';}
+        if(!attack&&!saving&&!damageOnly&&!areaAttack){roll+=' {{ad5auto=1}} {{ad5target=@{target|Цель эффекта|token_id}}}';}
         if(attack && !damageOnly){
             // Area attacks must never open Roll20's single-target query. AD5 Areas
             // creates the template and determines every target from its position.
@@ -316,7 +316,7 @@ var NPCForge = NPCForge || (function () {
             var marker='NPCForge:active:'+prefix;
             var read=function(k){return attrValue(charId,prefix+k);};
             var roll;
-            if(enabled(read('attack_flag')) || (enabled(read('damage_flag')) && read('attack_damage'))){
+            if(enabled(read('save_flag')) || enabled(read('attack_flag')) || (enabled(read('damage_flag')) && read('attack_damage'))){
                 ['description','attack_damagetype','attack_damagetype2'].forEach(function(k){
                     if(!findObjs({_type:'attribute',_characterid:charId,name:prefix+k}).length){upsert(charId,prefix+k,'');}
                 });
@@ -388,7 +388,7 @@ var NPCForge = NPCForge || (function () {
             }});
             if((!enabled(read('save_flag'))||read('npcforge_save_source')==='description')&&(read('attack_damage')||read('attack_damage2'))){
                 var inferred=inferredSave(read('description'));
-                if(inferred){put(prefix+'npcforge_save_source','description');put(prefix+'save_flag','on');put(prefix+'save_attr',inferred.ability);put(prefix+'save_dc',inferred.dc);put(prefix+'save_effect',saveEffectText(inferred.onSuccess));}
+                if(inferred){put(prefix+'npcforge_save_source','description');put(prefix+'save_flag','on');put(prefix+'save_attr',inferred.ability);put(prefix+'save_dc',inferred.dc);if(!index[prefix+'save_effect'])put(prefix+'save_effect',saveEffectText(inferred.onSuccess));}
             }
             put(prefix+'rollbase',attackRollBase(charId,prefix,read));
             put(prefix+'rollbase_dmg',attackRollBase(charId,prefix,read,true));
@@ -456,7 +456,7 @@ var NPCForge = NPCForge || (function () {
         var type2=effectType(item.damageType2)||(!item.damageType2?inferEffectType(description):null);
         if(item.damage&&!type1)throw new Error(title+': укажите стандартный damageType или лечение.');
         if(item.damage2&&!type2)throw new Error(title+': укажите стандартный damageType2 или лечение.');
-        var saving=item.save||((item.damage||item.damage2)?inferredSave(description):null);
+        var saving=item.save||inferredSave(description);
         if(saving && !/(?:спасбросок|saving\s+throw|при успехе|on success)/i.test(description)){
             description+='\nСпасбросок '+saving.ability+', СЛ '+saving.dc+'. При провале: полный урон. При успехе: '+saveEffectText(saving.onSuccess)+'.';
         }
@@ -464,7 +464,7 @@ var NPCForge = NPCForge || (function () {
         var fields={ad5_targets:limit,name:title,desc:description,description:description,npcforge_action:1,npcforge_category:category,
             'npc_options-flag':'0',attack_flag:isAttack?'on':'0',attack_type:item.type||'Melee',attack_range:item.range||'5 фт.',attack_tohit:asInt(item.toHit,0),attack_target:item.target||'одна цель',
             damage_flag:(item.damage||item.damage2)?'on':'0',attack_damage:item.damage||'',attack_damagetype:type1||'',attack_damage2:item.damage2||'',attack_damagetype2:type2||'',attack_crit:item.crit||'',attack_crit2:item.crit2||'',show_desc:'on',
-            npcforge_save_source:item.save?'explicit':saving?'description':'',npcforge_area:rangeSpec.area?[rangeSpec.area.shape,rangeSpec.area.size,rangeSpec.area.width||'',rangeSpec.area.length||''].join('|'):'',save_flag:saving?'on':'0',save_attr:saving?saving.ability:'',save_dc:saving?saving.dc:'',save_effect:saving?saveEffectText(saving.onSuccess):''};
+            npcforge_save_source:item.save?'explicit':saving?'description':'',npcforge_area:rangeSpec.area?[rangeSpec.area.shape,rangeSpec.area.size,rangeSpec.area.width||'',rangeSpec.area.length||''].join('|'):'',save_flag:saving?'on':'0',save_attr:saving?saving.ability:'',save_dc:saving?saving.dc:'',save_effect:saving?((saving.onFailure?'При провале: '+(Array.isArray(saving.onFailure)?saving.onFailure.join(', '):saving.onFailure)+'. ':'')+'При успехе: '+saveEffectText(saving.onSuccess)):''};
         var id=repeating(charId,section,fields);
         if(!defer)fixCharacter(charId);
         return id;
@@ -595,7 +595,7 @@ var NPCForge = NPCForge || (function () {
         if(!c){throw new Error('Выберите токен, связанный с листом NPC.');} if(!name||!text){throw new Error('Нужны параметры --name и --text.');}
         var id=c.id||c.get('_id');
         if(['action','bonus','reaction','legendary'].indexOf(section)>=0){var item={name:name,attack:false,description:text,damage:args.damage||'',damageType:args.damagetype||'',targets:args.targets===undefined?1:Number(args.targets)};
-            if(args.save){if(ABILITIES.indexOf(args.save)<0||!/^\d+$/.test(args.dc||'')||['half','none','full'].indexOf(args.success)<0)throw new Error('Нужны --save|wisdom --dc|16 --success|half (или none/full).');item.save={ability:args.save,dc:Number(args.dc),onSuccess:args.success};}
+            if(args.save){if(ABILITIES.indexOf(args.save)<0||!/^\d+$/.test(args.dc||'')||(args.success && ['half','none','full'].indexOf(args.success)<0))throw new Error('Нужны --save|wisdom --dc|16 --success|half (или none/full).');item.save={ability:args.save,dc:Number(args.dc),onSuccess:args.success||'none',onFailure:args.conditions||''};}
             if(item.damage&&!/^[0-9dD+*\/(). \-]+$/.test(item.damage))throw new Error('Неверная формула урона.');
             writeAction(id,item,0,section);}
         else if(section==='trait'){writeTrait(id,'npctrait',{name:name,description:text});}
