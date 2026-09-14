@@ -1,5 +1,5 @@
 /*
-AutoDamage 3.9 / NPC Forge RU 2.4.6 — «шепот звезд».
+AutoDamage 4.0 / NPC Forge RU 2.5.0 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Название -> цель -> атака, урон и крит. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -93,7 +93,7 @@ var AD5Conditions = (function () {
             'отравлен':'poisoned','отравление':'poisoned',
             'сбит с ног':'prone','ничком':'prone','лежит':'prone',
             'опутан':'restrained','опутанность':'restrained',
-            'ошеломлен':'stunned','ошеломление':'stunned',
+            'оглушен':'stunned','оглушена':'stunned','ошеломлен':'stunned','ошеломление':'stunned',
             'без сознания':'unconscious','бессознателен':'unconscious',
             'истощение':'exhaustion','истощен':'exhaustion',
             'мертв':'death','мертвый':'death','смерть':'death','погиб':'death',
@@ -118,7 +118,7 @@ var AD5Conditions = (function () {
         var list=markerList(token), out=[];
         list.forEach(function (m) { if (m.replace(/@\d+$/,'') !== marker) out.push(m); });
         if(enabled) out.push(marker);
-        token.set('statusmarkers',out.join(','));
+        if(String(token.get('statusmarkers')||'')!==out.join(','))token.set('statusmarkers',out.join(','));
     }
     function set(tokenOrId,state,enabled) {
         var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;
@@ -136,10 +136,13 @@ var AD5Conditions = (function () {
     function syncHP(token) {
         if(!token || token.get('_subtype')!=='token')return;
         var hp=Number(token.get('bar1_value')), max=Number(token.get('bar1_max'));
+        if(String(token.get('bar1_value')||'').trim()==='' && token.get('bar1_value')!==0)return;
         if(!Number.isFinite(hp)||!Number.isFinite(max)||max<=0)return;
         write(token,MAP.death.marker,hp<=0);
-        if(hp<=0){write(token,MAP.bloodied.marker,false);write(token,MAP.critical.marker,false);return;}
-        write(token,MAP.bloodied.marker,hp*2<=max);
+        if(hp<=0){write(token,'yellow',false);write(token,MAP.bloodied.marker,false);write(token,MAP.critical.marker,false);return;}
+        var npc=findObjs({_type:'attribute',_characterid:token.get('represents')}).some(function(a){return String(a.get('name')).toLowerCase()==='npc'&&String(a.get('current'))==='1';});
+        write(token,MAP.bloodied.marker,npc?hp*4<=max*3:hp*2<=max);
+        if(npc)write(token,'yellow',hp*2<=max&&hp*4>max);
         write(token,MAP.critical.marker,hp*4<=max);
     }
     function list() { return Object.keys(MAP).map(function(k){return {state:k,marker:MAP[k].marker,ru:MAP[k].ru,core:MAP[k].core};}); }
@@ -165,7 +168,7 @@ var AD5HealthView = (function () {
         if (!visible) changes.playersedit_bar1 = false;
         var markers = String(t.get('statusmarkers') || '').split(',').filter(Boolean);
         if (npc || managed[t.id]) {
-            markers = markers.filter(function (m) { return !/^(?:red|yellow|green)(?:@\d+)?$/.test(m); });
+            // Wound markers are updated only by syncHP; preserve unrelated markers here.
             if (npc) {
                 managed[t.id] = true;
                 // HP state is represented by semantic markers below: half-heart,
@@ -186,7 +189,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: false, tempBar: 0, ttl: 120000 };
-    var VERSION = '3.9', diagnostics = [], debug = false;
+    var VERSION = '4.0', diagnostics = [], debug = false;
     var boundActors = Object.create(null);
     function record(text) {
         diagnostics.push(text);
@@ -489,22 +492,53 @@ var AD5 = (function () {
     function saveDamageEffect(text) {
         text=String(text||'').toLowerCase().replace(/\^\{([^}]+)\}/g,'$1').replace(/[_-]/g,' ');
         var clause=text.match(/(?:при успехе|при успешном спасброске|в случае успеха|on (?:a )?success(?:ful save)?)[\s,:—-]*([^.!;]*)/i);
+        if(!clause && /при провале|при неудаче|on failure|on a failed save/.test(text))return null;
         var effect=clause?clause[1]:text.trim();
-        var half=/половин|half/.test(effect), none=/нет урона|без урона|не получает урона|не наносится|no damage/.test(effect), full=/полный урон|полного урона|full damage/.test(effect);
+        var half=/половин|half/.test(effect), none=/нет эффекта|no effect|нет урона|без урона|не получает урона|не наносится|no damage/.test(effect), full=/полный урон|полного урона|full damage/.test(effect);
         if(half && !none)return 'half';
         if(none && !half)return 'none';
         if(full && !half && !none)return 'full';
         return null;
     }
     function successEffect(text) {
-        var effect=saveDamageEffect(text);
-        if(!effect)throw new Error('Укажите явно результат успеха: «При успехе: половина урона», «При успехе: нет урона» или «При успехе: полный урон».');
-        return effect;
+        return saveDamageEffect(text)||'none';
     }
-    function saveAffectsDamage(f) {
-        if(!active(f,'save'))return false;
-        return !!saveDamageEffect(f.savedesc||f.saveeffect||f.description);
+    function failureConditions(f) {
+        var texts=[],out=[];
+        function collect(text,explicitOnly) {
+            text=String(text||'').toLowerCase().replace(/ё/g,'е').replace(/<[^>]*>/g,' ');
+            var failure=text.match(/(?:при провале|при неудаче|on failure|on a failed save)\s*[:—-]?([\s\S]*?)(?=при успехе|on success|$)/);
+            if(failure)texts.push(failure[1]);
+            else if(!explicitOnly)texts.push(text.split(/при успехе|on success/)[0]);
+        }
+        collect(f.savedesc!==undefined?f.savedesc:f.saveeffect,false);
+        collect(f.description||f.desc,true);
+        texts.forEach(function(text){
+            var words=text.replace(/[^а-яa-z\s]/g,' ').split(/\s+/).filter(Boolean);
+            for(var i=0;i<words.length;i++){
+                if(i&&/^(не|без)$/.test(words[i-1]))continue;
+                for(var n=Math.min(3,words.length-i);n>0;n--){
+                    var label=words.slice(i,i+n).join(' '),k=AD5Conditions.key(label);
+                    if(k&&['bloodied','critical','death'].indexOf(k)<0&&label!=='цель'&&label!=='щит'){
+                        if(out.indexOf(k)<0)out.push(k);i+=n-1;break;
+                    }
+                }
+            }
+        });
+        return out;
     }
+    function conditionMarkers(token,marker) {
+        return String(token.get('statusmarkers')||'').split(',').filter(function(m){return m.replace(/@\d+$/,'')===marker;});
+    }
+    function restoreConditions(token,changes,redo) {
+        var markers=String(token.get('statusmarkers')||'').split(',').filter(Boolean);
+        changes.forEach(function(c){
+            markers=markers.filter(function(m){return m.replace(/@\d+$/,'')!==c.marker;});
+            markers=markers.concat(redo?c.after:c.before);
+        });
+        if(changes.length)token.set('statusmarkers',markers.join(','));
+    }
+    function saveAffectsDamage(f) { return active(f,'save'); }
     function attackRollPresent(msg,f) {
         var attackFlag=active(f,'attack')&&!/^(?:false|off)$/i.test(f.attack);
         var hasAttack=active(f,'save')?attackFlag:(f.attack!==undefined?attackFlag:!!f.r1);
@@ -521,7 +555,7 @@ var AD5 = (function () {
     }
     function saveSpec(msg, f, cid) {
         return {ability:saveAbility(f.saveattr),dc:number(roll(msg,f.savedc,'СЛ спасброска',true).total,'СЛ спасброска'),
-            effect:successEffect(f.savedesc||f.saveeffect||f.description),bonus:saveBonus(cid,saveAbility(f.saveattr))};
+            conditions:failureConditions(f),effect:successEffect(f.savedesc!==undefined?f.savedesc:(f.saveeffect!==undefined?f.saveeffect:f.description)),bonus:saveBonus(cid,saveAbility(f.saveattr))};
     }
     var saveRequests=Object.create(null), saveSequence=0;
     var saveLabels={strength:'Силы',dexterity:'Ловкости',constitution:'Телосложения',intelligence:'Интеллекта',wisdom:'Мудрости',charisma:'Харизмы'};
@@ -707,7 +741,7 @@ var AD5 = (function () {
             }
             sum += Math.max(0, base + extra);
         });
-        if (!found) throw new Error('В карточке нет активного урона dmg1/dmg2.');
+        if (!found && !(active(f,'save')&&failureConditions(f).length)) throw new Error('В карточке нет активного урона или состояния при провале спасброска.');
         return {amount:sum,healing:kind==='healing',types:types};
     }
     function finish(msg, f, p, saveResult) {
@@ -762,13 +796,20 @@ var AD5 = (function () {
                 amount = 0; rounding = 'Успех: нет урона. Округление не требуется.';
             } else rounding = (success?'Успех':'Провал')+': полный урон. Округление после спасброска не требуется.';
         }
+        var markerChanges=[];
+        if(active(f,'save')&&!success)(spec.conditions||[]).forEach(function(k){
+            var marker=AD5Conditions.map[k].marker,before=conditionMarkers(t.token,marker);
+            if(!before.length)markerChanges.push({marker:marker,before:before,after:[marker]});
+        });
+        if(markerChanges.length)report.push('Наложены состояния: '+esc((spec.conditions||[]).map(function(k){return AD5Conditions.map[k].ru;}).join(', '))+'.');
         var absorbed=healing?0:Math.min(temp.value,amount);
         var nextHp=healing?Math.max(plan.value,Math.min(Number(plan.max),plan.value+amount)):Math.max(0,plan.value-amount+absorbed), nextTemp=temp.value-absorbed;
         delete pending[msg.playerid];
         var key = String(++sequence);
         var entry = { tokenId: t.token.id, cid: t.cid, tempBar: temp.bar,sheetHpId:plan.sheetHpId||null,
-            max:plan.max, beforeHp: plan.value, afterHp: nextHp, beforeTemp: temp.value, afterTemp: nextTemp, undone: false };
+            markerChanges:markerChanges,max:plan.max, beforeHp: plan.value, afterHp: nextHp, beforeTemp: temp.value, afterTemp: nextTemp, undone: false };
         commitHP(t, { value: nextHp, max: plan.max });
+        restoreConditions(t.token,markerChanges,true);
         if (temp.bar) {
             var unlink = {}, change = {};
             unlink['bar' + temp.bar + '_link'] = '';
@@ -977,8 +1018,13 @@ var AD5 = (function () {
         var t=target(h.tokenId,pid),p=hpPlan(t),expected=redo?h.beforeHp:h.afterHp,temp=redo?h.beforeTemp:h.afterTemp;
         if(t.cid!==h.cid || (p.sheetHpId||null)!==(h.sheetHpId||null) || p.value!==expected || String(p.max)!==String(h.max) || number(t.token.get('bar1_value'),'HP токена')!==expected ||
             (h.tempBar&&(t.token.get('bar'+h.tempBar+'_link')||number(t.token.get('bar'+h.tempBar+'_value'),'Временные HP')!==temp)))throw new Error('HP, максимум или связь изменились. Отмена/восстановление остановлены.');
+        (h.markerChanges||[]).forEach(function(c){
+            if(JSON.stringify(conditionMarkers(t.token,c.marker))!==JSON.stringify(redo?c.before:c.after))
+                throw new Error('Наложенное состояние изменилось. Отмена/восстановление остановлены.');
+        });
         var value=redo?h.afterHp:h.beforeHp;commitHP(t,{value:value,max:p.max});
         if(h.tempBar)t.token.set('bar'+h.tempBar+'_value',redo?h.afterTemp:h.beforeTemp);
+        restoreConditions(t.token,h.markerChanges||[],redo);
         h.undone=!redo;
         gm((redo?'Восстановлено':'Отменено')+' · '+esc(t.token.get('name')||h.tokenId)+' [Отменить](!ad5 undo '+key+') [Восстановить](!ad5 redo '+key+')');
     }
@@ -1176,7 +1222,7 @@ var AD5 = (function () {
                     npcMessage: ['npcatk', 'npcaction', 'npcdmg'].indexOf(msg.rolltemplate) >= 0,
                     name: name, target: a.target, cid: a.cid, hit: true, ac: ac, hasAttack: hasAttack,
                     total: r.total, die: die, factor: a.factor, time: Date.now(), batch:context?context.batch:null };
-                if (!isDmg || !(active(f, 'dmg1flag') || active(f, 'dmg2flag'))) {
+                if (!isDmg || !(active(f, 'dmg1flag') || active(f, 'dmg2flag') || (hasSave && failureConditions(f).length))) {
                     if(msg.rolltemplate==='atk') {
                         gm('Попадание подтверждено. Ожидается урон из этой карточки атаки (до 2 минут).');
                         return;
