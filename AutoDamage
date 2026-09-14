@@ -1,0 +1,1242 @@
+/*
+AutoDamage 3.9 / NPC Forge RU 2.4.6 — «шепот звезд».
+D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
+Название -> цель -> атака, урон и крит. Промах: публичное «промах».
+Попадание: урон по цели; отчёт с отменой лично GM.
+КД берётся из листа (npc_ac / ac), но не публикуется.
+У персонажей HP берутся из hp листа, меняются в листе и синхронизируются с полосой 1.
+У NPC HP листа не меняются. Перед записью полоса 1 отвязывается от hp.
+У NPC текущие хиты токена приоритетны, включая 0. Если полоса пуста, текущее
+hp листа используется однократно как начальное значение. Максимум
+не заменяет текущие хиты. Чужая связь полосы 1 требует ручной настройки.
+Временные хиты листа не списываются: они общие для всех копий.
+Если нужны независимые временные HP, задайте CONFIG.tempBar=3 и храните
+их в полосе 3 токена (не используйте её одновременно для других ресурсов).
+По умолчанию tempBar=0 — временные HP применяются вручную.
+
+Установите оба скрипта из архива вместо старых. GM: !ad5 buttons,
+!npc-fix --all. NPC Forge создаёт токены с независимой полосой здоровья.
+GM может атаковать из любого листа; игрок — из своего. Старые карточки
+не обновляются. Отдельная кнопка урона игрока принимается один раз после соответствующего попадания.
+При неподдержанном уроне/ошибках отправляется личная диагностика.
+!ad5 hp-fix — GM: подготовить полосу выделенного токена без лечения.
+!ad5 undo last — GM: отменить последнее списание, если HP не менялись.
+!ad5 ping / check / debug on / report — диагностика. КД только в сообщениях GM.
+Спасбросок: для персонажей под управлением игроков — запрос и ожидание кнопки/броска листа; для NPC без управления игроками — тихий автоматический d20. Итог >= savedc. savedesc: половина (вверх) / нет урона.
+При активном спасброске поле attack определяет наличие атаки.
+Если attack отсутствует/выключено, r1/r2 игнорируются: только спасбросок, без КД.
+Тип «лечение» восстанавливает HP до максимума. Эффект без атаки/спасброска применяется сразу.
+Сопротивления, крит на 18/19, ненулевые globaldamage
+и hldmg требуют ручной обработки. Крит на натуральной 20, HP не ниже 0.
+Проверено локально с имитацией API; в живой кампании не запускалось.
+*/
+
+/*
+AD5 Conditions / Token Markers
+Roll20 default marker names are stable API identifiers.  The visual meaning
+is our D&D 5e convention; the marker itself is only an overlay on the token.
+Death is deliberately reserved for `skull` per campaign rules.
+*/
+var AD5Conditions = (function () {
+    'use strict';
+    var MAP = {
+        blinded:       { marker:'bleeding-eye', ru:'Ослеплён', core:true },
+        charmed:       { marker:'chained-heart', ru:'Очарован', core:true },
+        deafened:      { marker:'half-haze', ru:'Оглохший', core:true },
+        frightened:    { marker:'screaming', ru:'Испуган', core:true },
+        grappled:      { marker:'grab', ru:'Схвачен', core:true },
+        incapacitated: { marker:'broken-shield', ru:'Недееспособен', core:true },
+        invisible:     { marker:'ninja-mask', ru:'Невидим', core:true },
+        paralyzed:     { marker:'padlock', ru:'Парализован', core:true },
+        petrified:     { marker:'frozen-orb', ru:'Окаменел', core:true },
+        poisoned:      { marker:'chemical-bolt', ru:'Отравлен', core:true },
+        prone:         { marker:'pummeled', ru:'Сбит с ног', core:true },
+        restrained:    { marker:'fishing-net', ru:'Опутан', core:true },
+        stunned:       { marker:'lightning-helix', ru:'Ошеломлён', core:true },
+        unconscious:   { marker:'sleepy', ru:'Без сознания', core:true },
+        exhaustion:    { marker:'back-pain', ru:'Истощение', core:true },
+        death:         { marker:'skull', ru:'Мёртв', core:true },
+
+        slowed:        { marker:'snail', ru:'Замедлен', core:false },
+        silenced:      { marker:'interdiction', ru:'Безмолвие', core:false },
+        haste:         { marker:'overdrive', ru:'Ускорен', core:false },
+        flying:        { marker:'fluffy-wing', ru:'Полёт', core:false },
+        difficult:     { marker:'tread', ru:'Труднопроходимая местность', core:false },
+        concentration: { marker:'aura', ru:'Концентрация', core:false },
+        shielded:      { marker:'bolt-shield', ru:'Защищён щитом', core:false },
+        blessed:       { marker:'angel-outfit', ru:'Благословлён', core:false },
+        targeted:      { marker:'archery-target', ru:'Помечен целью', core:false },
+        frightened2:   { marker:'black-flag', ru:'Угроза/страх (альтернативный маркер)', core:false },
+        cursed:        { marker:'broken-heart', ru:'Проклят', core:false },
+        bleeding:      { marker:'arrowed', ru:'Кровотечение', core:false },
+        bloodied:      { marker:'half-heart', ru:'Ранен (≤50% HP)', core:false },
+        critical:      { marker:'red', ru:'Критическое состояние (≤25% HP)', core:false }
+    };
+    var BY_MARKER = {};
+    Object.keys(MAP).forEach(function (k) { BY_MARKER[MAP[k].marker] = k; });
+
+    function normalize(s) {
+        return String(s || '').toLowerCase().replace(/ё/g,'е').replace(/[_-]+/g,' ').trim();
+    }
+    function key(s) {
+        var n=normalize(s);
+        var aliases={
+            'ослеплен':'blinded','ослепленный':'blinded','слепота':'blinded',
+            'очарован':'charmed','очарование':'charmed',
+            'оглохший':'deafened','глухота':'deafened',
+            'испуган':'frightened','испуг':'frightened','страх':'frightened',
+            'схвачен':'grappled','захвачен':'grappled',
+            'недееспособен':'incapacitated',
+            'невидим':'invisible','невидимость':'invisible',
+            'парализован':'paralyzed','паралич':'paralyzed',
+            'окаменел':'petrified','окаменение':'petrified',
+            'отравлен':'poisoned','отравление':'poisoned',
+            'сбит с ног':'prone','ничком':'prone','лежит':'prone',
+            'опутан':'restrained','опутанность':'restrained',
+            'ошеломлен':'stunned','ошеломление':'stunned',
+            'без сознания':'unconscious','бессознателен':'unconscious',
+            'истощение':'exhaustion','истощен':'exhaustion',
+            'мертв':'death','мертвый':'death','смерть':'death','погиб':'death',
+            'замедлен':'slowed','замедление':'slowed',
+            'немота':'silenced','безмолвие':'silenced',
+            'ускорен':'haste','ускорение':'haste',
+            'полет':'flying','летит':'flying',
+            'труднопроходимая местность':'difficult',
+            'концентрация':'concentration',
+            'защищен щитом':'shielded','щит':'shielded',
+            'благословлен':'blessed','благословение':'blessed',
+            'помечен':'targeted','цель':'targeted',
+            'проклят':'cursed','проклятие':'cursed',
+            'кровотечение':'bleeding','кровоточит':'bleeding',
+            'ранен':'bloodied','ранен ≤50% hp':'bloodied',
+            'критическое состояние':'critical'
+        };
+        return MAP[n] ? n : aliases[n] || (MAP[n] ? n : null);
+    }
+    function markerList(token) { return String(token.get('statusmarkers') || '').split(',').filter(Boolean); }
+    function write(token, marker, enabled) {
+        var list=markerList(token), out=[];
+        list.forEach(function (m) { if (m.replace(/@\d+$/,'') !== marker) out.push(m); });
+        if(enabled) out.push(marker);
+        token.set('statusmarkers',out.join(','));
+    }
+    function set(tokenOrId,state,enabled) {
+        var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;
+        if(!token || token.get('_subtype')!=='token')throw new Error('Токен не найден.');
+        var k=key(state);if(!k)throw new Error('Неизвестное состояние: '+state);
+        write(token,MAP[k].marker,enabled!==false);return {state:k,marker:MAP[k].marker,ru:MAP[k].ru};
+    }
+    function clearAll(tokenOrId) {
+        var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;
+        if(!token)throw new Error('Токен не найден.');
+        var managed={};Object.keys(MAP).forEach(function(k){managed[MAP[k].marker]=true;});
+        var out=markerList(token).filter(function(m){return !managed[m.replace(/@\d+$/,'')];});
+        token.set('statusmarkers',out.join(','));
+    }
+    function syncHP(token) {
+        if(!token || token.get('_subtype')!=='token')return;
+        var hp=Number(token.get('bar1_value')), max=Number(token.get('bar1_max'));
+        if(!Number.isFinite(hp)||!Number.isFinite(max)||max<=0)return;
+        write(token,MAP.death.marker,hp<=0);
+        if(hp<=0){write(token,MAP.bloodied.marker,false);write(token,MAP.critical.marker,false);return;}
+        write(token,MAP.bloodied.marker,hp*2<=max);
+        write(token,MAP.critical.marker,hp*4<=max);
+    }
+    function list() { return Object.keys(MAP).map(function(k){return {state:k,marker:MAP[k].marker,ru:MAP[k].ru,core:MAP[k].core};}); }
+    return {map:MAP,key:key,set:set,clearAll:clearAll,syncHP:syncHP,list:list,byMarker:BY_MARKER};
+}());
+
+var AD5HealthView = (function () {
+    'use strict';
+    var managed = Object.create(null);
+    function update(t) {
+        if (!t || t.get('_subtype') !== 'token' || t.get('isdrawing')) return;
+        var cid = t.get('represents'), c = getObj('character', cid);
+        if (!c) return;
+        var npcAttrs = findObjs({ _type: 'attribute', _characterid: cid }).filter(function (a) { return String(a.get('name')).toLowerCase() === 'npc'; });
+        var npc = npcAttrs.some(function (a) { return String(a.get('current')) === '1'; });
+        // A represented character's controllers override the token's controllers.
+        var playerOwned = String(c.get('controlledby') || '').split(',').some(function (id) {
+            id = id.trim(); return id === 'all' || (!!getObj('player', id) && !playerIsGM(id));
+        });
+        var visible = !npc || playerOwned;
+        // Roll20's standard Above/Detail values are null, not empty strings.
+        var changes = { showplayers_bar1: visible, bar1_num_permission: visible ? 'everyone' : '', bar_location: null, compact_bar: null };
+        if (!visible) changes.playersedit_bar1 = false;
+        var markers = String(t.get('statusmarkers') || '').split(',').filter(Boolean);
+        if (npc || managed[t.id]) {
+            markers = markers.filter(function (m) { return !/^(?:red|yellow|green)(?:@\d+)?$/.test(m); });
+            if (npc) {
+                managed[t.id] = true;
+                // HP state is represented by semantic markers below: half-heart,
+                // red and skull. Do not re-add the old generic color dots.
+            } else delete managed[t.id];
+            changes.statusmarkers = markers.join(',');
+        }
+        var diff = {};
+        Object.keys(changes).forEach(function (k) { if (String(t.get(k)) !== String(changes[k])) diff[k] = changes[k]; });
+        if (Object.keys(diff).length) t.set(diff);
+        if (typeof AD5Conditions !== 'undefined') AD5Conditions.syncHP(t);
+    }
+    function refresh(cid) {
+        findObjs({ _type: 'graphic', _subtype: 'token' }).forEach(function (t) { if (!cid || t.get('represents') === cid) update(t); });
+    }
+    return { update: update, refresh: refresh };
+}());
+var AD5 = (function () {
+    'use strict';
+    var CONFIG = { naturalHitRules: false, tempBar: 0, ttl: 120000 };
+    var VERSION = '3.9', diagnostics = [], debug = false;
+    var boundActors = Object.create(null);
+    function record(text) {
+        diagnostics.push(text);
+        if (diagnostics.length > 12) diagnostics.shift();
+        if (debug) gm('<b>AD5 DEBUG</b> ' + esc(text));
+    }
+    var armed = Object.create(null), pending = Object.create(null);
+    var history = Object.create(null), historyKeys = [], sequence = 0;
+    var attackTemplates = ['atk', 'atkdmg', 'npcatk', 'npcaction'];
+    var damageTemplates = ['dmg', 'atkdmg', 'npcdmg', 'npcaction'];
+    function isAttackBase(a) {
+        return /^repeating_(?:attack|npcaction(?:-[lb])?|npcreaction|npcbonusaction)_.+_rollbase(?:_[a-z]+)?$/.test(String(a.get('name') || ''));
+    }
+    function cleanButtonFields(text) {
+        return text.replace(/\s*{{ad5target=@{target\|[^{}]+}}}/g, '')
+            .replace(/\s*{{ad5source=[^{}]*}}/g, '');
+    }
+    function parseDistanceSpec(value){
+        var text=String(value||'').toLowerCase().replace(/&nbsp;/g,' ').replace(/,/g,'.').replace(/\s+/g,' ').trim();
+        var out={targets:null,area:null};
+        var tm=text.match(/(?:до|up to)\s*(\d+)\s*(?:целей|цели|существ|creatures|targets?)/i);
+        if(tm) out.targets=Number(tm[1]);
+        var lm=text.match(/(?:линия|line)\s*(?:ш(?:ирина)?\s*)?(\d+(?:\.\d+)?)?\s*(?:фт\.?|ft\.?)?\s*(?:дл(?:ина)?\s*)?(\d+(?:\.\d+)?)\s*(?:фт\.?|ft\.?)?/i);
+        if(lm){
+            var width=lm[1]?Number(lm[1]):5, length=Number(lm[2]);
+            out.area={shape:'line',size:length,width:width,length:length};
+            return out;
+        }
+        var cm=text.match(/(\d+(?:\.\d+)?)\s*(?:фт\.?|ft\.?)\s*(конус|cone|круг|сфера|circle|sphere|куб|квадрат|cube|square)/i);
+        if(cm){
+            var size=Number(cm[1]), shape=cm[2];
+            shape=/конус|cone/.test(shape)?'cone':/круг|сфера|circle|sphere/.test(shape)?'circle':'square';
+            out.area={shape:shape,size:size,width:shape==='circle'?size:size,length:size};
+        }
+        return out;
+    }
+    function encodedAreaSpec(spec){
+        if(!spec||!spec.area)return '';
+        var a=spec.area;return [a.shape,a.size,a.width||'',a.length||''].join('|');
+    }
+    function patchAttackButton(a) {
+        if (!a || !isAttackBase(a)) return false;
+        var current = String(a.get('current') || '');
+        var base = cleanButtonFields(current);
+        var attack = /&{template:(?:atk|atkdmg|npcatk|npcaction)}/.test(base) && /{{\s*r1\s*=/.test(base);
+        var damage = /&{template:(?:dmg|npcdmg)}/.test(base) && /{{\s*dmg[12]\s*=/.test(base);
+        var save = /&{template:(?:atkdmg|dmg|npcaction|npcdmg)}/.test(base) && /{{\s*saveattr\s*=/.test(base) && /{{\s*savedc\s*=/.test(base);
+        var automatic=/&{template:(?:atkdmg|npcaction)}/.test(base)&&/\{\{\s*dmg[12]\s*=/.test(base)&&!attack&&!save;
+        if (!attack && !damage && !save && !automatic) return false;
+        var cid = a.get('_characterid');
+        if (!getObj('character', cid)) return false;
+        var prefix=String(a.get('name')).replace(/rollbase(?:_[a-z]+)?$/,'');
+        var limitAttr=attr(cid,prefix+'ad5_targets',true), limit=limitAttr?Number(limitAttr.get('current')):1;
+        var parsedFields=fields(base), rangeValue=parsedFields.range||parsedFields.distance||'';
+        var rangeRef=/^@\{([^|{}]+)\|([^{}]+)\}$/.exec(String(rangeValue).trim());
+        if(rangeRef){
+            var rangeAttr=attr(rangeRef[1],rangeRef[2],true);
+            if(rangeAttr)rangeValue=rangeAttr.get('current')||'';
+        }
+        if(!rangeValue){var rowRange=attr(cid,prefix+'attack_range',true)||attr(cid,prefix+'atkrange',true);if(rowRange)rangeValue=rowRange.get('current')||'';}
+        var parsedDistance=parseDistanceSpec(rangeValue), existingArea=parsedFields.ad5area||'';
+        if(!limitAttr && parsedDistance.targets) limit=parsedDistance.targets;
+        base=base.replace(/\s*{{ad5targets=[\s\S]*?}}/g,'').replace(/\s*{{ad5area=[^{}]*}}/g,'').replace(/\s*AD5: до \d+ целей\./g,'').replace(/\s*<br>до \d+ существ/g,'');
+        if(limit>1){
+            var label=' <br>до '+limit+' существ';
+            if(/{{(?:desc|description)=/.test(base))base=base.replace(/({{(?:desc|description)=(?:@\{[^{}]*\}|\^\{[^{}]*\}|(?!}})[\s\S])*?)(}})/,function(_,x,end){return x+label+end;});
+            else base+=' {{desc='+label+'}}';
+            base+=' {{ad5targets='+limit+'}}';
+        }
+        if(parsedDistance.area) base+=' {{ad5area='+encodedAreaSpec(parsedDistance)+'}}';
+        else if(existingArea)base+=' {{ad5area='+existingArea+'}}';
+        var next = base + (limit<=1 && !parsedDistance.area && !existingArea && (attack || save || automatic) ? ' {{ad5target=@{target|Цель атаки|token_id}}}' : '') + ' {{ad5source=' + cid + '}}';
+        if (next === current) return false;
+        a.set({ current: next });
+        return true;
+    }
+    function patchAllButtons() {
+        var count = 0;
+        findObjs({ _type: 'attribute' }).forEach(function (a) { if (patchAttackButton(a)) count++; });
+        record('Встроенный выбор цели: обновлено кнопок ' + count);
+        return count;
+    }
+    function esc(s) {
+        return String(s).replace(/[&<>"'{}\[\]|\r\n]/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; });
+    }
+    function gm(s) { sendChat('шепот звезд', '/w gm ' + s); }
+    function reply(pid, s) {
+        if (playerIsGM(pid)) { gm(s); return; }
+        var p = getObj('player', pid);
+        if (p) sendChat('шепот звезд', '/w "' + String(p.get('_displayname')).replace(/["\r\n]/g, '') + '" ' + s);
+    }
+    function number(v, label) {
+        if (v === undefined || v === null || String(v).trim() === '' || !Number.isFinite(Number(v)))
+            throw new Error(label + ': не заполнено числом.');
+        var n = Number(v);
+        if (!Number.isSafeInteger(n) || n < 0 || n > 1000000) throw new Error(label + ': недопустимое число.');
+        return n;
+    }
+    function attr(cid, name, optional) {
+        var a = findObjs({ _type: 'attribute', _characterid: cid }).filter(function (o) {
+            return String(o.get('name')).toLowerCase() === name.toLowerCase();
+        });
+        if(a.length>1 && /^repeating_(?:npcaction(?:-[lb])?|npcreaction|npcbonusaction)_.+_attack_damagetype2?$/i.test(name)){
+            var distinct=[];
+            a.forEach(function(x){var raw=String(x.get('current')||'').trim(),v=effectType(raw)||raw;if(v && distinct.indexOf(v)<0)distinct.push(v);});
+            if(distinct.length>1)throw new Error('Конфликт типов в '+name+': '+distinct.join(' / ')+'. В листе оставьте один правильный тип и выполните !npc-fix.');
+            // Read a meaningful copy. Only Forge repair removes redundant objects.
+            return a.filter(function(x){return String(x.get('current')||'').trim();})[0]||a[0];
+        }
+        if (a.length > 1) throw new Error('Повторный атрибут ' + name + ' в листе.');
+        if (!a.length && !optional) throw new Error('В листе отсутствует атрибут ' + name + '.');
+        return a[0];
+    }
+    function fields(content) {
+        var f = Object.create(null), re = /{{\s*([\w]+)\s*=((?:@\{[^{}]*\}|\^\{[^{}]*\}|(?!}})[\s\S])*?)}}/g, m;
+        while ((m = re.exec(content))) {
+            if (Object.prototype.hasOwnProperty.call(f, m[1]) && f[m[1]] !== m[2].trim())
+                throw new Error('Разные значения повторного поля шаблона: ' + m[1]);
+            f[m[1]] = m[2].trim();
+        }
+        return f;
+    }
+    function active(f, k) { return f[k] !== undefined && f[k] !== '' && f[k] !== '0'; }
+    function roll(msg, text, label, allowLiteral) {
+        if (allowLiteral && /^[+-]?\d+(?:\.\d+)?$/.test(String(text).trim())) {
+            var literal = Number(text);
+            if (Math.abs(literal) > 1000000) throw new Error(label + ': слишком большое число.');
+            return { total: literal, raw: [] };
+        }
+        var m = /^\$\[\[(\d+)\]\]$/.exec(text || '');
+        if (!m) throw new Error(label + ': ожидается обычный inline-бросок листа.');
+        var r = (msg.inlinerolls || [])[Number(m[1])];
+        if (!r || !r.results || r.secret) throw new Error(label + ': результат недоступен.');
+        var total = Number(r.results.total);
+        if (!Number.isFinite(total) || Math.abs(total) > 1000000) throw new Error(label + ': неверный результат.');
+        return { total: total, raw: r.results.rolls || [] };
+    }
+    function d20Values(r) {
+        var values=[];
+        function dropped(v){return v===true || v===1 || v==='1' || v==='true';}
+        function walk(x) {
+            if(Array.isArray(x)){x.forEach(walk);return;}
+            if(!x || typeof x!=='object' || dropped(x.d))return;
+            if(x.type==='R' && Number(x.sides)===20){
+                (x.results||[]).forEach(function(v){
+                    if(!dropped(v.d))values.push(Number(v.v));
+                });
+            } else if(x.rolls)walk(x.rolls);
+        }
+        walk(r.raw);return values;
+    }
+    function includesD20(r) {
+        // Sheets can emit an R/sides:20 node for 0d20, with no actual
+        // result. Only a retained die face in 1..20 constitutes an attack.
+        return d20Values(r).some(function(value){
+            return Number.isInteger(value) && value>=1 && value<=20;
+        });
+    }
+    function d20(r) {
+        var values=d20Values(r);
+        // The inline total remains authoritative even when a sheet's dice
+        // structure does not expose one kept natural d20. Never invent a crit.
+        return values.length===1 && Number.isInteger(values[0]) && values[0]>=1 && values[0]<=20?values[0]:null;
+    }
+    function dieLabel(value){return value===null?'не выделен (использован итог броска)':String(value);}
+    function canControl(c, pid) {
+        return playerIsGM(pid) || String(c.get('controlledby') || '').split(',').some(function (id) { return id === pid || id === 'all'; });
+    }
+    function actor(f, msg, pendingActor) {
+        var name = f.charname || f.name;
+        var cs;
+        var explicitId = f.ad5source || f.charid || f.characterid;
+        if (explicitId) {
+            var explicitActor = getObj('character', explicitId);
+            if (!explicitActor) throw new Error('Лист атакующего по ID из карточки не найден.');
+            if (!canControl(explicitActor, msg.playerid)) throw new Error('Нет управления листом атакующего.');
+            return explicitActor;
+        }
+        // GM may roll from any sheet. A hidden/duplicate sheet name must not
+        // require selecting a source token or changing a previously bound actor.
+        if (playerIsGM(msg.playerid)) {
+            if (name) {
+                cs = findObjs({ _type: 'character', name: name });
+                return { id: cs.length === 1 ? cs[0].id : null };
+            }
+            return { id: pendingActor || null };
+        }
+        if (name) {
+            cs = findObjs({ _type: 'character', name: name });
+            if (cs.length !== 1) throw new Error('Имя атакующего должно соответствовать ровно одному листу: ' + name);
+        } else {
+            var boundId = pendingActor || boundActors[msg.playerid];
+            if (boundId) {
+                var bound = getObj('character', boundId);
+                if (!bound || !canControl(bound, msg.playerid))
+                    throw new Error('Назначенный атакующий недоступен. Выделите свой токен и введите !ad5 actor.');
+                return bound;
+            }
+            // OGL hides charname when the name-output setting is disabled.
+            // Use only unambiguous identities; never infer the attacker from the enemy token.
+            cs = findObjs({ _type: 'character', name: String(msg.who || '').replace(/ \(GM\)$/, '') });
+            if (cs.length !== 1 && !playerIsGM(msg.playerid)) {
+                cs = findObjs({ _type: 'character' }).filter(function (c) { return canControl(c, msg.playerid); });
+            }
+            if (cs.length !== 1) throw new Error('Не определён атакующий. Выделите токен АТАКУЮЩЕГО и введите !ad5 actor, затем заново назначьте цель и бросьте атаку.');
+        }
+        if (!canControl(cs[0], msg.playerid)) throw new Error('Нет управления листом атакующего.');
+        return cs[0];
+    }
+    function attackName(f) {
+        var name = f.rname || '';
+        // Split attack templates put a damage-button link in rname.
+        var m = /^\[([\s\S]*?)\]\([\s\S]*\)$/.exec(name);
+        return (m ? m[1] : name).trim();
+    }
+    function target(id, pid) {
+        var t = getObj('graphic', id);
+        if (!t || t.get('_subtype') !== 'token') throw new Error('Токен цели не найден.');
+        if (!playerIsGM(pid)) {
+            var c = Campaign(), pages = c.get('playerspecificpages') || {};
+            var page = pages[pid] || c.get('playerpageid');
+            if (t.get('layer') !== 'objects' || t.get('_pageid') !== page) throw new Error('Цель недоступна на вашей странице.');
+        }
+        var cid = t.get('represents'), sheet = getObj('character', cid);
+        if (!sheet) throw new Error('Свяжите токен цели с листом через Represents Character.');
+        return { token: t, cid: cid };
+    }
+    function blank(v) { return v === undefined || v === null || String(v).trim() === ''; }
+    function hpPlan(t) {
+        var hp = attr(t.cid, 'hp', true), token = t.token, link = token.get('bar1_link');
+        if (link && link !== 'hp' && (!hp || link !== hp.id))
+            throw new Error('Полоса 1 должна содержать HP. Сейчас она связана с другим атрибутом.');
+        var npcFlag=attr(t.cid,'npc',true), isNPC=npcFlag&&String(npcFlag.get('current'))==='1';
+        if(!isNPC){if(!hp)throw new Error('В листе персонажа отсутствует hp.');return {value:number(hp.get('current'),'HP листа'),max:blank(hp.get('max'))?'':number(hp.get('max'),'Максимальные HP листа'),bar:1,sheetHpId:hp.id};}
+        var value = token.get('bar1_value');
+        if (blank(value)) value = hp && hp.get('current');
+        var max = token.get('bar1_max');
+        if (blank(max)) max = hp && hp.get('max');
+        return { value: number(value, 'HP токена'), max: blank(max) ? '' : number(max, 'Максимальные HP'), bar: 1 };
+    }
+    function commitHP(t, plan) {
+        var hp=attr(t.cid,'hp',true), npc=attr(t.cid,'npc',true);
+        if(!npc || String(npc.get('current'))!=='1'){
+            if(!hp)throw new Error('Нет hp в листе персонажа.');
+            hp.set('current',plan.value);
+            findObjs({_type:'graphic',_subtype:'token',represents:t.cid}).forEach(function(token){
+                var link=token.get('bar1_link');if(link&&link!=='hp'&&link!==hp.id)return;
+                token.set({bar1_link:hp.id,bar1_value:plan.value,bar1_max:plan.max});AD5HealthView.update(token);
+            });return;
+        }
+        // Unlink FIRST, in a separate write, to prevent attribute propagation.
+        t.token.set({ bar1_link: '' });
+        t.token.set({ bar1_value: plan.value, bar1_max: plan.max });
+        AD5HealthView.update(t.token);
+    }
+    function tokenTemp(t) {
+        var bar = CONFIG.tempBar;
+        if (!bar) return { value: 0, bar: 0 };
+        if (bar !== 2 && bar !== 3) throw new Error('CONFIG.tempBar должен быть 0, 2 или 3.');
+        var link = t.token.get('bar' + bar + '_link'), a = attr(t.cid, 'hp_temp', true);
+        if (link && link !== 'hp_temp' && (!a || link !== a.id)) throw new Error('Полоса временных HP связана с другим атрибутом.');
+        var value = t.token.get('bar' + bar + '_value');
+        return { bar: bar, value: blank(value) ? 0 : number(value, 'Временные HP токена') };
+    }
+    function signedNumber(value, label) {
+        if (blank(value) || !/^[+-]?\d+$/.test(String(value).trim())) throw new Error(label + ': нужен числовой итоговый бонус.');
+        var n = Number(value);
+        if (!Number.isSafeInteger(n) || Math.abs(n) > 1000000) throw new Error(label + ': неверное число.');
+        return n;
+    }
+    function saveAbility(value) {
+        var normalized = String(value || '').toLowerCase().replace(/\^\{([^}]+)\}/g, '$1').replace(/[-_]/g, ' ').replace(/ u$/, '').trim();
+        var names = [
+            ['strength', /^(strength|str|сила|сил|силы)(?: saving throw| save)?$/],
+            ['dexterity', /^(dexterity|dex|ловкость|лов|ловкости)(?: saving throw| save)?$/],
+            ['constitution', /^(constitution|con|телосложение|тел|телосложения)(?: saving throw| save)?$/],
+            ['intelligence', /^(intelligence|int|интеллект|инт|интеллекта)(?: saving throw| save)?$/],
+            ['wisdom', /^(wisdom|wis|мудрость|мдр|мудрости)(?: saving throw| save)?$/],
+            ['charisma', /^(charisma|cha|харизма|хар|харизмы)(?: saving throw| save)?$/]
+        ];
+        var match = names.filter(function (pair) { return pair[1].test(normalized); });
+        if (match.length !== 1) throw new Error('Не распознана характеристика спасброска: ' + value);
+        return match[0][0];
+    }
+    function saveBonus(cid, ability) {
+        var npc = attr(cid, 'npc', true), a, value;
+        if (npc && String(npc.get('current')) === '1') {
+            a = attr(cid, 'npc_' + ability.slice(0, 3) + '_save', true);
+            if (a && !blank(a.get('current'))) return signedNumber(a.get('current'), 'Спасбросок NPC');
+            a = attr(cid, ability + '_mod', true);
+            if (a && !blank(a.get('current'))) return signedNumber(a.get('current'), 'Модификатор NPC');
+            a = attr(cid, ability, true);
+            if (a && !blank(a.get('current'))) return Math.floor((number(a.get('current'), 'Характеристика NPC') - 10) / 2);
+            throw new Error('У NPC не заполнены бонус спасброска и характеристика ' + ability + '.');
+        }
+        a = attr(cid, ability + '_save_bonus', true);
+        value = a ? a.get('current') : (typeof getAttrByName === 'function' ? getAttrByName(cid, ability + '_save_bonus') : undefined);
+        return signedNumber(value, 'Итоговый спасбросок PC ' + ability + '_save_bonus');
+    }
+    function saveDamageEffect(text) {
+        text=String(text||'').toLowerCase().replace(/\^\{([^}]+)\}/g,'$1').replace(/[_-]/g,' ');
+        var clause=text.match(/(?:при успехе|при успешном спасброске|в случае успеха|on (?:a )?success(?:ful save)?)[\s,:—-]*([^.!;]*)/i);
+        var effect=clause?clause[1]:text.trim();
+        var half=/половин|half/.test(effect), none=/нет урона|без урона|не получает урона|не наносится|no damage/.test(effect), full=/полный урон|полного урона|full damage/.test(effect);
+        if(half && !none)return 'half';
+        if(none && !half)return 'none';
+        if(full && !half && !none)return 'full';
+        return null;
+    }
+    function successEffect(text) {
+        var effect=saveDamageEffect(text);
+        if(!effect)throw new Error('Укажите явно результат успеха: «При успехе: половина урона», «При успехе: нет урона» или «При успехе: полный урон».');
+        return effect;
+    }
+    function saveAffectsDamage(f) {
+        if(!active(f,'save'))return false;
+        return !!saveDamageEffect(f.savedesc||f.saveeffect||f.description);
+    }
+    function attackRollPresent(msg,f) {
+        var attackFlag=active(f,'attack')&&!/^(?:false|off)$/i.test(f.attack);
+        var hasAttack=active(f,'save')?attackFlag:(f.attack!==undefined?attackFlag:!!f.r1);
+        if(!hasAttack||blank(f.r1))return false;
+        try{return includesD20(roll(msg,f.r1,'Атака',true));}catch(e){return false;}
+    }
+    function normalizeIgnoredAttackCheck(msg,f) {
+        // If a card contains both an actual attack roll and a characteristic
+        // check/save, but the success text does not define half/no damage, the
+        // check is an out-of-band narrative effect. AD5 applies the attack
+        // damage normally and does not wait for or roll the check.
+        if(active(f,'save') && attackRollPresent(msg,f) && !saveAffectsDamage(f))f.save='0';
+        return f;
+    }
+    function saveSpec(msg, f, cid) {
+        return {ability:saveAbility(f.saveattr),dc:number(roll(msg,f.savedc,'СЛ спасброска',true).total,'СЛ спасброска'),
+            effect:successEffect(f.savedesc||f.saveeffect||f.description),bonus:saveBonus(cid,saveAbility(f.saveattr))};
+    }
+    var saveRequests=Object.create(null), saveSequence=0;
+    var saveLabels={strength:'Силы',dexterity:'Ловкости',constitution:'Телосложения',intelligence:'Интеллекта',wisdom:'Мудрости',charisma:'Харизмы'};
+    function getSaveRequest(id){
+        var q=saveRequests[id];
+        if(!q)throw new Error('Запрос спасброска завершён или не найден.');
+        if(Date.now()>q.expires){delete saveRequests[id];throw new Error('Время спасброска истекло. Повторите способность.');}
+        var t=getObj('graphic',q.p.target);
+        if(!t||t.get('represents')!==q.p.cid){delete saveRequests[id];throw new Error('Токен цели удалён или назначен другому листу.');}
+        return q;
+    }
+    function controlsSave(q,pid){
+        var c=getObj('character',q.p.cid), t=getObj('graphic',q.p.target);
+        return c && (canControl(c,pid) || String(t&&t.get('controlledby')||'').split(',').some(function(x){return x===pid||x==='all';}));
+    }
+    function isPlayerControlledCharacter(cid){
+        var c=getObj('character',cid);
+        if(!c)return false;
+        return String(c.get('controlledby')||'').split(',').some(function(id){
+            id=String(id).trim();
+            return id==='all' || (!!getObj('player',id) && !playerIsGM(id));
+        });
+    }
+    function isUncontrolledNPC(cid){
+        var npc=attr(cid,'npc',true);
+        return !!npc && String(npc.get('current'))==='1' && !isPlayerControlledCharacter(cid);
+    }
+    function autoNPCSave(spec){
+        var die=typeof randomInteger==='function' ? randomInteger(20) : (Math.floor(Math.random()*20)+1);
+        return {spec:spec,total:die+spec.bonus,die:die,mode:'normal'};
+    }
+    function requestSave(msg,f,p,spec){
+        Object.keys(saveRequests).forEach(function(id){if(saveRequests[id].expires<Date.now()){delete saveRequests[id];}});
+        if(Object.keys(saveRequests).length>=100)throw new Error('Слишком много незавершённых спасбросков. GM: !ad5 saves.');
+        var id=Date.now().toString(36)+'-'+(++saveSequence), t=getObj('graphic',p.target), c=getObj('character',p.cid);
+        saveRequests[id]={msg:JSON.parse(JSON.stringify(msg)),f:JSON.parse(JSON.stringify(f)),p:JSON.parse(JSON.stringify(p)),spec:spec,status:'waiting',expires:Date.now()+600000};
+        if(p.batch)multiResult(p.batch,p.target,'ожидается спасбросок');
+        var line='<b>'+esc(t.get('name')||c.get('name'))+'</b>, соверши спасбросок <b>'+saveLabels[spec.ability]+'</b>.';
+        line+=' [Бросить](!ad5 save '+id+' normal) [Преимущество](!ad5 save '+id+' adv) [Помеха](!ad5 save '+id+' dis)';
+        sendChat('Шепот звезд',line);
+        gm('Ожидается спасбросок: '+esc(p.name)+' → '+esc(t.get('name'))+', '+saveLabels[spec.ability]+', СЛ '+spec.dc+'. При успехе: '+({half:'половина урона',none:'нет урона',full:'полный урон'}[spec.effect])+'. [Отменить запрос](!ad5 save-cancel '+id+')');
+    }
+    function resolveSave(id,result){
+        var q=getSaveRequest(id);
+        if(q.status!=='waiting'&&q.status!=='rolling')throw new Error('Этот спасбросок уже обрабатывается.');
+        q.status='resolving';
+        // Consume BEFORE HP mutation. A repeated message/callback cannot apply twice.
+        delete saveRequests[id];
+        q.p.time=Date.now();
+        try{finish(q.msg,q.f,q.p,{spec:q.spec,total:result.total,die:result.die,mode:result.mode||'normal'});}
+        catch(e){if(q.p.batch)multiResult(q.p.batch,q.p.target,'ошибка применения: '+e.message);throw e;}
+    }
+    function saveCommand(msg,args){
+        var sub=args[1],id=args[2],q;
+        if(sub==='saves'){
+            if(!playerIsGM(msg.playerid))throw new Error('Список запросов доступен GM.');
+            gm(Object.keys(saveRequests).map(function(k){var x=saveRequests[k];return esc(k+': '+x.p.name)+' [Отменить](!ad5 save-cancel '+k+')';}).join('<br>')||'Нет ожидающих спасбросков.');return;
+        }
+        q=getSaveRequest(id);
+        if(sub==='save-cancel'){
+            if(!playerIsGM(msg.playerid))throw new Error('Отменить запрос может только GM.');
+            if(q.p.batch)multiResult(q.p.batch,q.p.target,'спасбросок отменён — эффект не применён');
+            delete saveRequests[id];gm('Запрос отменён. Урон не нанесён.');return;
+        }
+        if(!controlsSave(q,msg.playerid))throw new Error('Этот спасбросок должен совершить владелец цели или GM.');
+        if(q.status!=='waiting')throw new Error('Спасбросок уже запущен.');
+        var mode=args[3]||'normal';if(['normal','adv','dis'].indexOf(mode)<0)throw new Error('Режим: normal, adv, dis.');
+        var bonus=saveBonus(q.p.cid,q.spec.ability);
+        q.status='rolling';
+        var expression=mode==='adv'?'2d20kh1':mode==='dis'?'2d20kl1':'1d20';
+        sendChat('Шепот звезд','&{template:default} {{name=Спасбросок '+saveLabels[q.spec.ability]+'}} {{Цель='+esc(getObj('character',q.p.cid).get('name'))+'}} {{Результат=[['+expression+' + ('+bonus+')]]}}',function(messages){
+            try{
+                // The callback, not chat text or a user-supplied number, is authoritative.
+                var current=getSaveRequest(id);if(current.status!=='rolling')return;
+                var message=messages&&messages[0], r=roll(message,'$[[0]]','Спасбросок');
+                resolveSave(id,{total:r.total,die:d20(r),mode:mode});
+            }catch(e){if(saveRequests[id])saveRequests[id].status='waiting';gm('Спасбросок: '+esc(e.message));}
+        });
+    }
+    function sheetSaveAbility(title){
+        var text=String(title||'').toLowerCase().replace(/\^\{([^}]+)\}?/g,'$1').replace(/[_-]/g,' ').replace(/<[^>]*>/g,'').trim();
+        // Only a save or a bare ability/check, never Perception/other skills.
+        text=text.replace(/saving\s+throw|saving|throw|save|спасбросок|спасброски|спас\.?\s*бросок|проверка\s+характеристики|проверка|ability\s+check|check/gi,' ').replace(/\bu\b/g,'').replace(/[():]/g,' ').replace(/\s+/g,' ').trim();
+        try{return saveAbility(text);}catch(e){return null;}
+    }
+    function acceptSheetSave(msg){
+        if(['simple','npc','npcsave'].indexOf(msg.rolltemplate)<0)return false;
+        var f=fields(msg.content), ability=sheetSaveAbility(f.rname||f.check||f.saveattr||'');
+        if(!ability || !f.r1)return false;
+        var candidates=Object.keys(saveRequests).filter(function(id){var q=saveRequests[id];return q.status==='waiting'&&q.expires>Date.now()&&q.spec.ability===ability&&controlsSave(q,msg.playerid);});
+        if(!candidates.length)return false;
+        var cid=f.charid||f.characterid, suppliedName=f.charname||f.name, cs;
+        if(cid && !getObj('character',cid))return true;
+        if(!cid && suppliedName){cs=findObjs({_type:'character',name:suppliedName});if(cs.length!==1){reply(msg.playerid,'Имя цели неоднозначно: используйте кнопку запроса спасброска.');return true;}cid=cs[0].id;}
+        if(!cid){
+            var who=String(msg.who||'').replace(/\s+\(GM\)$/,'');cs=findObjs({_type:'character',name:who});
+            if(cs.length===1)cid=cs[0].id;
+        }
+        if(!cid){
+            var identities=[];candidates.forEach(function(id){var x=saveRequests[id].p.cid;if(identities.indexOf(x)<0)identities.push(x);});
+            if(!playerIsGM(msg.playerid)&&identities.length===1)cid=identities[0];
+            else{reply(msg.playerid,'Не определена цель броска. Используйте кнопку нужного запроса либо включите имя персонажа в бросках листа.');return true;}
+        }
+        var ids=candidates.filter(function(id){return saveRequests[id].p.cid===cid;});
+        if(ids.length!==1){if(ids.length>1)reply(msg.playerid,'Несколько одинаковых запросов: используйте кнопку конкретного спасброска.');return true;}
+        var r=roll(msg,f.r1,'Спасбросок'),mode='normal';
+        if(active(f,'advantage')||active(f,'disadvantage')){
+            var second=roll(msg,f.r2,'Второй спасбросок');mode=active(f,'advantage')?'adv':'dis';
+            if((mode==='adv'&&second.total>r.total)||(mode==='dis'&&second.total<r.total))r=second;
+        }else if(active(f,'always')){reply(msg.playerid,'Выберите обычный бросок, преимущество или помеху кнопкой запроса.');return true;}
+        resolveSave(ids[0],{total:r.total,die:d20(r),mode:mode});return true;
+    }
+    var EFFECT_TYPES=[
+        ['кислота',/^(acid|кислот(?:а|ой|ный|ного)?)$/i],['дробящий',/^(bludgeoning|дробящ(?:ий|его|им))$/i],
+        ['холод',/^(cold|холод(?:ом|а|ный|ного)?)$/i],['огонь',/^(fire|огонь|огн[её]м|огненн(?:ый|ого|ым))$/i],
+        ['силовое поле',/^(force|силов(?:ое|ого|ым) пол(?:е|я|ем))$/i],['электричество',/^(lightning|электричеств(?:о|ом|а)|молни(?:я|ей)|электрическ(?:ий|ого|им))$/i],
+        ['некротическая энергия',/^(necrotic|некротическ(?:ая энергия|ой энергией|ий|ого|им))$/i],['колющий',/^(piercing|колющ(?:ий|его|им))$/i],
+        ['яд',/^(poison|яд(?:ом|а)?|ядовит(?:ый|ого|ым))$/i],['психический',/^(psychic|психическ(?:ий|ого|им))$/i],
+        ['излучение',/^(radiant|излучени(?:е|ем|я)|лучист(?:ый|ого|ым))$/i],['рубящий',/^(slashing|рубящ(?:ий|его|им))$/i],
+        ['звук',/^(thunder|звук(?:ом|а)?|звуков(?:ой|ого|ым)|гром(?:ом)?)$/i],['лечение',/^(heal|healing|лечение|лечением|исцеление|исцелением)$/i]
+    ];
+    function effectType(value){
+        var text=String(value||'').toLowerCase().replace(/\^\{([^}]+)\}/g,'$1').replace(/\s+/g,' ').trim();
+        text=text.replace(/^(?:урон|damage)\s+/,'').replace(/\s+(?:урон|урона|damage)$/,'');
+        var found=EFFECT_TYPES.filter(function(pair){return pair[1].test(text);});
+        return found.length===1?found[0][0]:null;
+    }
+    function inferEffectType(description){
+        var text=String(description||'').toLowerCase(), found=[];
+        // Infer only explicit damage wording or explicit healing, not theme/name.
+        var healing=/восстанавливает\s+(?:\d+d\d+(?:\s*\+\s*\d+)?|\d+)\s+(?:хит|очк)|(?:лечени|исцелени)/i.test(text);
+        if(healing)found.push('лечение');
+        var re=/([а-яёa-z]+(?:\s+[а-яёa-z]+)?)\s+(?:урон[а-яё]*|damage)|(?:урон[а-яё]*|damage)\s+([а-яёa-z]+(?:\s+[а-яёa-z]+)?)/gi,m;
+        while((m=re.exec(text))){var candidate=m[1]||m[2],type=effectType(candidate)||effectType(candidate.split(' ')[0])||effectType(candidate.split(' ').slice(-1)[0]);if(type&&found.indexOf(type)<0)found.push(type);}
+        return found.length===1?found[0]:null;
+    }
+    function playerEffectFields(msg, f, cid) {
+        if (!cid) return;
+        var npc=attr(cid,'npc',true),isNPC=npc && String(npc.get('current'))==='1';
+        var pattern=isNPC?/^repeating_(?:npcaction(?:-[lb])?|npcreaction|npcbonusaction)_.+_name$/:/^repeating_attack_.+_atkname$/;
+        var rows=findObjs({_type:'attribute',_characterid:cid}).filter(function(a){
+            return pattern.test(String(a.get('name'))) && String(a.get('current')||'').trim()===attackName(f);
+        });
+        function rowPrefix(a){return String(a.get('name')).replace(isNPC?/name$/:/atkname$/,'');}
+        // Forge passes its row prefix so duplicate action names remain unambiguous.
+        // A row must still belong to this actor and match this action's name.
+        if(f.ad5row){rows=rows.filter(function(a){return rowPrefix(a)===f.ad5row;});}
+        var prefix=rows.length===1?rowPrefix(rows[0]):null;
+        function read(field){var a=prefix?attr(cid,prefix+field,true):null;return a?String(a.get('current')||'').trim():'';}
+        var description=f.desc||f.description||read(isNPC?'description':'atk_desc')||(isNPC?read('desc'):'');
+        [1,2].forEach(function(i){
+            var key='dmg'+i+'type',raw=String(f[key]||'').trim();
+            var field=isNPC?'attack_damagetype'+(i===1?'':'2'):(i===1?'dmgtype':'dmg2type');
+            var reference=prefix && (raw==='@{'+cid+'|'+prefix+field+'}' || raw==='@{'+prefix+field+'}');
+            // Preserve explicit card types, including invalid ones, for diagnosis.
+            // Only absent/zero placeholder fields or this exact row reference use fallback.
+            if(raw && raw!=='0' && !reference)return;
+            var explicit=read(field);
+            var inferred=blank(explicit)?inferEffectType(description):explicit;
+            if(inferred)f[key]=inferred;
+        });
+    }
+    function damageValue(msg, f, crit) {
+        if (active(f, 'hldmg') && roll(msg, f.hldmg, 'Добавка повышенного круга', true).total !== 0)
+            throw new Error('Ненулевая добавка повышенного круга требует ручного применения.');
+        if (active(f, 'globaldamage') && roll(msg, f.globaldamage, 'Глобальная добавка урона', true).total !== 0)
+            throw new Error('Ненулевой Global Damage Modifier требует ручного применения; хиты не списаны.');
+        var sum = 0, found = false, kind=null, types=[];
+        [1, 2].forEach(function (i) {
+            if (!active(f, 'dmg' + i + 'flag')) return;
+            found = true;
+            var type=effectType(f['dmg'+i+'type'])||(!f['dmg'+i+'type']?inferEffectType(f.description||f.desc):null);
+            if(!type)throw new Error('Не определён тип эффекта '+i+' для «'+attackName(f)+'»: '+(blank(f['dmg'+i+'type'])?'поле пусто или строка действия неоднозначна':'получено «'+f['dmg'+i+'type']+'»')+'. Заполните тип урона в строке действия и выполните !npc-fix.');
+            var nextKind=type==='лечение'?'healing':'damage';
+            if(kind&&kind!==nextKind)throw new Error('Разделите лечение и урон на разные действия.');
+            kind=nextKind;types.push(type);
+            var base = roll(msg, f['dmg' + i], 'Урон ' + i, true).total;
+            var extra = 0;
+            if (crit && kind!=='healing') {
+                var cv = f['crit' + i];
+                if (cv === undefined || cv === '') throw new Error('Для крита нажмите критическую кнопку урона из последней атаки.');
+                extra = roll(msg, cv, 'Критический урон ' + i, true).total;
+            }
+            sum += Math.max(0, base + extra);
+        });
+        if (!found) throw new Error('В карточке нет активного урона dmg1/dmg2.');
+        return {amount:sum,healing:kind==='healing',types:types};
+    }
+    function finish(msg, f, p, saveResult) {
+        if (Date.now() - p.time > CONFIG.ttl) throw new Error('Срок атаки истёк. Назначьте цель и повторите атаку.');
+        var c = actor(f, msg, p.actor);
+        var sourceName = f.charname || f.name || '';
+        var npcMessage = ['npcatk', 'npcdmg', 'npcaction'].indexOf(msg.rolltemplate) >= 0;
+        var wrongActor = playerIsGM(msg.playerid) ?
+            (c.id && p.actor && c.id !== p.actor) || (sourceName && p.sourceName && sourceName !== p.sourceName) : c.id !== p.actor;
+        if (wrongActor || npcMessage !== p.npcMessage || attackName(f) !== p.name)
+            throw new Error('Урон не соответствует последней атаке. Используйте её карточку.');
+        if (f.ad5target !== undefined && f.ad5target !== p.target) throw new Error('Цель урона отличается от цели атаки. Повторите атаку.');
+        var t = target(p.target, msg.playerid);
+        if (t.cid !== p.cid) throw new Error('Связь токена с листом изменилась.');
+        var plan = hpPlan(t), temp = tokenTemp(t);
+        if (!p.hit) throw new Error('Нет подтверждённого попадания.');
+        playerEffectFields(msg,f,c.id||p.actor);
+        var effect=damageValue(msg,f,p.die===20), healing=effect.healing, rawDamage=effect.amount;
+        if(healing && blank(plan.max))throw new Error('Для лечения заполните максимальные HP.');
+        var autoNpcSave=false;
+        if(active(f,'save')&&!saveResult){
+            var requestedSpec=saveSpec(msg,f,t.cid);
+            if(isUncontrolledNPC(t.cid)){
+                // NPCs that are not controlled by a player resolve the save silently.
+                // Roll20's randomInteger is used directly, so no chat roll/request is emitted.
+                saveResult=autoNPCSave(requestedSpec);
+                autoNpcSave=true;
+            }else{
+                requestSave(msg,f,p,requestedSpec);
+                return;
+            }
+        }
+        var scaledDamage = rawDamage * p.factor, amount = Math.floor(scaledDamage);
+        var report = ['<b>' + esc(p.name) + '</b> → ' + esc(t.token.get('name') || t.token.id)];
+        if (p.hasAttack) report.push('Атака: d20 ' + dieLabel(p.die) + ', итог ' + p.total + ' против КД ' + p.ac + ' — <b>попадание</b>.');
+        else report.push('Без броска атаки: КД не проверяется.');
+        report.push((healing?'Брошенное лечение':'Брошенный урон') + (p.die === 20 && !healing ? ' (с критическими костями)' : '') + ': ' + rawDamage + '.');
+        if (p.factor !== 1) report.push('Множитель: ' + rawDamage + ' × ' + p.factor + ' = ' + scaledDamage + ' → ' + amount + ' (округление вниз).');
+        report.push('Тип: ' + esc(effect.types.join(', ')) + '.');
+        var rounding = 'Округление эффекта: не требуется.';
+        if (active(f, 'save')) {
+            var spec = saveResult.spec;
+            var saveDie = saveResult.die, total = saveResult.total;
+            var success = total >= spec.dc;
+            record('Спасбросок ' + spec.ability + ': d20=' + saveDie + ', бонус=' + spec.bonus + ', СЛ=' + spec.dc + ', успех=' + success);
+            var labels = { strength: 'Сила', dexterity: 'Ловкость', constitution: 'Телосложение', intelligence: 'Интеллект', wisdom: 'Мудрость', charisma: 'Харизма' };
+            report.push('Спасбросок (' + labels[spec.ability] + '): d20 ' + dieLabel(saveDie) + ' (итог с модификаторами листа)' + ' = ' + total + ' против СЛ ' + spec.dc + ' — <b>' + (success ? 'успех' : 'провал') + '</b>.');
+            if (success && spec.effect==='half') {
+                rounding = 'Половина урона: ' + amount + ' ÷ 2 = ' + (amount / 2) + ' → <b>' + Math.ceil(amount / 2) + '</b> (округление вверх).';
+                amount = Math.ceil(amount / 2);
+            } else if (success && spec.effect==='none') {
+                amount = 0; rounding = 'Успех: нет урона. Округление не требуется.';
+            } else rounding = (success?'Успех':'Провал')+': полный урон. Округление после спасброска не требуется.';
+        }
+        var absorbed=healing?0:Math.min(temp.value,amount);
+        var nextHp=healing?Math.max(plan.value,Math.min(Number(plan.max),plan.value+amount)):Math.max(0,plan.value-amount+absorbed), nextTemp=temp.value-absorbed;
+        delete pending[msg.playerid];
+        var key = String(++sequence);
+        var entry = { tokenId: t.token.id, cid: t.cid, tempBar: temp.bar,sheetHpId:plan.sheetHpId||null,
+            max:plan.max, beforeHp: plan.value, afterHp: nextHp, beforeTemp: temp.value, afterTemp: nextTemp, undone: false };
+        commitHP(t, { value: nextHp, max: plan.max });
+        if (temp.bar) {
+            var unlink = {}, change = {};
+            unlink['bar' + temp.bar + '_link'] = '';
+            change['bar' + temp.bar + '_value'] = nextTemp;
+            t.token.set(unlink); t.token.set(change);
+        }
+        history[key] = entry; historyKeys.push(key);
+        if (historyKeys.length > 100) delete history[historyKeys.shift()];
+        record('Списание ' + key + ': токен=' + t.token.id + ', HP ' + plan.value + ' -> ' + nextHp + ', временные HP ' + temp.value + ' -> ' + nextTemp);
+        report.push(rounding);
+        report.push((healing?'Итоговое лечение: <b>':'Итоговый урон: <b>') + amount + '</b>; поглощено временными HP: ' + absorbed + '.');
+        report.push('HP токена: ' + plan.value + ' → ' + nextHp + (healing?' (восстановлено ':' (списано ') + Math.abs(plan.value-nextHp) + ').');
+        if (temp.bar) report.push('Временные HP: ' + temp.value + ' → ' + nextTemp + '.');
+        report.push('[Отменить](!ad5 undo ' + key + ')');
+        if(p.batch)multiResult(p.batch,p.target,(active(f,'save') ? (success?'успех':'провал') : (healing?'лечение ':'урон ')+amount),key,report.slice(1,-1).join('<br>'));
+        else if(autoNpcSave){
+            // No GM request is emitted for an uncontrolled NPC. Only the final
+            // result with a reversible effect is reported.
+            gm('<b>'+esc(p.name)+' — спасбросок</b><br>'+esc(t.token.get('name')||t.token.id)+' [Отменить](!ad5 undo '+key+')');
+        }else gm(report.join('<br>'));
+    }
+
+    function setup(pid) {
+        if (!playerIsGM(pid)) throw new Error('Установить макрос может только Мастер.');
+        var action = '!ad5 target @{target|Противник|token_id}';
+        var existing = findObjs({ _type: 'macro', name: 'AD5-Target' }).filter(function (m) {
+            return playerIsGM(m.get('_playerid'));
+        });
+        if (existing.length > 1) throw new Error('Найдено несколько GM-макросов AD5-Target. Оставьте один и повторите !ad5 setup.');
+        var macro = existing[0];
+        if (macro) {
+            if (!/^!ad5\s+target\b/i.test(String(macro.get('action') || '')))
+                throw new Error('Имя AD5-Target занято другим макросом. Переименуйте его и повторите setup.');
+            macro.set({ action: action, visibleto: 'all', istokenaction: true });
+        } else {
+            macro = createObj('macro', { name: 'AD5-Target', playerid: pid, visibleto: 'all',
+                istokenaction: true, action: action });
+        }
+        if (!macro || !macro.id || !macro.get('_playerid') || macro.get('action') !== action)
+            throw new Error('Roll20 не подтвердил создание макроса. Откройте Mod Output Console. Прямой запуск: !ad5 target ID');
+        record('Макрос готов: ' + macro.id);
+        return macro;
+    }
+    function inspectTarget(msg, id) {
+        if (!playerIsGM(msg.playerid)) throw new Error('Подробная проверка листа доступна Мастеру.');
+        if (!id && msg.selected && msg.selected.length === 1) id = msg.selected[0]._id;
+        if (!id) throw new Error('Выделите один токен цели и введите !ad5 check.');
+        var t = target(id, msg.playerid), c = getObj('character', t.cid);
+        var lines = ['<b>AD5 ' + VERSION + ': проверка цели</b>', 'Токен: ' + esc(t.token.get('name') || id),
+            'Лист: ' + esc(c.get('name')), 'Слой: ' + esc(t.token.get('layer') || '(не задан)'),
+            'Bar 1: ' + esc(t.token.get('bar1_value')) + ' / ' + esc(t.token.get('bar1_max')) + '; связь: ' + esc(t.token.get('bar1_link') || 'нет — независимая полоса')];
+        ['npc', 'ac', 'npc_ac', 'hp', 'hp_temp'].forEach(function (name) {
+            var a = attr(t.cid, name, true);
+            lines.push(name + ': ' + (a ? esc(a.get('current')) + (name === 'hp' ? ' / ' + esc(a.get('max')) : '') : '<b>атрибут отсутствует</b>'));
+        });
+        lines.push('Отображение: позиция=' + esc(String(t.token.get('bar_location'))) + '; стиль=' + esc(String(t.token.get('compact_bar'))) + '; видно игрокам=' + esc(String(t.token.get('showplayers_bar1'))) + '; цифры=' + esc(String(t.token.get('bar1_num_permission'))));
+        if (!Number.isFinite(Number(t.token.get('bar1_max'))) || Number(t.token.get('bar1_max')) <= 0) lines.push('<b>Для отображения полосы нужен положительный максимум HP.</b>');
+        try { hpPlan(t); tokenTemp(t); var npc = attr(t.cid, 'npc', true); number(attr(t.cid, npc && String(npc.get('current')) === '1' ? 'npc_ac' : 'ac').get('current'), 'КД'); lines.push('<b>Цель готова к списанию HP.</b>'); }
+        catch (e) { lines.push('<b>Блокировка:</b> ' + esc(e.message)); }
+        gm(lines.join('<br>'));
+    }
+    var drafts=Object.create(null), draftSequence=0;
+    function multiGet(id,pid,openOnly){
+        var q=drafts[id];
+        if(!q || Date.now()>q.expires)throw new Error('Выбор целей истёк или не найден. Повторите способность.');
+        if(pid!==q.owner && !playerIsGM(pid))throw new Error('Этот выбор целей принадлежит другому игроку.');
+        actor(q.f,{playerid:pid,who:q.msg.who},q.actor);
+        if(openOnly && q.status!=='choosing')throw new Error('Эффект уже подтверждён.');
+        return q;
+    }
+    function selectionReply(pid,card){
+        // Address the initiating user, including a GM, instead of /w gm.
+        var player=getObj('player',pid);
+        if(player)sendChat('шепот звезд','/w "'+String(player.get('_displayname')).replace(/["\r\n]/g,'')+'" '+card);
+    }
+    function multiView(q,full){
+        var list=q.targets.map(function(x,i){return (i+1)+'. '+esc(x.name);});
+        var areaLabel=q.areaSpec?'Площадь: '+esc(q.areaSpec.raw):'';
+        if(!full){
+            selectionReply(q.owner,'<b>'+esc(q.name)+'</b>: выбрано <b>'+q.targets.length+' / '+q.maxLabel+'</b>.'+(q.targets.length?q.targets.length===1?' Последняя цель: '+esc(q.targets[q.targets.length-1].name):' Последняя цель: '+esc(q.targets[q.targets.length-1].name):''));
+            return;
+        }
+        var choose='[Выбрать цель](!ad5 multi-add '+q.id+' &#64;{target|Выберите цель способности|token_id})';
+        var area=q.areaSpec?'<br>'+areaLabel+' [Создать область](!ad5-area create '+q.id+')':'';
+        var card='<div style="border:1px solid #806443;padding:8px;background:#fffaf0;color:#222">'+
+            '<b>Выберете цели способности</b><br>'+esc(q.name)+' — '+(q.allArea?'все существа в области':'до '+q.max+' существ')+
+            '<br>Выбрано: <b>'+q.targets.length+' / '+q.maxLabel+'</b><br>'+(list.length?list.join('<br>'):'Цели пока не выбраны.')+
+            '<br>'+choose+' [Отмена](!ad5 multi-cancel '+q.id+') [Отменить последнюю цель](!ad5 multi-pop '+q.id+') [Применить](!ad5 multi-apply '+q.id+')'+area+
+            '</div>';
+        selectionReply(q.owner,card);
+    }
+    function multiTargets(q,ids,pid,replace,quiet){
+        var next=replace?[]:q.targets.slice(), seen={};next.forEach(function(x){seen[x.id]=true;});
+        ids.forEach(function(id){
+            if(seen[id])return;var t=target(id,pid), hp=hpPlan(t);
+            if(next.length && getObj('graphic',next[0].id).get('_pageid')!==t.token.get('_pageid'))throw new Error('Все цели должны быть на одной странице.');
+            if(hp.sheetHpId && next.some(function(x){return x.cid===t.cid;}))throw new Error('Несколько токенов одного персонажа изменяют общие HP. Оставьте одну копию.');
+            next.push({id:id,cid:t.cid,name:t.token.get('name')||id});seen[id]=true;
+        });
+        if(!q.allArea && next.length>q.max)throw new Error('Лимит способности: '+q.max+' целей. Уберите лишние цели.');
+        q.targets=next;if(!quiet)multiView(q,false);
+    }
+    function multiStart(msg,f){
+        var parsed=parseDistanceSpec(f.range||f.distance||'');
+        var areaRaw=f.ad5area||'';
+        var areaSpec=parsed.area;
+        if(areaRaw){var parts=String(areaRaw).split('|');if(parts.length>=2)areaSpec={shape:parts[0],size:Number(parts[1]),width:Number(parts[2])||undefined,length:Number(parts[3])||undefined};}
+        var max=Number(f.ad5targets||parsed.targets||0);
+        var allArea=!!areaSpec && !max;
+        if(allArea)max=1000;
+        if(!Number.isInteger(max)||max<1||max>(allArea?1000:50))throw new Error('Количество целей должно быть целым от 1 до 50, либо «все существа в области».');
+        if(['atkdmg','dmg','npcaction','npcdmg'].indexOf(msg.rolltemplate)<0)throw new Error('Для нескольких целей включите Auto Roll Damage & Crit.');
+        var c=actor(f,msg);if(!c.id)throw new Error('Не определён лист способности. Выполните !ad5 buttons.');
+        normalizeIgnoredAttackCheck(msg,f);
+        Object.keys(drafts).forEach(function(k){if(drafts[k].expires<Date.now())delete drafts[k];});
+        if(Object.keys(drafts).length>=100)throw new Error('Слишком много активных применений.');
+        var id='m'+Date.now().toString(36)+'-'+(++draftSequence);
+        var q={id:id,owner:msg.playerid,actor:c.id,msg:JSON.parse(JSON.stringify(msg)),f:JSON.parse(JSON.stringify(f)),name:attackName(f),max:max,maxLabel:allArea?'∞':String(max),allArea:allArea,areaSpec:areaSpec?{raw:(f.range||f.distance||'площадной эффект'),shape:areaSpec.shape,size:areaSpec.size,width:areaSpec.width,length:areaSpec.length}:null,targets:[],results:{},status:'choosing',processing:false,compactSaveReport:false,expires:Date.now()+3600000};
+        drafts[id]=q;
+        // Area abilities switch directly to the placement workflow. The player
+        // gets a movable/rotatable template and only one final Apply button.
+        // If Areas is not installed yet, keep the previous target panel as a
+        // safe fallback.
+        if(areaSpec && typeof AD5Areas!=='undefined' && AD5Areas && typeof AD5Areas.begin==='function'){
+            AD5Areas.begin(id,msg.playerid);
+            return id;
+        }
+        multiView(q,true);return id;
+    }
+    function multiResult(id,tid,status,key,details){
+        var q=drafts[id];if(!q)return;
+        q.results[tid]={status:status,key:key||null,details:details||''};
+        if(!q.processing)multiReport(q);
+    }
+    function multiReport(q){
+        if(q.compactSaveReport){
+            var saveLines=q.targets.map(function(t){
+                var r=q.results[t.id]||{status:'ожидается'},h=r.key&&history[r.key];
+                if(!h)return esc(t.name)+' — '+esc(r.status);
+                return esc(t.name)+' — '+esc(r.status)+' '+(h.undone?'[Восстановить](!ad5 redo '+r.key+')':'[Отменить](!ad5 undo '+r.key+')');
+            });
+            for(var si=0;si<saveLines.length;si+=12)gm('<b>'+esc(q.name)+' — спасброски</b><br>'+saveLines.slice(si,si+12).join('<br>'));
+            return;
+        }
+        var lines=q.targets.map(function(t){var r=q.results[t.id]||{status:'ожидается'};
+            var h=r.key&&history[r.key];
+            return esc(t.name)+' — '+esc(r.status)+(h?' · HP '+h.beforeHp+' → '+h.afterHp+
+                (h.undone?' · отменено [Восстановить](!ad5 redo '+r.key+')':' [Отменить](!ad5 undo '+r.key+')'):'')+(r.details?'<br>'+r.details:'');
+        });
+        for(var i=0;i<lines.length;i+=8)gm('<b>'+esc(q.name)+' · '+q.id+'</b><br>'+lines.slice(i,i+8).join('<br><br>')+'<br>[Обновить отчёт](!ad5 multi-report '+q.id+')');
+    }
+    function multiApply(q,pid){
+        if(!q.targets.length)throw new Error('Сначала выберите хотя бы одну цель.');
+        // Validate every target before any HP write, including captured identity.
+        var playerSaveRequests=0,allUncontrolledNPC=true;
+        q.targets.forEach(function(x){
+            var t=target(x.id,pid);
+            if(t.cid!==x.cid)throw new Error('Лист цели изменился: '+x.name);
+            hpPlan(t);tokenTemp(t);
+            if(active(q.f,'save')){
+                saveSpec(q.msg,q.f,t.cid);
+                if(isUncontrolledNPC(t.cid)){}else{playerSaveRequests++;allUncontrolledNPC=false;}
+            }
+        });
+        var f=JSON.parse(JSON.stringify(q.f));playerEffectFields(q.msg,f,q.actor);damageValue(q.msg,f,false);
+        if(active(f,'save') && Object.keys(saveRequests).length+playerSaveRequests>100)throw new Error('Недостаточно места для запросов спасбросков.');
+        q.compactSaveReport=active(f,'save')&&allUncontrolledNPC;
+        q.status='applied';q.processing=true;
+        q.targets.forEach(function(x){
+            var m=JSON.parse(JSON.stringify(q.msg));
+            m.content=m.content.replace(/\s*{{ad5targets=[\s\S]*?}}/g,'').replace(/\s*{{ad5target=[\s\S]*?}}/g,'')+' {{ad5target='+x.id+'}}';
+            processMessage(m,{batch:q.id,tid:x.id});
+        });
+        q.processing=false;multiReport(q);
+    }
+    function configureMulti(msg){
+        var m=/^!ad5 multi-config\s+(\d+)\s*\|\s*(.+)$/.exec(msg.content.trim());
+        if(!m)throw new Error('Формат: !ad5 multi-config 3 | Название способности. Выделите токен владельца.');
+        var n=Number(m[1]);if(n<1||n>50)throw new Error('Лимит 1–50. 1 отключает выбор нескольких целей.');
+        if(!msg.selected||msg.selected.length!==1)throw new Error('Выделите один токен владельца способности.');
+        var t=getObj('graphic',msg.selected[0]._id),c=t&&getObj('character',t.get('represents'));
+        if(!c||!canControl(c,msg.playerid))throw new Error('Нет управления листом.');
+        var rows=findObjs({_type:'attribute',_characterid:c.id}).filter(function(a){return /^repeating_(?:attack|npcaction(?:-[lb])?|npcreaction|npcbonusaction)_.+_(?:atkname|name)$/.test(a.get('name'))&&String(a.get('current')).trim()===m[2].trim();});
+        if(rows.length!==1)throw new Error('Нужно уникальное название способности в листе.');
+        var prefix=rows[0].get('name').replace(/(?:atkname|name)$/,'');
+        var a=attr(c.id,prefix+'ad5_targets',true);if(a)a.set('current',n);else createObj('attribute',{characterid:c.id,name:prefix+'ad5_targets',current:n});
+        patchAllButtons();reply(msg.playerid,'Лимит «'+esc(m[2])+'»: '+n+'. Используйте новую карточку.');
+    }
+    function multiCommand(msg,args){
+        var sub=args[1],pid=msg.playerid;
+        if(sub==='multi-config'){configureMulti(msg);return;}
+        var q=multiGet(args[2],pid,!['multi-report','multi-cancel'].includes(sub));
+        if(sub==='multi-report'){if(!playerIsGM(pid))throw new Error('Отчёт доступен мастеру.');multiReport(q);}
+        else if(sub==='multi-add')multiTargets(q,[args[3]],pid,false);
+        else if(sub==='multi-selected')multiTargets(q,(msg.selected||[]).filter(function(x){return x._type==='graphic';}).map(function(x){return x._id;}),pid,false);
+        else if(sub==='multi-pop'){q.targets.pop();multiView(q);}
+        else if(sub==='multi-remove'){q.targets=q.targets.filter(function(x){return x.id!==args[3];});multiView(q);}
+        else if(sub==='multi-apply')multiApply(q,pid);
+        else if(sub==='multi-cancel'){if(q.status!=='choosing')throw new Error('Применённый эффект отменяйте кнопками отчёта.');q.status='cancelled';selectionReply(q.owner,'Выбор целей отменён. Эффект не применён.');}
+        else throw new Error('Неизвестная команда выбора целей.');
+    }
+    function historyChange(key,pid,redo){
+        if(!playerIsGM(pid))throw new Error('Отмена и восстановление доступны мастеру.');
+        if(key==='last')key=historyKeys[historyKeys.length-1];
+        var h=history[key];if(!h || h.undone!==redo)throw new Error('Эффект уже в нужном состоянии или запись не найдена.');
+        var t=target(h.tokenId,pid),p=hpPlan(t),expected=redo?h.beforeHp:h.afterHp,temp=redo?h.beforeTemp:h.afterTemp;
+        if(t.cid!==h.cid || (p.sheetHpId||null)!==(h.sheetHpId||null) || p.value!==expected || String(p.max)!==String(h.max) || number(t.token.get('bar1_value'),'HP токена')!==expected ||
+            (h.tempBar&&(t.token.get('bar'+h.tempBar+'_link')||number(t.token.get('bar'+h.tempBar+'_value'),'Временные HP')!==temp)))throw new Error('HP, максимум или связь изменились. Отмена/восстановление остановлены.');
+        var value=redo?h.afterHp:h.beforeHp;commitHP(t,{value:value,max:p.max});
+        if(h.tempBar)t.token.set('bar'+h.tempBar+'_value',redo?h.afterTemp:h.beforeTemp);
+        h.undone=!redo;
+        gm((redo?'Восстановлено':'Отменено')+' · '+esc(t.token.get('name')||h.tokenId)+' [Отменить](!ad5 undo '+key+') [Восстановить](!ad5 redo '+key+')');
+    }
+
+    function command(msg) {
+        var args = msg.content.trim().split(/\s+/), sub = (args[1] || 'help').toLowerCase(), pid = msg.playerid;
+        if(sub.indexOf('multi-')===0){multiCommand(msg,args);return;}
+        if(['save','save-cancel','saves'].indexOf(sub)>=0){saveCommand(msg,args);return;}
+        if (sub === 'visibility') {
+            if (!playerIsGM(pid)) throw new Error('Настройку видимости выполняет GM.');
+            AD5HealthView.refresh(); gm('Видимость HP и маркеры состояния обновлены.'); return;
+        }
+        if (sub === 'state' || sub === 'condition') {
+            var stateSub=(args[2]||'list').toLowerCase();
+            if(stateSub==='list'){
+                reply(pid,'<b>Маркеры состояний AD5</b><br>'+AD5Conditions.list().map(function(x){return '<code>'+x.state+'</code> → '+esc(x.marker)+' — '+esc(x.ru)+(x.core?' · D&D 5e':'');}).join('<br>'));
+                return;
+            }
+            var stateName=args.slice(3).join(' ')||stateSub;
+            var enabled=true;
+            if(stateSub==='remove'||stateSub==='clear'){enabled=false;stateName=args.slice(3).join(' ');}
+            var tokenId=(msg.selected&&msg.selected.length===1)?msg.selected[0]._id:null;
+            if(!tokenId && args[3] && getObj('graphic',args[3])){tokenId=args[3];stateName=args.slice(4).join(' ');}
+            if(!tokenId)throw new Error('Выделите один токен.');
+            var st=AD5Conditions.key(stateName);if(!st)throw new Error('Неизвестное состояние: '+stateName+'. Используйте !ad5 state list.');
+            var tt=getObj('graphic',tokenId), cc=tt&&getObj('character',tt.get('represents'));
+            if(!tt||!cc)throw new Error('У токена должен быть привязан лист персонажа.');
+            if(!canControl(cc,pid))throw new Error('Нет управления этим токеном.');
+            AD5Conditions.set(tt,st,enabled);
+            reply(pid,(enabled?'Добавлено':'Снято')+': <b>'+esc(AD5Conditions.map[st].ru)+'</b> ('+esc(AD5Conditions.map[st].marker)+').');
+            return;
+        }
+        if (sub === 'buttons') {
+            if (!playerIsGM(pid)) throw new Error('Обновление кнопок доступно Мастеру.');
+            var updated = patchAllButtons();
+            reply(pid, 'Встроенный выбор цели включён. Обновлено кнопок: ' + updated + '. Нажимайте атаку в листе — Roll20 предложит выбрать цель.');
+            return;
+        }
+        if (sub === 'actor') {
+            if (args[2] === 'clear') {
+                delete boundActors[pid]; delete armed[pid]; delete pending[pid];
+                reply(pid, 'Назначение атакующего сброшено.'); return;
+            }
+            var actorId = args[2];
+            if (!actorId) {
+                if (!msg.selected || msg.selected.length !== 1)
+                    throw new Error('Выделите один токен АТАКУЮЩЕГО и введите !ad5 actor.');
+                actorId = msg.selected[0]._id;
+            }
+            var actorToken = getObj('graphic', actorId);
+            var chosen = getObj('character', actorToken ? actorToken.get('represents') : actorId);
+            if (!chosen) throw new Error('У токена атакующего не указан лист в Represents Character.');
+            if (!canControl(chosen, pid)) throw new Error('Нет управления листом выбранного атакующего.');
+            boundActors[pid] = chosen.id;
+            delete armed[pid]; delete pending[pid];
+            record('Назначен атакующий для ' + pid + ': ' + chosen.id);
+            reply(pid, 'Атакующий: <b>' + esc(chosen.get('name')) + '</b>. Теперь выберите противника через AD5-Target и бросьте атаку.');
+            return;
+        }
+        if (sub === 'ping' || sub === 'status') {
+            var currentActor = getObj('character', boundActors[pid]);
+            reply(pid, '<b>AD5 ' + VERSION + ' работает.</b> Макросов AD5-Target: ' +
+                findObjs({ _type: 'macro', name: 'AD5-Target' }).length + '.<br>Ваша цель: ' +
+                (armed[pid] ? 'назначена' : 'не назначена') + '; ожидаемый урон: ' + (pending[pid] ? 'есть' : 'нет') +
+                '.<br>Атакующий: ' + (playerIsGM(pid) ? 'GM — любой лист, назначение не требуется' : currentActor ? esc(currentActor.get('name')) : 'определяется по броску') +
+                '.<br>[Выбрать цель](!ad5 target &#64;{target|Противник|token_id})');
+            return;
+        }
+        if (sub === 'hp-fix') {
+            if (!playerIsGM(pid)) throw new Error('Ремонт HP выполняет GM.');
+            if (!msg.selected || msg.selected.length !== 1) throw new Error('Выделите один токен.');
+            var healthTarget = target(msg.selected[0]._id, pid);
+            commitHP(healthTarget, hpPlan(healthTarget));
+            reply(pid, 'HP токена подготовлены; связь с листом отключена.'); return;
+        }
+        if (sub === 'check') { inspectTarget(msg, args[2]); return; }
+        if (sub === 'debug' || sub === 'report') {
+            if (!playerIsGM(pid)) throw new Error('Диагностика только для Мастера.');
+            if (sub === 'debug') {
+                if (args[2] !== 'on' && args[2] !== 'off') throw new Error('Используйте !ad5 debug on или !ad5 debug off.');
+                debug = args[2] === 'on'; gm('Диагностика ' + (debug ? 'включена.' : 'выключена.'));
+            } else gm('<b>AD5 ' + VERSION + ' — последние события</b><br>' + (diagnostics.map(esc).join('<br>') || 'Пока нет событий.'));
+            return;
+        }
+        if (sub === 'help') {
+            reply(pid, 'Название → выбор цели → автоматическая атака и урон; при промахе сообщение в чат. Отдельный макрос не нужен.<br>' +
+                'Назначить: <code>!ad5 target ID</code>; сбросить: <code>!ad5 cancel</code>.<br>' +
+                'GM: атака из любого PC/NPC листа, <code>!ad5 actor</code> не требуется. Обновить кнопки: <code>!ad5 buttons</code>.<br>' +
+                'Игрок: при неоднозначном скрытом имени выделите свой токен и введите <code>!ad5 actor</code>. Сброс: <code>!ad5 actor clear</code>.<br>' +
+                'Мастер: <code>!ad5 setup</code> создаёт/восстанавливает макрос; <code>!ad5 check</code> проверяет выбранный токен.<br>' +
+                '<code>!ad5 ping</code> — проверка запуска; <code>!ad5 debug on</code> — диагностика; <code>!ad5 report</code> — отчёт.'); return;
+        }
+        if (sub === 'cancel') { delete armed[pid]; delete pending[pid]; reply(pid, 'Цель и ожидаемый урон сброшены.'); return; }
+        if (sub === 'setup') {
+            setup(pid);
+            reply(pid, 'AD5-Target установлен: выберите свой токен, кнопка появится среди действий токена. ' +
+                'Также можно включить In Bar у макроса в Collections.'); return;
+        }
+        if(sub==='undo'||sub==='redo'){historyChange(args[2],pid,sub==='redo');return;}
+        if (sub !== 'target') throw new Error('Неизвестная команда. !ad5 help');
+        delete armed[pid]; delete pending[pid];
+        var index = 2, id;
+        if (args[index] && args[index].indexOf('--') !== 0) id = args[index++];
+        if (!id) {
+            if (!msg.selected || msg.selected.length !== 1) throw new Error('Укажите цель через AD5-Target или выделите ровно один токен.');
+            id = msg.selected[0]._id;
+        }
+        var mode = 'normal', factor = 1, seen = {};
+        while (index < args.length) {
+            var k = args[index++], v = args[index++];
+            if (seen[k]) throw new Error('Повторный параметр.'); seen[k] = true;
+            if (k === '--mode' && ['normal', 'adv', 'dis'].indexOf(v) >= 0) mode = v;
+            else if (k === '--factor' && ['0', '0.5', '1', '2'].indexOf(v) >= 0) factor = Number(v);
+            else throw new Error('Параметры: --mode normal/adv/dis; --factor 0/0.5/1/2.');
+        }
+        var t = target(id, pid);
+        armed[pid] = { target: id, cid: t.cid, time: Date.now(), mode: mode, factor: factor };
+        record('Цель назначена игроком ' + pid + ': ' + id);
+        reply(pid, 'Цель на следующую атаку: <b>' + esc(t.token.get('name') || 'Токен') + '</b>. Теперь бросьте атаку из своего листа.');
+    }
+    function processMessage(msg,context) {
+        if (!msg.playerid || msg.playerid === 'API' || !getObj('player', msg.playerid)) return;
+        try {
+            if (msg.type === 'api' && /^!ad5(?:\s|$)/i.test(msg.content)) { command(msg); return; }
+            if(acceptSheetSave(msg))return;
+            if (msg.rolltemplate) record('Получен шаблон=' + msg.rolltemplate + '; игрок=' + msg.playerid);
+            var isAtk = attackTemplates.indexOf(msg.rolltemplate) >= 0;
+            var isDmg = damageTemplates.indexOf(msg.rolltemplate) >= 0;
+            if (!isAtk && !isDmg) return;
+            var pid = msg.playerid;
+            var f = fields(msg.content);
+            record('Поля: ' + Object.keys(f).join(', '));
+            var distanceSpec=parseDistanceSpec(f.range||f.distance||'');
+            if(!context && (Number(f.ad5targets)>1 || distanceSpec.targets>1 || !!distanceSpec.area || !!f.ad5area)){multiStart(msg,f);return;}
+            var hasSave = active(f, 'save');
+            // Combined templates may retain r1/r2 even with Attack unchecked.
+            // An enabled save does not make these hidden fields an attack.
+            var attackFlag = active(f, 'attack') && !/^(?:false|off)$/i.test(f.attack);
+            var hasAttack = hasSave ? attackFlag : (f.attack !== undefined ? attackFlag : !!f.r1);
+            // Empty/constant/non-d20 attack fields occur in damage-only player
+            // effects. Do not convert an unreadable roll or ambiguous d20 to a hit.
+            if(hasAttack) {
+                hasAttack=!blank(f.r1) && includesD20(roll(msg,f.r1,'Атака',true));
+            }
+            if(hasAttack && hasSave && !saveAffectsDamage(f)) {
+                // This is an attack + characteristic check whose success text
+                // does not specify half/no damage. The check is intentionally
+                // ignored by AD5; the attack damage is applied normally.
+                f.save='0';
+                hasSave=false;
+                record('Проверка характеристики после атаки не влияет на урон: эффект разыгрывается вне AD5.');
+            }
+            if (hasAttack && !f.r1)
+                throw new Error('В карточке нет основного броска r1. Для NPC Forge установите версию 2.4.6, выделите атакующего NPC и выполните !npc-fix.');
+            var automatic=isDmg&&!hasAttack&&!hasSave&&(active(f,'dmg1flag')||active(f,'dmg2flag'))&&(['npcaction','atkdmg'].indexOf(msg.rolltemplate)>=0||active(f,'ad5auto'));
+            if ((isAtk && hasAttack) || (isDmg && hasSave) || automatic) {
+                // Every new attack supersedes pending damage, even when invalid/unarmed.
+                delete pending[pid];
+                var a = armed[pid]; delete armed[pid];
+                if (f.ad5target !== undefined) {
+                    // An inline target always supersedes an old macro target.
+                    // An invalid inline target must not fall back to another enemy.
+                    var inlineTarget = target(f.ad5target, pid);
+                    a = { target: inlineTarget.token.id, cid: inlineTarget.cid, mode: 'normal', factor: 1, time: Date.now() };
+                }
+                if (a && Date.now() - a.time > CONFIG.ttl) a = null;
+                if (!a) throw new Error('Цель атаки не выбрана. GM: выполните !ad5 buttons и повторите Название атаки.'); 
+                var c = actor(f, msg), t = a.target ? target(a.target, pid) : null;
+                if (t && t.cid !== a.cid) throw new Error('Лист цели изменился.');
+                var r = hasAttack ? roll(msg, f.r1, 'Атака') : { total: 0 }, mode = a.mode;
+                if (active(f, 'advantage')) mode = 'adv';
+                else if (active(f, 'disadvantage')) mode = 'dis';
+                else if (active(f, 'normal')) mode = 'normal';
+                if (hasAttack && mode !== 'normal') {
+                    var second = roll(msg, f.r2, 'Вторая атака');
+                    if ((mode === 'adv' && second.total > r.total) || (mode === 'dis' && second.total < r.total)) r = second;
+                }
+                var name = attackName(f); if (!name) throw new Error('В шаблоне нет названия атаки.');
+                var npc = attr(t.cid, 'npc', true);
+                var ac = hasAttack ? number(attr(t.cid, npc && String(npc.get('current')) === '1' ? 'npc_ac' : 'ac').get('current'), 'КД') : 0;
+                var die = hasAttack ? d20(r) : 0;
+                if(hasAttack && die===null && CONFIG.naturalHitRules)throw new Error('Не выделен натуральный d20 для правила автоматического попадания/промаха. Используйте обычный бросок 1d20 либо отключите CONFIG.naturalHitRules.');
+                var hit = !hasAttack || (CONFIG.naturalHitRules ? die !== 1 && (die === 20 || r.total >= ac) : r.total >= ac);
+                // Only fixed, non-sensitive text is published to all players.
+                if (!hit) {
+                    sendChat('шепот звезд', 'промах');
+                    if(context)multiResult(context.batch,context.tid,'промах');
+                    gm('<b>' + esc(name) + '</b> → ' + esc(t.token.get('name') || t.token.id) + '<br>Атака: d20 ' + dieLabel(die) + ', итог ' + r.total + ' против КД ' + ac + ' — <b>промах</b>.<br>Применённый урон: 0. Округление не требуется. HP не изменены; отменять нечего.');
+                    return;
+                }
+                if(hasAttack)sendChat('Шепот звезд','попадание');
+                if (hasAttack) record('Проверка атаки: итог=' + r.total + ', КД=' + ac + ', попадание=' + hit);
+                else record(hasSave?'Спасбросок без проверки КД.':'Автоматический эффект без атаки и спасброска.');
+                if (hit) pending[pid] = { actor: c.id, sourceName: f.charname || f.name || '',
+                    npcMessage: ['npcatk', 'npcaction', 'npcdmg'].indexOf(msg.rolltemplate) >= 0,
+                    name: name, target: a.target, cid: a.cid, hit: true, ac: ac, hasAttack: hasAttack,
+                    total: r.total, die: die, factor: a.factor, time: Date.now(), batch:context?context.batch:null };
+                if (!isDmg || !(active(f, 'dmg1flag') || active(f, 'dmg2flag'))) {
+                    if(msg.rolltemplate==='atk') {
+                        gm('Попадание подтверждено. Ожидается урон из этой карточки атаки (до 2 минут).');
+                        return;
+                    }
+                    delete pending[pid];
+                    throw new Error('Включите в листе Auto Roll Damage & Crit и повторите атаку.');
+                }
+                var applied = pending[pid];
+                delete pending[pid];
+                finish(msg, f, applied);
+                return;
+            }
+            // A player damage button may consume one pending split attack.
+            // Completed combined cards and NPC cards cannot be reused here.
+            if(msg.rolltemplate==='dmg' && !hasAttack && !hasSave && !active(f,'ad5auto')) {
+                var waiting=pending[pid];
+                if(!waiting || waiting.npcMessage || !waiting.hasAttack)return;
+                // Keep a mismatched request available; consume a matching one
+                // before applying HP so replay cannot apply damage twice.
+                var source=actor(f,msg,waiting.actor);
+                if(source.id!==waiting.actor || attackName(f)!==waiting.name)
+                    throw new Error('Кнопка урона не соответствует ожидающей атаке.');
+                delete pending[pid];
+                finish(msg,f,waiting);
+            }
+
+        } catch (e) {
+            if(context)multiResult(context.batch,context.tid,'ошибка: '+e.message);
+            record('Ошибка: ' + e.message);
+            log('AD5 ' + VERSION + ': ' + (e.stack || e.message));
+            reply(msg.playerid, 'AD5 ' + VERSION + ': ' + esc(e.message));
+        }
+    }
+    on('chat:message',function(msg){processMessage(msg,null);});
+    on('add:attribute', function (a) {
+        try { patchAttackButton(a); if (String(a.get('name')).toLowerCase() === 'npc') AD5HealthView.refresh(a.get('_characterid')); } catch (e) { log('AD5 button: ' + e.message); }
+    });
+    on('change:attribute', function (a) {
+        try { patchAttackButton(a); if (String(a.get('name')).toLowerCase() === 'npc') AD5HealthView.refresh(a.get('_characterid')); } catch (e) { log('AD5 button: ' + e.message); }
+    });
+    on('add:graphic', AD5HealthView.update);
+    on('change:graphic', AD5HealthView.update);
+    on('change:character:controlledby', function (c) { AD5HealthView.refresh(c.id); });
+    on('destroy:attribute', function (a) { if (String(a.get('name')).toLowerCase() === 'npc') AD5HealthView.refresh(a.get('_characterid')); });
+    on('ready', function () {
+        AD5HealthView.refresh();
+        log('AD5 ' + VERSION + ' loaded');
+        gm('<b>AD5 ' + VERSION + ' запущен.</b> Проверка: !ad5 ping. Диагностика цели: !ad5 check.');
+        try {
+            var patched = patchAllButtons();
+            gm('Выбор цели встроен в кнопки атак. Обновлено: ' + patched + '. Нажмите атаку в листе и укажите противника. Повторное обновление: !ad5 buttons.');
+        } catch (e) {
+            log('AD5 setup: ' + (e.stack || e.message));
+            gm('AD5 работает, но кнопки обновлены не полностью: ' + esc(e.message));
+        }
+    });
+    return {version:VERSION,parseDistanceSpec:parseDistanceSpec,conditions:AD5Conditions,multi:{
+        get:function(id,pid){var q=multiGet(id,pid,true);return {id:q.id,actor:q.actor,owner:q.owner,max:q.max,maxLabel:q.maxLabel,allArea:q.allArea,areaSpec:q.areaSpec,status:q.status,selected:q.msg.selected||[]};},
+        setTargets:function(id,pid,ids,quiet){multiTargets(multiGet(id,pid,true),ids,pid,true,!!quiet);},
+        apply:function(id,pid){multiApply(multiGet(id,pid,true),pid);},
+        cancel:function(id,pid){var q=multiGet(id,pid,true);if(q.status!=='choosing')throw new Error('Применение уже завершено.');q.status='cancelled';return true;}
+    }};
+}());
