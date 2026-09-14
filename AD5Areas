@@ -1,0 +1,199 @@
+/* AD5 Areas 1.3 — одноразовые площадные эффекты для AD5 3.7.
+ * Игрокский сценарий: нажать способность → шаблон появляется сам →
+ * игрок перемещает/поворачивает его → «Применить» → AD5 выполняет эффект.
+ * Мастер не выбирает цели и не участвует в запуске.
+ * Roll20 Mod/API не даёт API для перехвата клика по произвольной пустой точке карты,
+ * поэтому шаблон создаётся сразу в позиции токена-источника (или в центре страницы)
+ * и является обычным управляемым объектом, который игрок может свободно перетащить.
+ */
+var AD5Areas=(function(){
+    'use strict';
+    var VERSION='1.3';
+    function db(){if(!state.AD5Areas)state.AD5Areas={areas:{}};return state.AD5Areas.areas;}
+    function escape(s){return String(s).replace(/[&<>"'{}\[\]|\r\n]/g,function(c){return '&#'+c.charCodeAt(0)+';';});}
+    function tell(pid,s){
+        var p=getObj('player',pid);if(!p)return;
+        sendChat('Области','/w "'+String(p.get('_displayname')).replace(/["\r\n]/g,'')+'" '+s,null,{noarchive:true});
+    }
+    function api(){if(typeof AD5==='undefined'||!AD5.multi||parseInt(AD5.version,10)<3)throw new Error('Нужен включённый AutoDamage AD5 3.0 или новее.');return AD5.multi;}
+    function positive(x,label){var v=Number(x);if(!Number.isFinite(v)||v<=0||v>10000)throw new Error(label+': число больше 0, не более 10000.');return v;}
+    function playerPageId(pid){
+        var c=Campaign(), specific=c.get('playerspecificpages')||{};
+        return specific[pid]||c.get('playerpageid');
+    }
+    function canControlCharacter(cid,pid){
+        if(playerIsGM(pid))return true;
+        var c=getObj('character',cid);if(!c)return false;
+        return String(c.get('controlledby')||'').split(',').some(function(x){x=String(x).trim();return x===pid||x==='all';});
+    }
+    function characterIsNPC(cid){
+        var a=cid&&getObj('character',cid)?findObjs({_type:'attribute',_characterid:cid}).filter(function(x){return String(x.get('name')).toLowerCase()==='npc';})[0]:null;
+        return !!a && String(a.get('current'))==='1';
+    }
+    function characterIsPlayerControlled(cid){
+        var c=getObj('character',cid);if(!c)return false;
+        return String(c.get('controlledby')||'').split(',').some(function(id){
+            id=String(id).trim();
+            return id==='all'||(!!getObj('player',id)&&!playerIsGM(id));
+        });
+    }
+    function pageToken(id,pageId){
+        var t=getObj('graphic',id);
+        if(!t||t.get('_subtype')!=='token'||t.get('_pageid')!==pageId||t.get('layer')!=='objects')throw new Error('Укажите токен NPC на текущей странице.');
+        return t;
+    }
+    function sourceToken(q,pid,sourceId){
+        var page=playerPageId(pid);
+        if(sourceId){
+            var selectedToken=pageToken(sourceId,page);
+            if(selectedToken.get('represents')!==q.actor)throw new Error('Выбранный токен не представляет NPC/персонажа способности.');
+            return selectedToken;
+        }
+        var selected=(q.selected||[]).filter(function(x){return x._type==='graphic';}).map(function(x){return getObj('graphic',x._id);}).filter(Boolean);
+        var matching=selected.filter(function(t){return t.get('_subtype')==='token'&&t.get('represents')===q.actor&&t.get('_pageid')===page;});
+        if(matching.length)return matching[0];
+        var npc=characterIsNPC(q.actor), playerNpc=characterIsPlayerControlled(q.actor);
+        // A player-controlled NPC is deliberately never auto-resolved: the
+        // player must tell AD5 which physical NPC token is casting the area.
+        if(npc && playerNpc)return null;
+        var tokens=findObjs({_type:'graphic',_subtype:'token',_pageid:page,layer:'objects'}).filter(function(t){return t.get('represents')===q.actor;});
+        // For ordinary player characters, use the only/first represented token.
+        // Uncontrolled NPCs are handled by the GM selection workflow below.
+        if(!npc && tokens.length)return tokens[0];
+        if(npc && playerIsGM(pid) && tokens.length===1)return tokens[0];
+        return null;
+    }
+    function sourcePrompt(q,pid,reason){
+        var target='!ad5-area source '+q.id+' &#64;{target|Токен NPC|token_id}';
+        if(reason==='gm'){
+            gmPrompt('<b>'+escape(q.name)+'</b><br>Выберите токен NPC, из которого создаётся область.<br>[Указать токен NPC]('+target+') [Отмена](!ad5-area cancel '+q.id+')');
+        }else{
+            tell(pid,'<b>'+escape(q.name)+'</b><br>Выберите токен NPC, из которого создаётся область.<br>[Указать токен NPC]('+target+') [Отмена](!ad5-area cancel '+q.id+')');
+        }
+    }
+    function gmPrompt(s){sendChat('Области','/w gm '+s,null,{noarchive:true});}
+    function shapePoints(shape,w,h){
+        if(shape==='circle'){
+            var out=[];for(var i=0;i<=64;i++){var a=i*Math.PI/32;out.push([i?'L':'M',w/2+w/2*Math.cos(a),h/2+h/2*Math.sin(a)]);}return out;
+        }
+        if(shape==='cone')return [['M',w/2,h],['L',0,0],['L',w,0],['L',w/2,h]];
+        return [['M',0,0],['L',w,0],['L',w,h],['L',0,h],['L',0,0]];
+    }
+    function createTemplate(q,pid,sourceId){
+        var spec=q.areaSpec;
+        if(!spec)throw new Error('В способности не определена площадь.');
+        var shape=spec.shape,size=positive(spec.size,'Размер');
+        if(['circle','square','cone','line'].indexOf(shape)<0)throw new Error('Неподдерживаемая форма области: '+shape+'.');
+        var pageId=playerPageId(pid),page=getObj('page',pageId);if(!page)throw new Error('Страница игрока не найдена.');
+        var source=sourceToken(q,pid,sourceId),unit=positive(page.get('scale_number')||5,'Масштаб страницы'),factor=70/unit;
+        var width=shape==='line'?positive(spec.width||5,'Ширина'):size;
+        var length=shape==='line'?positive(spec.length||size,'Длина'):size;
+        var w=(shape==='circle'?2*size:width)*factor,h=(shape==='circle'?2*size:length)*factor;
+        if(w>100000||h>100000)throw new Error('Область слишком велика для страницы.');
+        var left,top;
+        if(source){left=Number(source.get('left'));top=Number(source.get('top'));}
+        else {left=Number(page.get('width')||33)*70/2;top=Number(page.get('height')||20)*70/2;}
+        var pathProps={_pageid:page.id,layer:'objects',_path:JSON.stringify(shapePoints(shape,w,h)),width:w,height:h,left:left,top:top,rotation:0,scaleX:1,scaleY:1,stroke:'#ff9900',stroke_width:3,fill:'transparent',controlledby:pid};
+        var path=createObj('path',pathProps);if(!path)throw new Error('Не удалось создать шаблон области.');
+        db()[path.id]={id:path.id,draft:q.id,owner:pid,shape:shape,page:page.id,w:w,h:h,source:source?source.id:null};
+        return path;
+    }
+    function begin(id,pid,overrideSpec){
+        var q=api().get(id,pid);if(overrideSpec)q.areaSpec=overrideSpec;if(!q.areaSpec)throw new Error('В способности не определена площадь.');
+        var npc=characterIsNPC(q.actor), playerNpc=characterIsPlayerControlled(q.actor);
+        if(npc && !playerNpc && !playerIsGM(pid))throw new Error('Эта способность принадлежит NPC под управлением Мастера. Токен выбирает Мастер.');
+        var source=sourceToken(q,pid,null);
+        if(!source && npc){
+            // NPCs require an explicit physical token. A player-controlled NPC
+            // asks its controller; an uncontrolled NPC asks the GM.
+            sourcePrompt(q,playerNpc?pid:'gm',playerNpc?'player':'gm');
+            return q.id;
+        }
+        if(!source)throw new Error('Не найден токен персонажа способности на текущей странице.');
+        var path=createTemplate(q,pid,source.id);
+        var count=q.allArea?'все существа':('до '+q.max+' существ');
+        tell(pid,'<b>'+escape(q.name)+'</b><br>Шаблон создан на месте токена <b>'+escape(source.get('name')||source.id)+'</b>: '+escape(q.areaSpec.raw||q.areaSpec.shape)+' · '+escape(count)+'.<br><b>Переместите и поверните шаблон на поле.</b><br>[Применить](!ad5-area apply '+path.id+') [Отмена](!ad5-area cancel '+path.id+')');
+        return path.id;
+    }
+    function owned(id,pid){var a=db()[id];if(!a)throw new Error('Шаблон области не найден.');if(a.owner!==pid&&!playerIsGM(pid))throw new Error('Этот шаблон принадлежит другому игроку.');return a;}
+    function contains(a,path,token){
+        var dx=Number(token.get('left'))-Number(path.get('left')),dy=Number(token.get('top'))-Number(path.get('top'));
+        var r=Number(path.get('rotation')||0)*Math.PI/180,x=dx*Math.cos(r)+dy*Math.sin(r),y=-dx*Math.sin(r)+dy*Math.cos(r),e=1e-7;
+        if(a.shape==='circle')return x*x+y*y<=(a.w/2)*(a.w/2)+e;
+        if(a.shape==='cone'){var depth=a.h/2-y;return depth>=-e&&depth<=a.h+e&&Math.abs(x)<=depth*a.w/(2*a.h)+e;}
+        return Math.abs(x)<=a.w/2+e&&Math.abs(y)<=a.h/2+e;
+    }
+    function collect(a,path,pid){
+        var ids=findObjs({_type:'graphic',_subtype:'token',_pageid:a.page,layer:'objects'}).filter(function(t){
+            return !t.get('isdrawing')&&getObj('character',t.get('represents'))&&contains(a,path,t);
+        }).map(function(t){return t.id;});
+        return ids;
+    }
+    function validateTemplate(a,path){
+        if(path.get('_pageid')!==a.page)throw new Error('Шаблон перемещён на другую страницу.');
+        if(Math.abs(Number(path.get('width'))-a.w)>0.01||Math.abs(Number(path.get('height'))-a.h)>0.01||Math.abs(Number(path.get('scaleX')||1)-1)>0.001||Math.abs(Number(path.get('scaleY')||1)-1)>0.001)
+            throw new Error('Шаблон изменил размер. Создайте область заново с нужным размером из карточки.');
+    }
+    function apply(id,pid){
+        var a=owned(id,pid),q=api().get(a.draft,pid),path=getObj('path',a.id);
+        if(!path)throw new Error('Шаблон удалён. Повторите способность.');
+        validateTemplate(a,path);
+        var ids=collect(a,path,pid);
+        // If the card has an explicit target limit together with an area,
+        // keep only the first N creatures. No limit means every creature in area.
+        if(!q.allArea&&q.max&&ids.length>q.max)ids=ids.slice(0,q.max);
+        if(!ids.length)throw new Error('В области не найдено ни одной цели.');
+        api().setTargets(a.draft,pid,ids,true);
+        tell(pid,'Найдено <b>'+ids.length+'</b> целей. Выполняю способность…');
+        api().apply(a.draft,pid);
+        var p=getObj('path',a.id);if(p)p.remove();delete db()[a.id];
+    }
+    function cancel(id,pid){
+        var a=db()[id];
+        if(a){owned(id,pid);var p=getObj('path',a.id);if(p)p.remove();delete db()[id];tell(pid,'Применение отменено. Эффект не применён.');return;}
+        api().cancel(id,pid);
+        tell(pid,'Применение отменено. Шаблон ещё не создан, эффект не применён.');
+    }
+    function source(id,pid,sourceId){
+        var q=api().get(id,pid);
+        var npc=characterIsNPC(q.actor), playerNpc=characterIsPlayerControlled(q.actor);
+        if(!npc)throw new Error('Указание токена требуется только для NPC.');
+        if(!playerNpc && !playerIsGM(pid))throw new Error('Токен этого NPC выбирает Мастер.');
+        var path=createTemplate(q,pid,sourceId);
+        var token=getObj('graphic',sourceId),count=q.allArea?'все существа':('до '+q.max+' существ');
+        tell(pid,'<b>'+escape(q.name)+'</b><br>Шаблон создан на месте токена <b>'+escape(token.get('name')||sourceId)+'</b>: '+escape(q.areaSpec.raw||q.areaSpec.shape)+' · '+escape(count)+'.<br><b>Переместите и поверните шаблон на поле.</b><br>[Применить](!ad5-area apply '+path.id+') [Отмена](!ad5-area cancel '+path.id+')');
+        return path.id;
+    }
+    function findLegacy(msg,args){
+        var a=owned(args[2],msg.playerid),q=api().get(a.draft,msg.playerid),path=getObj('path',a.id);if(!path)throw new Error('Шаблон удалён.');
+        validateTemplate(a,path);
+        var ids=collect(a,path,msg.playerid);if(!q.allArea&&q.max&&ids.length>q.max)ids=ids.slice(0,q.max);
+        api().setTargets(a.draft,msg.playerid,ids,false);
+        tell(msg.playerid,'Найдено '+ids.length+' целей. Для применения используйте «Применить» у способности.');
+    }
+    function createLegacy(msg,args){
+        var q=api().get(args[2],msg.playerid),spec=q.areaSpec;
+        if(!spec&&args[3]){
+            var legacyShape=args[3],legacySize=Number(args[4]);
+            if(['circle','square','cone','line'].indexOf(legacyShape)>=0&&Number.isFinite(legacySize)&&legacySize>0)
+                spec={shape:legacyShape,size:legacySize,width:legacyShape==='line'?(Number(args[5])||5):legacySize,length:legacySize,raw:legacyShape+' '+legacySize};
+        }
+        if(!spec)throw new Error('В карточке не определена площадь.');
+        begin(q.id,msg.playerid,spec);
+    }
+    on('chat:message',function(msg){
+        if(msg.type!=='api'||msg.playerid==='API'||!getObj('player',msg.playerid)||!/^!ad5-area(?:\s|$)/.test(msg.content))return;
+        try{
+            var args=msg.content.trim().split(/\s+/),sub=args[1];
+            if(sub==='create')createLegacy(msg,args);
+            else if(sub==='source')source(args[2],msg.playerid,args[3]);
+            else if(sub==='apply')apply(args[2],msg.playerid);
+            else if(sub==='cancel'||sub==='remove')cancel(args[2],msg.playerid);
+            else if(sub==='find')findLegacy(msg,args);
+            else if(sub==='all')findLegacy(msg,['!ad5-area','find',args[2]]);
+            else tell(msg.playerid,'AD5 Areas '+VERSION+': площадное заклинание создаёт шаблон автоматически. Переместите/поверните его и нажмите «Применить».');
+        }catch(e){tell(msg.playerid,escape(e.message));}
+    });
+    on('ready',function(){db();});
+    return {version:VERSION,begin:begin,_test:{contains:contains,shapePoints:shapePoints,sourceToken:sourceToken,characterIsNPC:characterIsNPC,characterIsPlayerControlled:characterIsPlayerControlled}};
+}());
