@@ -1,0 +1,702 @@
+/*
+ * NPC Forge RU v2.4.6
+ * Roll20 Mod for the legacy "D&D 5E by Roll20" (2014) character sheet.
+ * Install in Roll20: Game Settings -> Mod (API) Scripts -> New Script.
+ */
+var NPCForge = NPCForge || (function () {
+    'use strict';
+
+    var VERSION = '2.4.6';
+    var SCRIPT = 'NPC Forge RU';
+    var STATE_KEY = 'NPCForgeRU';
+    var repairJob = null;
+    var ABILITIES = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'];
+    var ABILITY_RU = {strength:'СИЛ', dexterity:'ЛОВ', constitution:'ТЕЛ', intelligence:'ИНТ', wisdom:'МДР', charisma:'ХАР'};
+    var FRACTION_CR = {'0':0, '1/8':0.125, '1/4':0.25, '1/2':0.5};
+
+    var CR_TABLE = [
+        [0,2,13,6,3,1,13],[0.125,2,13,9,3,2,13],[0.25,2,13,18,3,4,13],[0.5,2,13,30,3,6,13],
+        [1,2,13,52,3,9,13],[2,2,13,75,3,15,13],[3,2,13,90,4,21,13],[4,2,14,105,5,27,14],
+        [5,3,15,120,6,33,15],[6,3,15,135,6,39,15],[7,3,15,150,6,45,15],[8,3,16,165,7,51,16],
+        [9,4,16,180,7,57,16],[10,4,17,195,7,63,16],[11,4,17,210,8,69,17],[12,4,17,225,8,75,17],
+        [13,5,18,240,8,81,18],[14,5,18,255,8,87,18],[15,5,18,270,8,93,18],[16,5,18,285,9,99,18],
+        [17,6,19,300,10,105,19],[18,6,19,315,10,111,19],[19,6,19,330,10,117,19],[20,6,19,345,10,123,19],
+        [21,7,19,360,11,141,20],[22,7,19,375,11,159,20],[23,7,19,390,11,177,20],[24,7,19,405,12,195,21],
+        [25,8,19,420,12,213,21],[26,8,19,435,12,231,21],[27,8,19,450,13,249,22],[28,8,19,465,13,267,22],
+        [29,9,19,480,13,285,22],[30,9,19,495,14,303,23]
+    ];
+
+    var ROLES = {
+        brute:{label:'Громила', hp:1.25, ac:-1, damage:1.15, speed:30, stats:[18,10,18,8,10,8], attack:'Сокрушающий удар', die:12, damageType:'дробящий'},
+        soldier:{label:'Защитник', hp:1.10, ac:2, damage:0.95, speed:30, stats:[16,12,16,10,12,10], attack:'Клинок', die:8, damageType:'рубящий'},
+        skirmisher:{label:'Застрельщик', hp:0.90, ac:1, damage:1.00, speed:40, stats:[12,18,14,12,14,10], attack:'Быстрый клинок', die:6, damageType:'колющий'},
+        artillery:{label:'Стрелок', hp:0.75, ac:0, damage:1.15, speed:30, stats:[10,18,12,14,12,10], attack:'Дальний выстрел', die:10, damageType:'колющий', ranged:true},
+        controller:{label:'Контролёр', hp:0.85, ac:0, damage:0.85, speed:30, stats:[8,14,14,18,16,12], attack:'Мистический разряд', die:8, damageType:'силовое поле', ranged:true, caster:'intelligence'},
+        support:{label:'Поддержка', hp:0.90, ac:1, damage:0.80, speed:30, stats:[10,14,14,12,18,16], attack:'Священный импульс', die:8, damageType:'излучение', ranged:true, caster:'wisdom'},
+        lurker:{label:'Скрытник', hp:0.80, ac:0, damage:1.25, speed:35, stats:[12,18,14,14,12,12], attack:'Удар из тени', die:8, damageType:'колющий'}
+    };
+
+    function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
+    function asInt(v, fallback) { var n = parseInt(v, 10); return isNaN(n) ? fallback : n; }
+    function esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+    function unescapeNotes(s) {
+        var text=String(s || '')
+            .replace(/<br\s*\/?>(?:)/gi,'\n')
+            .replace(/<\/p>\s*<p>/gi,'\n')
+            .replace(/<[^>]+>/g,'')
+            .replace(/&nbsp;/gi,' ')
+            .replace(/&quot;/g,'"').replace(/&#39;|&apos;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&')
+            .replace(/^\uFEFF/,'').trim();
+        // Roll20 users often paste the JSON from a Markdown code block.
+        // Accept ```json ... ``` as well as plain JSON in the Handout.
+        text=text.replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'').trim();
+        // Some editors leave a standalone `json` line after removing the fence.
+        if(/^json\s*\r?\n\s*[\[{]/i.test(text)){text=text.replace(/^json\s*\r?\n/i,'').trim();}
+        return text;
+    }
+    function parseJsonPayload(payload) {
+        var raw=unescapeNotes(payload);
+        try{return JSON.parse(raw);}
+        catch(e){
+            throw new Error('JSON импорта повреждён. Вставьте только JSON (без текста до него). Если копировали из блока ```json, новая версия импортера принимает такие блоки автоматически. Исходная ошибка: '+e.message);
+        }
+    }
+    function whisper(who, html) { sendChat(SCRIPT, '/w "' + String(who || 'gm').replace(/"/g,'') + '" ' + html, null, {noarchive:true}); }
+    function panel(title, body) { return '<div style="border:1px solid #333;background:#fff;padding:8px;border-radius:4px"><div style="font-weight:bold;background:#432d1f;color:#fff;padding:5px;margin:-8px -8px 8px">'+esc(title)+'</div>'+body+'</div>'; }
+    function button(label, cmd) { return '<a style="display:inline-block;background:#7b2d26;color:#fff;padding:4px 7px;margin:2px;border-radius:3px;text-decoration:none" href="'+esc(cmd)+'">'+esc(label)+'</a>'; }
+    function rowId() { return (typeof generateRowID === 'function') ? generateRowID() : ('-'+Math.random().toString(36).slice(2, 18)); }
+    function crNumber(cr) {
+        var s = String(cr == null ? '1' : cr).trim();
+        var n = Object.prototype.hasOwnProperty.call(FRACTION_CR, s) ? FRACTION_CR[s] : parseFloat(s.replace(',','.'));
+        return isNaN(n) ? 1 : clamp(n, 0, 30);
+    }
+    function crLabel(n) { if(n===0.125){return '1/8';} if(n===0.25){return '1/4';} if(n===0.5){return '1/2';} return String(n); }
+    function crProfile(cr) {
+        var n = crNumber(cr), best = CR_TABLE[0], i;
+        for (i=0;i<CR_TABLE.length;i++) { if (Math.abs(CR_TABLE[i][0]-n) < Math.abs(best[0]-n)) { best=CR_TABLE[i]; } }
+        return {cr:best[0], pb:best[1], ac:best[2], hp:best[3], attack:best[4], damage:best[5], dc:best[6]};
+    }
+    function modifier(score) { return Math.floor((score-10)/2); }
+    function signed(n) { return n >= 0 ? '+'+n : String(n); }
+    function diceForAverage(avg, die) {
+        avg=Math.max(1,Math.round(avg)); die=die||8;
+        var dieAvg=(die+1)/2, count=Math.max(1,Math.floor(avg/dieAvg)), bonus=Math.round(avg-count*dieAvg);
+        if (bonus < 0 && count > 1) { count--; bonus=Math.round(avg-count*dieAvg); }
+        return count+'d'+die+(bonus>0?'+'+bonus:(bonus<0?String(bonus):''));
+    }
+    function hpFormula(hp, conMod) {
+        var count=Math.max(1,Math.round(hp/Math.max(2,4.5+conMod))), bonus=conMod*count;
+        return count+'d8'+(bonus>0?'+'+bonus:(bonus<0?String(bonus):''));
+    }
+    function xpForCR(cr) {
+        var xp={'0':10,'0.125':25,'0.25':50,'0.5':100,'1':200,'2':450,'3':700,'4':1100,'5':1800,'6':2300,'7':2900,'8':3900,'9':5000,'10':5900,'11':7200,'12':8400,'13':10000,'14':11500,'15':13000,'16':15000,'17':18000,'18':20000,'19':22000,'20':25000,'21':33000,'22':41000,'23':50000,'24':62000,'25':75000,'26':90000,'27':105000,'28':120000,'29':135000,'30':155000};
+        return xp[String(cr)] || 200;
+    }
+    function scaledStats(base, cr) {
+        var bump = Math.floor(Math.max(0, cr-1)/4), out=[];
+        for(var i=0;i<base.length;i++){ out.push(clamp(base[i] + (i<3 ? bump*2 : bump), 3, 30)); }
+        return out;
+    }
+    function makeTrait(name, text){ return {name:name, description:text}; }
+    function makeAction(name, opts){
+        opts=opts||{};
+        return {name:name, attack:opts.attack!==false, type:opts.type||'Melee', range:opts.range||'5 фт.', toHit:opts.toHit||0, target:opts.target||'одна цель', damage:opts.damage||'', damageType:opts.damageType||'', damage2:opts.damage2||'', damageType2:opts.damageType2||'', description:opts.description||''};
+    }
+    function generate(spec) {
+        spec=spec||{};
+        var p=crProfile(spec.cr), roleKey=String(spec.role||'soldier').toLowerCase(), role=ROLES[roleKey]||ROLES.soldier;
+        var stats=scaledStats(role.stats,p.cr), multi=p.cr>=11?3:(p.cr>=5?2:1), totalDamage=Math.max(1,Math.round(p.damage*role.damage)), hitDamage=Math.max(1,Math.round(totalDamage/multi));
+        var mainIndex=role.ranged?1:0, mainMod=modifier(stats[mainIndex]), casterIndex=role.caster?ABILITIES.indexOf(role.caster):-1;
+        var attackBonus=Math.max(p.attack, mainMod+p.pb), dc=role.caster?p.dc+1:p.dc;
+        var hp=Math.max(1,Math.round(p.hp*role.hp)), ac=clamp(p.ac+role.ac,10,25), damage=diceForAverage(hitDamage,role.die);
+        var npc={
+            name:String(spec.name||('НПС '+role.label+' CR '+crLabel(p.cr))), size:String(spec.size||'Средний'), type:String(spec.type||'гуманоид'), subtype:String(spec.subtype||''), alignment:String(spec.alignment||'любое мировоззрение'),
+            ac:asInt(spec.ac,ac), acType:String(spec.acType||'доспех'), hp:asInt(spec.hp,hp), hpFormula:String(spec.hpFormula||hpFormula(hp,modifier(stats[2]))), speed:String(spec.speed||(role.speed+' фт.')),
+            stats:{strength:stats[0],dexterity:stats[1],constitution:stats[2],intelligence:stats[3],wisdom:stats[4],charisma:stats[5]},
+            saves:{}, skills:{}, vulnerabilities:String(spec.vulnerabilities||''), resistances:String(spec.resistances||''), immunities:String(spec.immunities||''), conditionImmunities:String(spec.conditionImmunities||''),
+            senses:String(spec.senses||('пассивное Восприятие '+(10+modifier(stats[4])))), languages:String(spec.languages||'Общий'), cr:crLabel(p.cr), xp:asInt(spec.xp,xpForCR(p.cr)), pb:p.pb,
+            traits:[], actions:[], reactions:[], legendaryActions:[], notes:String(spec.notes||''), gmnotes:String(spec.gmnotes||('Создано '+SCRIPT+' v'+VERSION+'; роль: '+role.label+'.'))
+        };
+        npc.saves[ABILITIES[mainIndex]]=mainMod+p.pb;
+        npc.skills.perception=modifier(stats[4])+p.pb;
+        if(roleKey==='skirmisher'||roleKey==='lurker'){ npc.skills.stealth=modifier(stats[1])+p.pb; }
+        if(roleKey==='controller'){ npc.skills.arcana=modifier(stats[3])+p.pb; }
+
+        if(multi>1){ npc.actions.push(makeAction('Мультиатака',{attack:false,description:npc.name+' совершает '+multi+' атаки: «'+role.attack+'».'})); }
+        npc.actions.push(makeAction(role.attack,{type:role.ranged?'Ranged':'Melee',range:role.ranged?'дистанция 120 фт.':'5 фт.',toHit:attackBonus,damage:damage,damageType:role.damageType,description: roleKey==='lurker'?'При наличии преимущества атака наносит дополнительно '+diceForAverage(Math.max(2,Math.round(hitDamage/2)),6)+' урона.':''}));
+        if(roleKey==='brute'){ npc.traits.push(makeTrait('Неумолимый натиск','Если НПС переместился минимум на 20 футов по прямой к цели перед попаданием атакой ближнего боя, цель должна преуспеть в спасброске Силы СЛ '+dc+' или упасть ничком.')); }
+        if(roleKey==='soldier'){ npc.reactions.push(makeTrait('Парирование','НПС добавляет '+p.pb+' к КД против одной рукопашной атаки, которая должна попасть по нему. Для этого НПС должен видеть атакующего и держать оружие.')); }
+        if(roleKey==='skirmisher'){ npc.traits.push(makeTrait('Подвижный боец','После совершения атаки НПС может переместиться на половину скорости, не провоцируя атак от цели этой атаки.')); }
+        if(roleKey==='artillery'){ npc.traits.push(makeTrait('Меткий стрелок','Атаки дальнобойным оружием НПС игнорируют половинное укрытие.')); }
+        if(roleKey==='lurker'){ npc.traits.push(makeTrait('Скрытная атака (1/ход)','Один раз в ход НПС наносит дополнительный урон, указанный в действии «Удар из тени», если совершает атаку с преимуществом.')); }
+        if(roleKey==='controller'){
+            npc.traits.push(makeTrait('Колдовство','Базовая характеристика — '+ABILITY_RU[role.caster]+' (СЛ спасброска '+dc+', '+signed(attackBonus)+' к атакам заклинаниями).'));
+            npc.actions.push(makeAction('Сдерживающая волна (перезарядка 5–6)',{attack:false,description:'Все выбранные НПС существа в радиусе 15 футов совершают спасбросок Силы СЛ '+dc+'. При провале цель получает '+diceForAverage(Math.max(2,totalDamage),8)+' урона силовым полем и становится опутанной до конца своего следующего хода; при успехе получает половину урона без опутывания.'}));
+        }
+        if(roleKey==='support'){
+            npc.traits.push(makeTrait('Поддерживающее колдовство','Базовая характеристика — МДР (СЛ спасброска '+dc+', '+signed(attackBonus)+' к атакам заклинаниями).'));
+            npc.actions.push(makeAction('Восстанавливающий импульс (2/день)',{attack:false,damage:diceForAverage(Math.max(3,Math.round(totalDamage*0.8)),8),damageType:'лечение',description:'Одно существо в пределах 30 футов восстанавливает '+diceForAverage(Math.max(3,Math.round(totalDamage*0.8)),8)+' хитов.'}));
+        }
+        if(p.cr>=11 && String(spec.legendary||'false').toLowerCase()==='true'){
+            npc.legendaryActions.push(makeTrait('Перемещение','НПС перемещается на половину своей скорости, не провоцируя атак.'));
+            npc.legendaryActions.push(makeTrait(role.attack,'НПС совершает одну атаку «'+role.attack+'».'));
+        }
+        return mergeExplicit(npc,spec);
+    }
+    function mergeExplicit(npc,spec){
+        ['traits','actions','bonusActions','reactions','legendaryActions'].forEach(function(k){ if(Array.isArray(spec[k])){ npc[k]=spec[k]; } });
+        if(spec.stats){ ABILITIES.forEach(function(a){ if(spec.stats[a]!=null){ npc.stats[a]=asInt(spec.stats[a],npc.stats[a]); } }); }
+        if(spec.aura){ npc.aura=spec.aura; }
+        if(spec.auras){ npc.auras=spec.auras; }
+        if(spec.rollMode){ npc.rollMode=spec.rollMode; }
+        if(spec.legendaryPoints!=null){ npc.legendaryPoints=spec.legendaryPoints; }
+        if(spec.saves){ npc.saves=spec.saves; } if(spec.skills){ npc.skills=spec.skills; }
+        return npc;
+    }
+    function validate(npc){
+        var errors=[];
+        if(!npc||typeof npc!=='object'){return ['Данные NPC должны быть объектом JSON.'];}
+        if(!String(npc.name||'').trim()){errors.push('Не указано поле name.');}
+        if(!npc.stats){errors.push('Не указан объект stats.');}
+        ABILITIES.forEach(function(a){if(!npc.stats||isNaN(parseInt(npc.stats[a],10))){errors.push('Некорректная характеристика stats.'+a+'.');}});
+        ['traits','actions','bonusActions','reactions','legendaryActions'].forEach(function(k){if(npc[k]&&!Array.isArray(npc[k])){errors.push(k+' должно быть массивом.');}});
+        ['actions','bonusActions','reactions','legendaryActions','traits'].forEach(function(k){
+            if(!Array.isArray(npc[k])) return;
+            npc[k].forEach(function(x,i){
+                if(!x||typeof x!=='object'||!String(x.name||'').trim()){errors.push(k+'['+i+']: нужно имя.');return;}
+                ['damage','damage2','crit','crit2'].forEach(function(key){if(x[key]&&!/^[0-9dD+*\/(). \-]+$/.test(String(x[key]))){errors.push(x.name+': неверная формула '+key);}});
+                if(x.targets!==undefined && (!Number.isInteger(Number(x.targets))||Number(x.targets)<1||Number(x.targets)>50))errors.push(x.name+': targets — целое 1–50.');
+                if(x.damage && !effectType(x.damageType) && !(!x.damageType&&inferEffectType(x.description||x.desc)))errors.push(x.name+': нужен стандартный damageType или лечение.');
+                if(x.damage2 && !effectType(x.damageType2) && !(!x.damageType2&&inferEffectType(x.description||x.desc)))errors.push(x.name+': нужен стандартный damageType2 или лечение.');
+                if(x.save && (ABILITIES.indexOf(x.save.ability)<0 || !numeric(x.save.dc) || Number(x.save.dc)<0 || ['half','none','full'].indexOf(x.save.onSuccess)<0)){errors.push(x.name+': save требует ability, dc и onSuccess half/none/full.');}
+            });
+        });
+        if(npc.rollMode && ['normal','advantage','disadvantage','query'].indexOf(npc.rollMode)<0) errors.push('Неизвестный rollMode.');
+        try { validateAuras(npc.auras || (npc.aura ? [npc.aura] : [])); } catch(e){errors.push(e.message);}
+        return errors;
+    }
+
+    function setAttr(charId,name,current,max){
+        var props={characterid:charId,name:name,current:(current==null?'':String(current))};
+        if(max!=null){props.max=String(max);} return createObj('attribute',props);
+    }
+    function repeating(charId,section,fields){
+        var id=rowId(); Object.keys(fields).forEach(function(k){setAttr(charId,'repeating_'+section+'_'+id+'_'+k,fields[k]);}); return id;
+    }
+    function writeTrait(charId,section,item){ return repeating(charId,section,{name:item.name||'Особенность',desc:item.description||item.desc||''}); }
+    // Roll bases use character IDs, so opening another NPC's sheet does not
+    // depend on the token currently selected by the GM.
+    function upsert(charId,name,value){
+        var a=findObjs({_type:'attribute',_characterid:charId,name:name})[0];
+        if(a){a.set('current',String(value));return a;}
+        return setAttr(charId,name,value);
+    }
+    function attrValue(charId,name){
+        var a=findObjs({_type:'attribute',_characterid:charId,name:name})[0];
+        return a ? String(a.get('current') || '') : '';
+    }
+    function enabled(value){return value!=='' && value!=='0' && value!=='false';}
+    var EFFECT_TYPES=[
+        ['кислота',/^(acid|кислот(?:а|ой|ный|ного)?)$/i],['дробящий',/^(bludgeoning|дробящ(?:ий|его|им))$/i],
+        ['холод',/^(cold|холод(?:ом|а|ный|ного)?)$/i],['огонь',/^(fire|огонь|огн[её]м|огненн(?:ый|ого|ым))$/i],
+        ['силовое поле',/^(force|силов(?:ое|ого|ым) пол(?:е|я|ем))$/i],['электричество',/^(lightning|электричеств(?:о|ом|а)|молни(?:я|ей)|электрическ(?:ий|ого|им))$/i],
+        ['некротическая энергия',/^(necrotic|некротическ(?:ая энергия|ой энергией|ий|ого|им))$/i],['колющий',/^(piercing|колющ(?:ий|его|им))$/i],
+        ['яд',/^(poison|яд(?:ом|а)?|ядовит(?:ый|ого|ым))$/i],['психический',/^(psychic|психическ(?:ий|ого|им))$/i],
+        ['излучение',/^(radiant|излучени(?:е|ем|я)|лучист(?:ый|ого|ым))$/i],['рубящий',/^(slashing|рубящ(?:ий|его|им))$/i],
+        ['звук',/^(thunder|звук(?:ом|а)?|звуков(?:ой|ого|ым)|гром(?:ом)?)$/i],['лечение',/^(heal|healing|лечение|лечением|исцеление|исцелением)$/i]
+    ];
+    function effectType(value){
+        var text=String(value||'').toLowerCase().replace(/\^\{([^}]+)\}/g,'$1').replace(/\s+/g,' ').trim();
+        text=text.replace(/^(?:урон|damage)\s+/,'').replace(/\s+(?:урон|урона|damage)$/,'');
+        var found=EFFECT_TYPES.filter(function(pair){return pair[1].test(text);});
+        return found.length===1?found[0][0]:null;
+    }
+    function inferEffectType(description){
+        var text=String(description||'').toLowerCase(), found=[];
+        // Infer only explicit damage wording or explicit healing, not theme/name.
+        var healing=/восстанавливает\s+(?:\d+d\d+(?:\s*\+\s*\d+)?|\d+)\s+(?:хит|очк)|(?:лечени|исцелени)/i.test(text);
+        if(healing)found.push('лечение');
+        var re=/([а-яёa-z]+(?:\s+[а-яёa-z]+)?)\s+(?:урон[а-яё]*|damage)|(?:урон[а-яё]*|damage)\s+([а-яёa-z]+(?:\s+[а-яёa-z]+)?)/gi,m;
+        while((m=re.exec(text))){var candidate=m[1]||m[2],type=effectType(candidate)||effectType(candidate.split(' ')[0])||effectType(candidate.split(' ').slice(-1)[0]);if(type&&found.indexOf(type)<0)found.push(type);}
+        return found.length===1?found[0]:null;
+    }
+    function inferredSave(description){
+        var text=String(description||'');
+        var m=text.match(/(?:спасброс\S*\s+)(Силы|Ловкости|Телосложения|Интеллекта|Мудрости|Харизмы)\s*(?:СЛ|DC)\s*(\d+)/i);
+        if(!m)return null;
+        var names={'силы':'strength','ловкости':'dexterity','телосложения':'constitution','интеллекта':'intelligence','мудрости':'wisdom','харизмы':'charisma'};
+        var clause=text.match(/(?:при успехе|при успешном спасброске|в случае успеха)\s*[:,—-]?\s*([^.!;]*)/i);
+        var effect=clause?clause[1].toLowerCase():'';
+        var half=/половин/.test(effect),none=/нет урона|без урона|не получает урона|не наносится/.test(effect),full=/полный урон/.test(effect);
+        return {ability:names[m[1].toLowerCase()],dc:Number(m[2]),onSuccess:Number(half)+Number(none)+Number(full)===1?(half?'half':none?'none':'full'):null};
+    }
+    function saveEffectText(effect){return effect==='half'?'половина урона':effect==='none'?'нет урона':effect==='full'?'полный урон':'Результат успеха не указан';}
+    function npcPlayerOwned(id){
+        var c=getObj('character',id);
+        return String(c&&c.get('controlledby')||'').split(',').some(function(pid){pid=pid.trim();return pid==='all'||(getObj('player',pid)&&!playerIsGM(pid));});
+    }
+    function privatePrefix(id){return npcPlayerOwned(id)?'@{'+id+'|wtype}':'/w gm ';}
+    function parseDistanceSpec(value){
+        var text=String(value||'').toLowerCase().replace(/&nbsp;/g,' ').replace(/,/g,'.').replace(/\s+/g,' ').trim();
+        var out={targets:null,area:null};
+        var tm=text.match(/(?:до|up to)\s*(\d+)\s*(?:целей|цели|существ|creatures|targets?)/i);
+        if(tm) out.targets=Number(tm[1]);
+        var lm=text.match(/(?:линия|line)\s*(?:ш(?:ирина)?\s*)?(\d+(?:\.\d+)?)?\s*(?:фт\.?|ft\.?)?\s*(?:дл(?:ина)?\s*)?(\d+(?:\.\d+)?)\s*(?:фт\.?|ft\.?)?/i);
+        if(lm){var width=lm[1]?Number(lm[1]):5,length=Number(lm[2]);out.area={shape:'line',size:length,width:width,length:length};return out;}
+        var cm=text.match(/(\d+(?:\.\d+)?)\s*(?:фт\.?|ft\.?)\s*(конус|cone|круг|сфера|circle|sphere|куб|квадрат|cube|square)/i);
+        if(cm){var size=Number(cm[1]),shape=cm[2];shape=/конус|cone/.test(shape)?'cone':/круг|сфера|circle|sphere/.test(shape)?'circle':'square';out.area={shape:shape,size:size,width:shape==='circle'?size:size,length:size};}
+        return out;
+    }
+    function attackRollBase(charId,prefix,read,damageOnly){
+        function ref(k){return '@{'+charId+'|'+prefix+k+'}';}
+        var attack=enabled(read('attack_flag'));
+        var rangeText=read('attack_range')||'';
+        var rangeSpec=parseDistanceSpec(rangeText);
+        var areaEncoded=rangeSpec.area?[rangeSpec.area.shape,rangeSpec.area.size,rangeSpec.area.width||'',rangeSpec.area.length||''].join('|'):'';
+        var targetLimit=Number(read('ad5_targets')||0);
+        if(!targetLimit && rangeSpec.targets)targetLimit=rangeSpec.targets;
+        var areaAttack=!!rangeSpec.area;
+        var roll=privatePrefix(charId)+'&{template:npcaction} {{name=@{'+charId+'|character_name}}} {{charid='+charId+'}} {{npcforge=1}} {{ad5row='+prefix+'}} {{rname='+ref('name')+'}} {{description='+ref('description')+'}}';
+        if(!attack)roll+=' {{range='+ref('attack_range')+'}}';
+        if(damageOnly) { roll=roll.replace('&{template:npcaction}', '&{template:npcdmg}'); }
+        var saving=enabled(read('save_flag'));
+        if(saving){roll+=' {{save=1}} {{saveattr='+read('save_attr')+'}} {{savedc='+read('save_dc')+'}} {{savedesc='+read('save_effect')+'}}';}
+        if(areaEncoded)roll+=' {{ad5area='+areaEncoded+'}}';
+        if(targetLimit>1)roll+=' {{ad5targets='+targetLimit+'}}';
+        if(saving && !attack && !damageOnly && !areaAttack){roll+=' {{ad5target=@{target|Цель способности|token_id}}}';}
+        if(!attack&&!saving&&!damageOnly&&(read('attack_damage')||read('attack_damage2'))&&!areaAttack){roll+=' {{ad5auto=1}} {{ad5target=@{target|Цель эффекта|token_id}}}';}
+        if(attack && !damageOnly){
+            // Area attacks must never open Roll20's single-target query. AD5 Areas
+            // creates the template and determines every target from its position.
+            if(!areaAttack && targetLimit<=1)roll+=' {{ad5target=@{target|Цель атаки|token_id}}}';
+            // Legacy rtype normally starts the SECOND roll. Always emit both
+            // complete rolls; never splice an unfinished rtype expression here.
+            var rtype=attrValue(charId,'rtype'), mode='normal';
+            if(rtype.indexOf('?{')!==-1){mode='?{Режим атаки|Обычный,normal|Преимущество,advantage|Помеха,disadvantage}';}
+            else if(/{{\s*disadvantage\s*=\s*1\s*}}/.test(rtype)){mode='disadvantage';}
+            else if(/{{\s*advantage\s*=\s*1\s*}}/.test(rtype)){mode='advantage';}
+            else if(/{{\s*always\s*=\s*1\s*}}/.test(rtype)){mode='always';}
+            roll+=' {{'+mode+'=1}} {{r1=[[1d20 + '+ref('attack_tohit')+']]}} {{r2=[[1d20 + '+ref('attack_tohit')+']]}} {{attack=1}} {{type='+ref('attack_type')+'}} {{range='+ref('attack_range')+'}} {{target='+ref('attack_target')+'}}';
+        }
+        [1,2].forEach(function(n){
+            var suffix=n===1?'':'2', formula=read('attack_damage'+suffix);
+            if(formula.trim() && enabled(read('damage_flag'))){
+                roll+=' {{damage=1}} {{dmg'+n+'flag=1}} {{dmg'+n+'=[['+ref('attack_damage'+suffix)+']]}} {{dmg'+n+'type='+(effectType(read('attack_damagetype'+suffix))||'')+'}}';
+                if(attack){
+                    var crit=read('attack_crit'+suffix) || (formula.match(/\b\d+d\d+\b/gi)||[]).join('+') || '0';
+                    roll+=' {{crit'+n+'=[['+crit+']]}}';
+                }
+            }
+        });
+        var limit=Number(read('ad5_targets')||1);
+        if(limit>1){
+            roll=roll.replace(/\s*{{ad5target=@{target\|[^{}]+}}}/g,'');
+            roll=roll.replace(/({{description=(?:@\{[^{}]*\}|\^\{[^{}]*\}|(?!}})[\s\S])*?)(}})/,function(_,a,b){return a+' <br>до '+limit+' существ'+b;});
+            roll+=' {{ad5targets='+limit+'}}';
+        }
+        return roll;
+    }
+    function syncPanel(charId){
+        if(attrValue(charId,'npc')!=='1'){return 0;}
+        var abilities=findObjs({_type:'ability',_characterid:charId});
+        var used={}, count=0;
+        findObjs({_type:'attribute',_characterid:charId}).forEach(function(a){
+            var match=String(a.get('name')).match(/^repeating_(npcaction(?:-[lb])?|npcreaction|npcbonusaction|npctrait)_(.+)_name$/);
+            if(!match || !String(a.get('current')||'').trim()){return;}
+            var section=match[1], prefix=a.get('name').slice(0,-4), title=String(a.get('current'));
+            var kind=attrValue(charId,prefix+'npcforge_category')||attrValue(charId,prefix+'npcforge_kind');
+            if(!kind){kind=section==='npcreaction'?'reaction':section==='npcaction-l'?'legendary':/bonus|action-b/.test(section)?'bonus':'action';}
+            // Legacy imports placed explicitly labelled bonus actions in Traits.
+            if(section==='npctrait'){
+                if(/бонусно[её] действие|bonus action/i.test(title)){kind='bonus';}
+                else{return;}
+            }
+            var labels={action:'Действие',bonus:'Бонус',legendary:'Легендарное',reaction:'Реакция'};
+            if(!labels[kind]){return;}
+            var marker='NPCForge:active:'+prefix;
+            var read=function(k){return attrValue(charId,prefix+k);};
+            var roll;
+            if(enabled(read('attack_flag')) || (enabled(read('damage_flag')) && read('attack_damage'))){
+                ['description','attack_damagetype','attack_damagetype2'].forEach(function(k){
+                    if(!findObjs({_type:'attribute',_characterid:charId,name:prefix+k}).length){upsert(charId,prefix+k,'');}
+                });
+                roll=attackRollBase(charId,prefix,read);
+            }else{
+                var desc=findObjs({_type:'attribute',_characterid:charId,name:prefix+'desc'})[0]?'desc':'description';
+                if(!findObjs({_type:'attribute',_characterid:charId,name:prefix+desc}).length){upsert(charId,prefix+desc,'');}
+                roll=privatePrefix(charId)+'&{template:npcaction} {{name=@{'+charId+'|character_name}}} {{charname=@{'+charId+'|character_name}}} {{characterid='+charId+'}} {{rname=@{'+charId+'|'+prefix+'name}}} {{description=@{'+charId+'|'+prefix+desc+'}}}';
+            }
+            upsert(charId,prefix+'rollbase',roll);
+            var command='@{'+charId+'|'+prefix+'rollbase}';
+            var existing=abilities.filter(function(ab){return !/^NF_/.test(ab.get('name')||'') && !used[ab.id] && (ab.get('description')===marker || ab.get('action')===command || ab.get('action')==='%{selected|'+prefix+'npc_action}' || ab.get('action')==='%{'+charId+'|'+prefix+'npc_action}');})[0];
+            var props={name:labels[kind]+' · '+title,description:marker,action:command,istokenaction:true};
+            if(existing){Object.keys(props).forEach(function(k){if(existing.get(k)!==props[k]){existing.set(k,props[k]);}});}
+            else{props.characterid=charId;existing=createObj('ability',props);}
+            used[existing.id]=true;count++;
+        });
+        // Hide unused/passive buttons, preserving their macros in the character.
+        abilities.forEach(function(ab){if(!used[ab.id] && ab.get('istokenaction')){ab.set('istokenaction',false);}});
+        return count;
+    }
+    function deduplicateDamageTypes(charId){
+        var groups={},plans=[];
+        findObjs({_type:'attribute',_characterid:charId}).forEach(function(a){
+            var name=String(a.get('name'));
+            if(!/^repeating_(?:npcaction(?:-[lb])?|npcreaction|npcbonusaction)_.+_attack_damagetype2?$/i.test(name))return;
+            var key=name.toLowerCase();(groups[key]||(groups[key]=[])).push(a);
+        });
+        Object.keys(groups).forEach(function(key){
+            var list=groups[key];if(list.length<2)return;
+            var values=[];
+            list.forEach(function(a){var raw=String(a.get('current')||'').trim(),v=effectType(raw)||raw;if(v&&values.indexOf(v)<0)values.push(v);});
+            if(values.length>1)throw new Error('Конфликт типов в '+key+': '+values.join(' / ')+'. Оставьте один правильный тип в листе.');
+            plans.push({list:list,value:values[0]||''});
+        });
+        // Validate all groups before removing any duplicate.
+        plans.forEach(function(p){
+            var keep=p.list.filter(function(a){return String(a.get('current')||'').trim();})[0]||p.list[0];
+            keep.set('current',p.value);
+            p.list.forEach(function(a){if(a.id!==keep.id)a.remove();});
+        });
+    }
+    function fixCharacter(charId){
+        if(attrValue(charId,'npc')!=='1') throw new Error('Нужен лист NPC 2014.');
+        deduplicateDamageTypes(charId);
+        var attrs=findObjs({_type:'attribute',_characterid:charId}), index={}, abilities=findObjs({_type:'ability',_characterid:charId}), byName={};
+        attrs.forEach(function(a){index[a.get('name')]=a;});
+        abilities.forEach(function(a){byName[a.get('name')]=a;});
+        function put(name,value){if(index[name]){if(String(index[name].get('current'))!==String(value))index[name].set({current:String(value)});}else index[name]=setAttr(charId,name,value);}
+        put('dtype','full');put('npcforge_version',VERSION);
+        if(!index.rtype)put('rtype','{{normal=1}} {{r1=[[1d20');
+        if(!npcPlayerOwned(charId)){
+            if(!index.npcforge_private || index.npcforge_private.get('current')!=='1'){put('npcforge_previous_wtype',index.wtype?index.wtype.get('current'):'');}
+            put('npcforge_private','1');put('wtype','/w gm ');
+        }else if(index.npcforge_private && index.npcforge_private.get('current')==='1'){
+            put('wtype',index.npcforge_previous_wtype?index.npcforge_previous_wtype.get('current'):'');put('npcforge_private','0');
+        }else if(!index.wtype)put('wtype','');
+        var count=0;
+        attrs.forEach(function(a){
+            var name=a.get('name');
+            if(!/^repeating_(?:npcaction(?:-l)?|npcreaction)_.+_name$/.test(name))return;
+            var prefix=name.slice(0,-4);
+            if(/^repeating_npcreaction_/.test(prefix)&&!index[prefix+'npcforge_action'])return;
+            function read(k){var v=index[prefix+k];return v?String(v.get('current')==null?'':v.get('current')):'';}
+            ['description','attack_damagetype','attack_damagetype2'].forEach(function(k){if(!index[prefix+k])put(prefix+k,k==='description'?read('desc'):'');});
+            [1,2].forEach(function(n){var suffix=n===1?'':'2';if(read('attack_damage'+suffix)){
+                var old=read('attack_damagetype'+suffix), normalized=effectType(old)||(!old?inferEffectType(read('description')):null);
+                if(normalized)put(prefix+'attack_damagetype'+suffix,normalized);
+            }});
+            if((!enabled(read('save_flag'))||read('npcforge_save_source')==='description')&&(read('attack_damage')||read('attack_damage2'))){
+                var inferred=inferredSave(read('description'));
+                if(inferred){put(prefix+'npcforge_save_source','description');put(prefix+'save_flag','on');put(prefix+'save_attr',inferred.ability);put(prefix+'save_dc',inferred.dc);put(prefix+'save_effect',saveEffectText(inferred.onSuccess));}
+            }
+            put(prefix+'rollbase',attackRollBase(charId,prefix,read));
+            put(prefix+'rollbase_dmg',attackRollBase(charId,prefix,read,true));
+            var abilityName='NF_'+prefix, action='@{'+charId+'|'+prefix+'rollbase}';
+            if(byName[abilityName])byName[abilityName].set({action:action});
+            else byName[abilityName]=createObj('ability',{characterid:charId,name:abilityName,action:action,istokenaction:false});
+            // Preserve existing user-facing legacy buttons, point them to their ID-bound row.
+            abilities.forEach(function(ab){var old=ab.get('action');if(old==='%{selected|'+prefix+'npc_action}'||old==='%{'+charId+'|'+prefix+'npc_action}')ab.set({action:action});});
+            if(/^repeating_npcreaction_/.test(prefix))put(prefix+'desc',read('description')+' [Бросок](~'+charId+'|'+abilityName+')');
+            count++;
+        });
+        var panelAction='!npc-controls --id|'+charId;
+        if(byName['NPC: Панель'])byName['NPC: Панель'].set({action:panelAction,istokenaction:true});
+        else createObj('ability',{characterid:charId,name:'NPC: Панель',action:panelAction,istokenaction:true});
+        syncPanel(charId);
+        return count;
+    }
+    // Journal characters are the source of truth; a placed token is optional.
+    function fixAllCharacters(who){
+        who=who||'gm';
+        if(repairJob){whisper(who,panel('Обновление уже выполняется','Обработано '+repairJob.index+' из '+repairJob.ids.length+' NPC.'));return;}
+        var seen={}, ids=[];
+        findObjs({_type:'attribute',name:'npc'}).forEach(function(a){
+            var id=a.get('_characterid');
+            if(String(a.get('current')).trim()==='1' && !seen[id] && getObj('character',id)){
+                seen[id]=true;ids.push(id);
+            }
+        });
+        var job={ids:ids,index:0,fixed:0,actions:0,skipped:0,errors:[],who:who};
+        repairJob=job;
+        if(ids.length){whisper(who,panel('Обновление NPC в журнале','Найдено NPC: '+ids.length+'. Токены на столе не требуются.'));}
+        function batch(){
+            var stop=Math.min(job.index+8,job.ids.length);
+            while(job.index<stop){
+                var id=job.ids[job.index++], character=getObj('character',id);
+                if(!character || attrValue(id,'npc')!=='1'){job.skipped++;continue;}
+                try{
+                    job.actions+=fixCharacter(id);
+                    configureAllTokens(id);
+                    job.fixed++;
+                }catch(e){
+                    job.errors.push((character.get('name')||id)+': '+e.message);
+                    log(SCRIPT+' journal repair: '+id+': '+e.message);
+                }
+            }
+            if(job.index<job.ids.length){setTimeout(batch,25);return;}
+            repairJob=null;
+            var body='Обновлено листов NPC: <b>'+job.fixed+'</b>; действий: '+job.actions+
+                '; пропущено: '+job.skipped+'; ошибок: '+job.errors.length+'.';
+            if(job.errors.length){body+='<br>'+job.errors.slice(0,6).map(esc).join('<br>')+'<br>Подробности: Mod Output Console.';}
+            whisper(job.who,panel('Обновление журнала завершено',body));
+        }
+        batch();
+    }
+    function writeAction(charId,item,index,category,defer){
+        var rangeSpec=parseDistanceSpec(item.range||'');
+        var limit=item.targets===undefined?(rangeSpec.targets||1):Number(item.targets);
+        if(!Number.isInteger(limit)||limit<1||limit>50)throw new Error('targets — целое от 1 до 50.');
+        category=category||'action';
+        var section=category==='legendary'?'npcaction-l':category==='reaction'?'npcreaction':'npcaction';
+        var isAttack=item.attack===true || (item.attack!==false && item.toHit!=null);
+        var title=(category==='bonus'?'[Бонусное] ':'')+(item.name||'Действие');
+        var description=(item.description||item.desc||'')+(category==='legendary'?'\nСтоимость: '+asInt(item.cost,1)+' легендарных действий.':'');
+        var type1=effectType(item.damageType)||(!item.damageType?inferEffectType(description):null);
+        var type2=effectType(item.damageType2)||(!item.damageType2?inferEffectType(description):null);
+        if(item.damage&&!type1)throw new Error(title+': укажите стандартный damageType или лечение.');
+        if(item.damage2&&!type2)throw new Error(title+': укажите стандартный damageType2 или лечение.');
+        var saving=item.save||((item.damage||item.damage2)?inferredSave(description):null);
+        if(saving && !/(?:спасбросок|saving\s+throw|при успехе|on success)/i.test(description)){
+            description+='\nСпасбросок '+saving.ability+', СЛ '+saving.dc+'. При провале: полный урон. При успехе: '+saveEffectText(saving.onSuccess)+'.';
+        }
+        if(rangeSpec.targets && !/до \d+ существ/.test(description)) description+='\nДо '+rangeSpec.targets+' существ.';
+        var fields={ad5_targets:limit,name:title,desc:description,description:description,npcforge_action:1,npcforge_category:category,
+            'npc_options-flag':'0',attack_flag:isAttack?'on':'0',attack_type:item.type||'Melee',attack_range:item.range||'5 фт.',attack_tohit:asInt(item.toHit,0),attack_target:item.target||'одна цель',
+            damage_flag:(item.damage||item.damage2)?'on':'0',attack_damage:item.damage||'',attack_damagetype:type1||'',attack_damage2:item.damage2||'',attack_damagetype2:type2||'',attack_crit:item.crit||'',attack_crit2:item.crit2||'',show_desc:'on',
+            npcforge_save_source:item.save?'explicit':saving?'description':'',npcforge_area:rangeSpec.area?[rangeSpec.area.shape,rangeSpec.area.size,rangeSpec.area.width||'',rangeSpec.area.length||''].join('|'):'',save_flag:saving?'on':'0',save_attr:saving?saving.ability:'',save_dc:saving?saving.dc:'',save_effect:saving?saveEffectText(saving.onSuccess):''};
+        var id=repeating(charId,section,fields);
+        if(!defer)fixCharacter(charId);
+        return id;
+    }
+    function writeCharacter(npc,opts){
+        opts=opts||{}; var errors=validate(npc); if(errors.length){throw new Error(errors.join(' '));}
+        var c=createObj('character',{name:npc.name,archived:false,inplayerjournals:opts.journal||'',controlledby:opts.controlledby||'',bio:npc.notes||'',gmnotes:npc.gmnotes||''});
+        var id=c.id||c.get('_id'), attrs={npc:1,npc_options_flag:0,'npc_options-flag':0,npc_name:npc.name,npc_size:npc.size,npc_type:npc.type,npc_subtype:npc.subtype,npc_alignment:npc.alignment,npc_ac:npc.ac,npc_actype:npc.acType,npc_hpbase:npc.hp,npc_hpformula:npc.hpFormula,npc_speed:npc.speed,npc_vulnerabilities:npc.vulnerabilities,npc_resistances:npc.resistances,npc_immunities:npc.immunities,npc_condition_immunities:npc.conditionImmunities,npc_senses:npc.senses,npc_languages:npc.languages,npc_challenge:npc.cr,npc_xp:npc.xp,pb:npc.pb};
+        ABILITIES.forEach(function(a){attrs[a]=npc.stats[a]; attrs[a+'_mod']=modifier(npc.stats[a]);});
+        Object.keys(npc.saves||{}).forEach(function(a){attrs['npc_'+a.slice(0,3)+'_save']=npc.saves[a];attrs['npc_'+a.slice(0,3)+'_save_flag']='on';});
+        Object.keys(npc.skills||{}).forEach(function(s){attrs['npc_'+s]=npc.skills[s];attrs['npc_'+s+'_flag']='on';});
+        Object.keys(attrs).forEach(function(k){setAttr(id,k,attrs[k]);});
+        setAttr(id,'hp',npc.hp,npc.hp);
+        if(npc.auras||npc.aura){setAttr(id,'npcforge_aura',JSON.stringify(npc.auras||[npc.aura]));}
+        if(npc.rollMode)setAttr(id,'rtype',modeValue(npc.rollMode));
+        (npc.traits||[]).forEach(function(x){writeTrait(id,'npctrait',x);});
+        ['actions','bonusActions','reactions','legendaryActions'].forEach(function(k,j){(npc[k]||[]).forEach(function(x,i){writeAction(id,x,i,['action','bonus','reaction','legendary'][j],true);});});
+        setAttr(id,'npc_legendary_actions',(npc.legendaryActions||[]).length?asInt(npc.legendaryPoints,3):0);
+        fixCharacter(id);
+        return {character:c,id:id,npc:npc};
+    }
+    function numeric(v){return v!==null && v!==undefined && String(v).trim()!=='' && isFinite(Number(v));}
+    function validateAuras(auras){
+        if(!Array.isArray(auras)||auras.length>2)throw new Error('auras: массив максимум из двух аур.');
+        auras.forEach(function(a){if(a===null)return;if(!a||!numeric(a.radius)||Number(a.radius)<0||!/^#[0-9a-f]{6}$/i.test(a.color||'#FFFF99')||['page','ft','m'].indexOf(a.unit||'page')<0)throw new Error('Аура: radius >= 0, color #RRGGBB, unit page/ft/m.');});
+    }
+    function modeValue(mode){
+        if(mode==='query')return '?{Режим атаки|Обычный,normal|Преимущество,advantage|Помеха,disadvantage}';
+        if(['normal','advantage','disadvantage'].indexOf(mode)<0)throw new Error('Режим: normal, advantage, disadvantage, query.');
+        return '{{'+mode+'=1}} {{r2=[[1d20';
+    }
+    function auraRadius(a,token){
+        if(!a.unit||a.unit==='page')return Number(a.radius);
+        var p=getObj('page',token.get('_pageid')), unit=p&&p.get('scale_units')||'ft';
+        var meters=Number(a.radius)*(a.unit==='ft'?0.3048:1), scales={ft:0.3048,m:1,km:1000,mi:1609.344};
+        if(!scales[unit])throw new Error('Аура: для нестандартных единиц карты используйте unit page.');
+        return Math.round(meters/scales[unit]*10000)/10000;
+    }
+    function configureToken(token){
+        if(!token || token.get('_subtype')!=='token'){return false;}
+        var id=token.get('represents');
+        if(!id || attrValue(id,'npc')!=='1'){return false;}
+        var hp=findObjs({_type:'attribute',_characterid:id,name:'hp'})[0];
+        var max=hp && hp.get('max'), current=hp && hp.get('current');
+        if(!numeric(max)||Number(max)<=0){max=attrValue(id,'npc_hpbase');}
+        var owner=getObj('character',id);
+        var visible=String(owner && owner.get('controlledby') || '').split(',').some(function(pid){return pid==='all'||(getObj('player',pid)&&!playerIsGM(pid));});
+        var changes={bar_location:null,compact_bar:null,showplayers_bar1:visible,bar1_num_permission:visible?'everyone':'',playersedit_bar1:false,has_bright_light_vision:true};
+        // Repair missing layer only; preserve intentionally hidden/map tokens.
+        if(!token.get('layer')){changes.layer='objects';}
+        // Never refill a wounded or defeated token, including zero HP.
+        if(!numeric(token.get('bar1_max')) || Number(token.get('bar1_max'))<=0){
+            if(numeric(max)&&Number(max)>0){changes.bar1_max=Number(max);}
+        }
+        if(!numeric(token.get('bar1_value'))){
+            if(numeric(current)){changes.bar1_value=Number(current);}
+            else if(numeric(max)){changes.bar1_value=Number(max);}
+        }
+        // Keep existing links, independent token HP, emitted light and custom vision.
+        var senses=attrValue(id,'npc_senses');
+        var match=senses.match(/(?:darkvision|т[её]мное\s+зрение)\s*[:—-]?\s*(\d+(?:[.,]\d+)?)\s*(метр\w*|м\b|ft\b|feet|фут\w*|фт\.?)/i);
+        if(match){
+            var distance=Number(match[1].replace(',','.')), meters=/^(м|метр)/i.test(match[2]);
+            var page=getObj('page',token.get('_pageid')), unit=page && page.get('scale_units');
+            var feet=meters?distance/0.3048:distance, converted=feet;
+            if(unit==='m'){converted=feet*0.3048;}
+            else if(unit==='km'){converted=feet*0.0003048;}
+            else if(unit==='mi'){converted=feet/5280;}
+            if(!unit || ['ft','m','km','mi'].indexOf(unit)!==-1){
+                changes.has_night_vision=true;
+                changes.night_vision_distance=Math.max(Number(token.get('night_vision_distance'))||0,Math.round(converted*100)/100);
+            }
+        }
+        var raw=attrValue(id,'npcforge_aura');
+        if(raw){try{
+            var data=JSON.parse(raw), auras=Array.isArray(data)?data:[data];validateAuras(auras);
+            auras.forEach(function(a,i){var n=i+1;if(!a||a.enabled===false){changes['aura'+n+'_radius']='';return;}
+                changes['aura'+n+'_radius']=String(auraRadius(a,token));changes['aura'+n+'_color']=a.color||'#FFFF99';
+                changes['aura'+n+'_square']=a.square===true;changes['showplayers_aura'+n]=a.visible===true;
+            });
+        }catch(e){log(SCRIPT+': '+e.message);}}
+        var diff={}; Object.keys(changes).forEach(function(k){if(String(token.get(k))!==String(changes[k])){diff[k]=changes[k];}});
+        if(Object.keys(diff).length){token.set(diff);}
+        if(typeof AD5HealthView!=='undefined'){AD5HealthView.update(token);}
+        return true;
+    }
+    function configureAllTokens(charId){
+        var count=0;
+        findObjs({_type:'graphic',_subtype:'token'}).forEach(function(t){
+            if((!charId||t.get('represents')===charId)&&configureToken(t)){count++;}
+        });return count;
+    }
+    function currentPageId(){ var p=Campaign().get('playerpageid'); return p; }
+    function createToken(result,opts){
+        var pageId=opts.pageid||currentPageId(), hp=findObjs({_type:'attribute',_characterid:result.id,name:'hp'})[0], ac=findObjs({_type:'attribute',_characterid:result.id,name:'npc_ac'})[0];
+        var token=createObj('graphic',{_pageid:pageId,_subtype:'token',layer:'objects',represents:result.id,name:result.npc.name,left:asInt(opts.left,350),top:asInt(opts.top,350),width:asInt(opts.width,70),height:asInt(opts.height,70),bar1_value:result.npc.hp,bar1_max:result.npc.hp,bar1_link:'',bar2_value:result.npc.ac,bar2_max:'',bar2_link:ac?(ac.id||ac.get('_id')):'',showname:true,showplayers_name:false,showplayers_bar1:false,bar1_num_permission:'',bar_location:null,compact_bar:null,playersedit_bar1:false,statusmarkers:''});
+        configureToken(token);
+        return token;
+    }
+    function parseArgs(content){
+        var out={}, parts=String(content||'').split(/\s+--/); out.command=parts.shift().trim().split(/\s+/)[0];
+        parts.forEach(function(part){var at=part.indexOf('|'), key=(at<0?part:part.slice(0,at)).trim().toLowerCase(), value=(at<0?'true':part.slice(at+1).trim()); if(key){out[key]=value;}}); return out;
+    }
+    function selectedCharacter(msg){
+        if(!msg.selected||!msg.selected.length){return null;} var token=getObj('graphic',msg.selected[0]._id); if(!token){return null;} var id=token.get('represents'); return id?getObj('character',id):null;
+    }
+    function commandNPC(msg,args){
+        var c=args.id?getObj('character',args.id):selectedCharacter(msg);
+        if(!c||attrValue(c.id,'npc')!=='1')throw new Error('Выделите NPC либо передайте --id|ID_листа.');
+        return c;
+    }
+    function controls(who,c,page){
+        page=Math.max(0,asInt(page,1)-1);
+        var id=c.id, rtype=attrValue(id,'rtype'), current=rtype.indexOf('?{')>=0?'выбор перед броском':rtype.indexOf('disadvantage')>=0?'помеха':rtype.indexOf('advantage')>=0?'преимущество':'обычный';
+        var body='<p>Режим атаки: <b>'+current+'</b></p>';
+        [['Обычный','normal'],['Преимущество','advantage'],['Помеха','disadvantage'],['Спрашивать','query'],['Вкл/выкл преимущества','toggle']].forEach(function(x){body+=button(x[0],'!npc-mode --id|'+id+' --mode|'+x[1]);});
+        body+='<p>Ауры: '+button('Настроить','!npc-aura --id|'+id+' --slot|?{Номер ауры|1|2} --radius|?{Радиус|10} --unit|?{Единицы|ft|m|page} --color|?{Цвет|#9900FF} --visible|?{Видна игрокам|true|false}')+button('Выключить 1','!npc-aura --id|'+id+' --slot|1 --enabled|false')+button('Выключить 2','!npc-aura --id|'+id+' --slot|2 --enabled|false')+'</p>';
+        var groups={action:[],bonus:[],reaction:[],legendary:[]}, attrs=findObjs({_type:'attribute',_characterid:id}), values={};
+        attrs.forEach(function(a){values[a.get('name')]=a.get('current');});
+        attrs.forEach(function(a){var n=a.get('name');if(!/^repeating_(?:npcaction(?:-l)?|npcreaction)_.+_name$/.test(n))return;var prefix=n.slice(0,-4), cat=values[prefix+'npcforge_category']||(/npcaction-l/.test(prefix)?'legendary':'action');if(groups[cat]&&values[prefix+'rollbase'])groups[cat].push(button(a.get('current'),'~'+id+'|NF_'+prefix));});
+        ['action','bonus','reaction','legendary'].forEach(function(k,i){if(groups[k].length)body+='<p><b>'+['Основные действия','Бонусные действия','Реакции','Легендарные действия'][i]+'</b></p>'+groups[k].slice(page*15,(page+1)*15).join(' ');});
+        if(page>0)body+=button('Назад','!npc-controls --id|'+id+' --page|'+page);
+        if(Object.keys(groups).some(function(k){return groups[k].length>(page+1)*15;}))body+=button('Далее','!npc-controls --id|'+id+' --page|'+(page+2));
+        whisper(who,panel(c.get('name'),body));
+    }
+    function addSection(msg,args){
+        var c=selectedCharacter(msg), section=String(args.section||'trait').toLowerCase(), name=args.name, text=args.text||args.description;
+        if(!c){throw new Error('Выберите токен, связанный с листом NPC.');} if(!name||!text){throw new Error('Нужны параметры --name и --text.');}
+        var id=c.id||c.get('_id');
+        if(['action','bonus','reaction','legendary'].indexOf(section)>=0){var item={name:name,attack:false,description:text,damage:args.damage||'',damageType:args.damagetype||'',targets:args.targets===undefined?1:Number(args.targets)};
+            if(args.save){if(ABILITIES.indexOf(args.save)<0||!/^\d+$/.test(args.dc||'')||['half','none','full'].indexOf(args.success)<0)throw new Error('Нужны --save|wisdom --dc|16 --success|half (или none/full).');item.save={ability:args.save,dc:Number(args.dc),onSuccess:args.success};}
+            if(item.damage&&!/^[0-9dD+*\/(). \-]+$/.test(item.damage))throw new Error('Неверная формула урона.');
+            writeAction(id,item,0,section);}
+        else if(section==='trait'){writeTrait(id,'npctrait',{name:name,description:text});}
+        else throw new Error('Раздел: trait, action, bonus, reaction, legendary.');
+        return c;
+    }
+    function importPayload(payload,opts){
+        var data=parseJsonPayload(payload), list=Array.isArray(data)?data:[data], results=[];
+        if(list.length>50){throw new Error('За один импорт разрешено создать не более 50 NPC.');}
+        var prepared=list.map(function(spec){var npc=(spec.generate===true||!spec.stats)?generate(spec):spec;var errors=validate(npc);if(errors.length)throw new Error(errors.join(' '));return npc;});
+        prepared.forEach(function(npc){results.push(writeCharacter(npc,opts));}); return results;
+    }
+    function menu(who){
+        var roleQuery='?{Роль|Защитник,soldier|Громила,brute|Застрельщик,skirmisher|Стрелок,artillery|Контролёр,controller|Поддержка,support|Скрытник,lurker}';
+        var body='<p>Создание готового NPC для листа D&D 5e 2014.</p>'+button('Создать NPC','!npc-create --name|?{Имя|Новый NPC} --cr|?{CR|1} --role|'+roleQuery+' --type|?{Тип|гуманоид} --token')+
+            '<p><b>Дополнительные команды</b></p>'+button('Панель выделенного NPC','!npc-controls')+'<div><code>!npc-import --handout|NPC Import</code></div><div><code>!npc-add --section|trait --name|Имя --text|Описание</code></div>'+button('Справка','!npc-help');
+        whisper(who,panel(SCRIPT+' v'+VERSION,body));
+    }
+    function help(who){
+        var body='<p><b>Быстрая генерация</b><br><code>!npc-create --name|Капитан --cr|5 --role|soldier --token</code></p><p>Роли: brute, soldier, skirmisher, artillery, controller, support, lurker.</p><p><b>Точный импорт</b>: поместите JSON в заметки раздаточного материала и выполните <code>!npc-import --handout|Название</code>. Массив JSON создаёт несколько NPC.</p><p><b>Добавление</b>: выберите токен и используйте <code>!npc-add --section|action --name|Команда --text|Союзник атакует</code>. Разделы: trait, action, bonus, reaction, legendary. Панель: !npc-controls; переключатель: !npc-mode --mode|toggle; ауры: !npc-aura --slot|1 --radius|10 --unit|ft --color|#9900FF --visible|true.</p><p><b>Обновление всех NPC журнала</b>: автоматически при запуске; вручную <code>!npc-fix --all</code>. Без выделения <code>!npc-fix</code> также обновляет весь журнал, с выделением — одного NPC. Хиты сохраняются.</p><p>Команды доступны только GM. <code>--token</code> создаёт токен на странице игроков; <code>--legendary|true</code> добавляет легендарные действия для CR 11+.</p>';
+        whisper(who,panel('Справка '+SCRIPT,body));
+    }
+    function success(who,results,tokenMade){
+        var list=results.map(function(r){return '<li><b>'+esc(r.npc.name)+'</b> — CR '+esc(r.npc.cr)+', КД '+esc(r.npc.ac)+', '+esc(r.npc.hp)+' хитов '+button('Панель NPC','!npc-controls --id|'+r.id)+'</li>';}).join('');
+        whisper(who,panel('NPC создан'+(results.length>1?'ы':''),'<ul>'+list+'</ul>'+(tokenMade?'<p>Токен размещён на текущей странице игроков.</p>':'')));
+    }
+    function handle(msg){
+        if(msg.type!=='api'||String(msg.content).indexOf('!npc')!==0){return;} var who=(msg.who||'GM').replace(/\s+\(GM\)$/,'');
+        if(!playerIsGM(msg.playerid)){whisper(who,panel('Доступ запрещён','Команды создания NPC доступны только Мастеру.'));return;}
+        var args=parseArgs(msg.content);
+        try{
+            if(args.command==='!npc'||args.command==='!npc-menu'){menu(who);return;}
+            if(args.command==='!npc-help'){help(who);return;}
+            if(['!npc-controls','!npc-mode','!npc-aura'].indexOf(args.command)>=0){
+                var c=commandNPC(msg,args);
+                if(args.command==='!npc-mode'){
+                    var mode=args.mode||'toggle';
+                    if(mode==='toggle')mode=/{{advantage=1}}/.test(attrValue(c.id,'rtype'))?'normal':'advantage';
+                    upsert(c.id,'rtype',modeValue(mode));fixCharacter(c.id);
+                }
+                if(args.command==='!npc-aura'){
+                    var slot=Number(args.slot||1);if(slot!==1&&slot!==2)throw new Error('Номер ауры: 1 или 2.');
+                    var raw=attrValue(c.id,'npcforge_aura'), data=raw?JSON.parse(raw):[], auras=Array.isArray(data)?data:[data];
+                    while(auras.length<slot)auras.push(null);
+                    var a=auras[slot-1]||{radius:10,unit:'ft',color:'#FFFF99',visible:false};
+                    a=JSON.parse(JSON.stringify(a));
+                    if(args.radius!==undefined)a.radius=Number(args.radius);
+                    if(args.unit!==undefined)a.unit=args.unit;
+                    if(args.color!==undefined)a.color=args.color;
+                    if(args.visible!==undefined)a.visible=args.visible==='true';
+                    if(args.square!==undefined)a.square=args.square==='true';
+                    a.enabled=args.enabled!=='false';auras[slot-1]=a;validateAuras(auras);
+                    upsert(c.id,'npcforge_aura',JSON.stringify(auras));configureAllTokens(c.id);
+                }
+                controls(who,c,args.page);return;
+            }
+            if(args.command==='!npc-token'){
+                var n=0;
+                if(args.all==='true'){n=configureAllTokens();}
+                else{(msg.selected||[]).forEach(function(x){if(configureToken(getObj('graphic',x._id))){n++;}});}
+                whisper(who,panel('Токены NPC настроены','Обновлено: '+n+'.'));return;
+            }
+            if(args.command==='!npc-fix'){
+                if(args.all==='true' || !msg.selected || !msg.selected.length){fixAllCharacters(who);return;}
+                var target=selectedCharacter(msg);
+                if(!target){throw new Error('Выберите токен NPC или используйте !npc-fix --all.');}
+                var repaired=fixCharacter(target.id||target.get('_id'));
+                configureAllTokens(target.id||target.get('_id'));
+                whisper(who,panel('Атака и урон включены',esc(target.get('name'))+': обновлено действий — '+repaired+'.'));return;
+            }
+            if(args.command==='!npc-create'){
+                var npc=generate({name:args.name,cr:args.cr,role:args.role,type:args.type,size:args.size,alignment:args.alignment,languages:args.languages,speed:args.speed,ac:args.ac,hp:args.hp,legendary:args.legendary,rollMode:args.rollmode,auras:args['aura-radius']!==undefined?[{radius:Number(args['aura-radius']),unit:args['aura-unit']||'ft',color:args['aura-color']||'#9900FF',visible:args['aura-visible']==='true'}]:undefined}), result=writeCharacter(npc,args), tokenMade=false;
+                if(args.token==='true'){createToken(result,args);tokenMade=true;} success(who,[result],tokenMade);return;
+            }
+            if(args.command==='!npc-add'){var c=addSection(msg,args);whisper(who,panel('Добавлено','Раздел добавлен в лист <b>'+esc(c.get('name'))+'</b>.'));return;}
+            if(args.command==='!npc-import'){
+                if(!args.handout){throw new Error('Укажите --handout|Название.');}
+                var hs=findObjs({_type:'handout',name:args.handout}); if(!hs.length){throw new Error('Раздаточный материал «'+args.handout+'» не найден.');} if(hs.length>1){throw new Error('Найдено несколько раздаточных материалов с таким именем.');}
+                hs[0].get('notes',function(notes){try{var results=importPayload(notes,args), made=false;if(args.token==='true'&&results[0]){createToken(results[0],args);made=true;}success(who,results,made);}catch(e){whisper(who,panel('Ошибка импорта',esc(e.message)));}}); return;
+            }
+            help(who);
+        } catch(e){ whisper(who,panel('Ошибка',esc(e.message))); }
+    }
+    function checkInstall(){
+        state[STATE_KEY]=state[STATE_KEY]||{}; state[STATE_KEY].version=VERSION; log(SCRIPT+' v'+VERSION+' ready.');
+    }
+    function register(){
+        on('chat:message',handle);
+        on('change:character:controlledby',function(c){if(attrValue(c.id,'npc')==='1'){fixCharacter(c.id);configureAllTokens(c.id);}});
+        on('add:graphic',function(t){configureToken(t);setTimeout(function(){var live=getObj('graphic',t.id);if(live){configureToken(live);}},150);});
+        on('change:graphic:represents',configureToken);
+        on('add:attribute',function(a){if(/^(npc|hp|npc_hpbase|npc_senses|npcforge_aura)$/.test(a.get('name'))){configureAllTokens(a.get('_characterid'));}});
+        on('change:attribute',function(a){
+            if(a.get('name')==='wtype' && attrValue(a.get('_characterid'),'npc')==='1' && !npcPlayerOwned(a.get('_characterid')) && a.get('current')!=='/w gm '){upsert(a.get('_characterid'),'wtype','/w gm ');}
+            if(/^(npc|hp|npc_hpbase|npc_senses|npcforge_aura)$/.test(a.get('name'))){configureAllTokens(a.get('_characterid'));}
+            if(a.get('name')==='rtype' && attrValue(a.get('_characterid'),'npc')==='1'){fixCharacter(a.get('_characterid'));}
+            if(/^repeating_(?:npcaction(?:-l)?|npcreaction)_.+_(ad5_targets|attack_flag|damage_flag|attack_damage2?|attack_damagetype2?|attack_crit2?|save_flag|save_attr|save_dc|save_effect|description)$/.test(a.get('name')) && attrValue(a.get('_characterid'),'npc')==='1'){
+                fixCharacter(a.get('_characterid'));
+            }
+        });
+    }
+    if(typeof on==='function'){on('ready',function(){checkInstall();register();fixAllCharacters('gm');});}
+    return {version:VERSION,parseDistanceSpec:parseDistanceSpec,_test:{effectType:effectType,inferEffectType:inferEffectType,fixAllCharacters:fixAllCharacters,configureToken:configureToken,configureAllTokens:configureAllTokens,fixCharacter:fixCharacter,attackRollBase:attackRollBase,handle:handle,crProfile:crProfile,generate:generate,validate:validate,parseArgs:parseArgs,diceForAverage:diceForAverage,importPayload:importPayload,unescapeNotes:unescapeNotes}};
+}());
