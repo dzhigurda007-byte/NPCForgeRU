@@ -116,6 +116,8 @@ var AD5Conditions = (function () {
     function markerList(token) { return String(token.get('statusmarkers') || '').split(',').filter(Boolean); }
     function write(token, marker, enabled) {
         var list=markerList(token), out=[];
+        var present=list.some(function(m){return m.replace(/@\d+$/,'')===marker;});
+        if(present===!!enabled)return;
         list.forEach(function (m) { if (m.replace(/@\d+$/,'') !== marker) out.push(m); });
         if(enabled) out.push(marker);
         if(String(token.get('statusmarkers')||'')!==out.join(','))token.set('statusmarkers',out.join(','));
