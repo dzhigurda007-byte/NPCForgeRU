@@ -1,5 +1,5 @@
 /*
-AutoDamage 4.1.1 / NPC Forge RU 2.5.0 — «шепот звезд».
+AutoDamage 4.2 / NPC Forge RU 2.5.0 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Название -> цель -> атака, урон и крит. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -245,7 +245,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: false, tempBar: 0, ttl: 120000 };
-    var VERSION = '4.1.1', diagnostics = [], debug = false;
+    var VERSION = '4.2', diagnostics = [], debug = false;
     var boundActors = Object.create(null);
     function record(text) {
         diagnostics.push(text);
@@ -782,7 +782,7 @@ var AD5 = (function () {
             throw new Error('Ненулевая добавка повышенного круга требует ручного применения.');
         if (active(f, 'globaldamage') && roll(msg, f.globaldamage, 'Глобальная добавка урона', true).total !== 0)
             throw new Error('Ненулевой Global Damage Modifier требует ручного применения; хиты не списаны.');
-        var sum = 0, found = false, kind=null, types=[];
+        var sum = 0, found = false, kind=null, types=[], components=[];
         [1, 2].forEach(function (i) {
             if (!active(f, 'dmg' + i + 'flag')) return;
             found = true;
@@ -798,12 +798,51 @@ var AD5 = (function () {
                 if (cv === undefined || cv === '') throw new Error('Для крита нажмите критическую кнопку урона из последней атаки.');
                 extra = roll(msg, cv, 'Критический урон ' + i, true).total;
             }
-            sum += Math.max(0, base + extra);
+            var component=Math.max(0, base + extra);
+            components.push({type:type,amount:component});sum += component;
         });
         if (!found && !(active(f,'save')&&failureConditions(f).length)) throw new Error('В карточке нет активного урона или состояния при провале спасброска.');
-        return {amount:sum,healing:kind==='healing',types:types};
+        return {amount:sum,healing:kind==='healing',types:types,components:components};
     }
-    function finish(msg, f, p, saveResult) {
+    function parseResistances(raw) {
+        var text=String(raw||'');
+        if(/%[0-9a-f]{2}/i.test(text)){try{text=decodeURIComponent(text);}catch(e){}}
+        text=text.replace(/<br\s*\/?\s*>|<\/p>|<\/div>/gi,'\n').replace(/<[^>]*>/g,'').replace(/&nbsp;/gi,' ').replace(/&minus;/gi,'-').replace(/&#(\d+);/g,function(_,n){return String.fromCharCode(Number(n));}).replace(/&amp;/g,'&');
+        var out={},re=/(?:^|[,;\n])\s*([^:,;\n]+)\s*:\s*([+-]?\d+(?:\.\d+)?)\s*%?\s*(?=$|[,;\n])/g,m;
+        while((m=re.exec(text))){
+            var type=effectType(m[1]);if(!type||type==='лечение')continue;
+            var percent=Number(m[2]);if(!Number.isFinite(percent)||percent>100)throw new Error('Сопротивление '+type+': процент должен быть не больше 100.');
+            if(out[type]!==undefined&&out[type]!==percent)throw new Error('Противоречивые сопротивления: '+type+'.');
+            out[type]=percent;
+        }
+        return out;
+    }
+    function typedDamage(effect,factor,saveMultiplier,resistances) {
+        var grouped={},rows=[],full=0,amount=0;
+        effect.components.forEach(function(c){grouped[c.type]=(grouped[c.type]||0)+c.amount;});
+        Object.keys(grouped).forEach(function(type){
+            var scaled=Math.floor(grouped[type]*factor),saved=saveMultiplier===0?0:saveMultiplier===0.5?Math.ceil(scaled/2):scaled;
+            var percent=resistances[type]||0,exact=saved*(1-percent/100),final=Math.floor(exact+1e-9);
+            if(!Number.isSafeInteger(final)||final<0)throw new Error('Неверный итог сопротивления '+type+'.');
+            full+=saved;amount+=final;rows.push({type:type,before:grouped[type],saved:saved,percent:percent,exact:exact,amount:final});
+        });
+        return {full:full,amount:amount,rows:rows};
+    }
+    function fullButton(key,h) {return h&&h.resistance&&h.resistance.full>0&&!h.fullApplied&&!h.undone?' [Нанести полный урон](!ad5 full '+key+')':'';}
+    function fullDamage(key,pid) {
+        if(!playerIsGM(pid))throw new Error('Полный урон доступен только мастеру.');
+        var h=history[key];if(!h||!h.resistance||h.fullApplied||h.undone)throw new Error('Полный урон уже применён, эффект отменён или запись недоступна.');
+        var full=h.resistance.full,absorbed=Math.min(h.beforeTemp,full),nextHp=Math.max(0,h.beforeHp-full+absorbed),nextTemp=h.beforeTemp-absorbed;
+        var wounds={light:h.wounds.before.light,medium:h.wounds.before.medium,heavy:h.wounds.before.heavy};
+        var kind=AD5Wounds.severity(h.beforeHp,h.beforeHp-nextHp);if(kind)wounds[kind]++;
+        // Validate and undo the old result before replacing it. Reapply the
+        // same save and condition outcome, without a second roll or stacking.
+        historyChange(key,pid,false,true);
+        h.afterHp=nextHp;h.afterTemp=nextTemp;h.wounds.after=wounds;h.fullApplied=true;
+        historyChange(key,pid,true,true);
+        gm('Полный урон без сопротивлений/уязвимостей: '+full+'. Результат спасброска сохранён. HP '+h.beforeHp+' → '+nextHp+'. [Отменить](!ad5 undo '+key+') [Восстановить](!ad5 redo '+key+')');
+    }
+    function finish(msg, f, p, saveResult, resistanceData) {
         if (Date.now() - p.time > CONFIG.ttl) throw new Error('Срок атаки истёк. Назначьте цель и повторите атаку.');
         var c = actor(f, msg, p.actor);
         var sourceName = f.charname || f.name || '';
@@ -820,18 +859,34 @@ var AD5 = (function () {
         playerEffectFields(msg,f,c.id||p.actor);
         var effect=damageValue(msg,f,p.die===20), healing=effect.healing, rawDamage=effect.amount;
         if(healing && blank(plan.max))throw new Error('Для лечения заполните максимальные HP.');
-        var autoNpcSave=false;
+        var autoNpcSave=!!p.autoNpcSave;
         if(active(f,'save')&&!saveResult){
             var requestedSpec=saveSpec(msg,f,t.cid);
             if(isUncontrolledNPC(t.cid)){
                 // NPCs that are not controlled by a player resolve the save silently.
                 // Roll20's randomInteger is used directly, so no chat roll/request is emitted.
                 saveResult=autoNPCSave(requestedSpec);
-                autoNpcSave=true;
+                autoNpcSave=true;p.autoNpcSave=true;
             }else{
                 requestSave(msg,f,p,requestedSpec);
                 return;
             }
+        }
+        if(!healing && resistanceData===undefined && rawDamage>0 && !(saveResult&&saveResult.total>=saveResult.spec.dc&&saveResult.spec.effect==='none')){
+            var flag=attr(t.cid,'npc',true);
+            if(flag&&String(flag.get('current'))==='1'){
+                var beforeHP=plan.value,beforeTemp=temp.value,beforeMax=plan.max,settled=false;
+                getObj('character',t.cid).get('gmnotes',function(notes){
+                    if(settled)return;settled=true;
+                    try{
+                        var now=target(p.target,msg.playerid);
+                        if(now.cid!==p.cid||hpPlan(now).value!==beforeHP||String(hpPlan(now).max)!==String(beforeMax)||tokenTemp(now).value!==beforeTemp)throw new Error('HP изменились во время чтения сопротивлений. Повторите способность.');
+                        finish(msg,f,p,saveResult,parseResistances(notes));
+                    }catch(e){if(p.batch)multiResult(p.batch,p.target,'ошибка: '+e.message);gm('Сопротивления: '+esc(e.message));}
+                });
+                return;
+            }
+            var flaws=attr(t.cid,'flaws',true);resistanceData=parseResistances(flaws&&flaws.get('current'));
         }
         var scaledDamage = rawDamage * p.factor, amount = Math.floor(scaledDamage);
         var report = ['<b>' + esc(p.name) + '</b> → ' + esc(t.token.get('name') || t.token.id)];
@@ -855,6 +910,14 @@ var AD5 = (function () {
                 amount = 0; rounding = 'Успех: нет урона. Округление не требуется.';
             } else rounding = (success?'Успех':'Провал')+': полный урон. Округление после спасброска не требуется.';
         }
+        var resistance=null;
+        if(!healing){
+            var saveMultiplier=active(f,'save')&&success?(spec.effect==='none'?0:spec.effect==='half'?0.5:1):1;
+            resistance=typedDamage(effect,p.factor,saveMultiplier,resistanceData||{});
+            amount=resistance.amount;
+            resistance.rows.forEach(function(row){report.push(esc(row.type)+': после множителя/спасброска '+row.saved+'; модификатор '+row.percent+'% → '+row.exact+' → '+row.amount+' (вниз).');});
+            rounding='Округление по типам: множитель — вниз, половина при спасброске — вверх, сопротивление/уязвимость — вниз.';
+        }
         var markerChanges=[];
         if(active(f,'save')&&!success)(spec.conditions||[]).forEach(function(k){
             var marker=AD5Conditions.map[k].marker,before=conditionMarkers(t.token,marker);
@@ -867,7 +930,7 @@ var AD5 = (function () {
         delete pending[msg.playerid];
         var key = String(++sequence);
         var entry = { tokenId: t.token.id, cid: t.cid, tempBar: temp.bar,sheetHpId:plan.sheetHpId||null,
-            wounds:woundPlan,markerChanges:markerChanges,max:plan.max, beforeHp: plan.value, afterHp: nextHp, beforeTemp: temp.value, afterTemp: nextTemp, undone: false };
+            resistance:resistance,wounds:woundPlan,markerChanges:markerChanges,max:plan.max, beforeHp: plan.value, afterHp: nextHp, beforeTemp: temp.value, afterTemp: nextTemp, undone: false };
         commitHP(t, { value: nextHp, max: plan.max });
         restoreConditions(t.token,markerChanges,true);
         AD5Wounds.set(t.token,woundPlan.after);
@@ -885,12 +948,12 @@ var AD5 = (function () {
         report.push((healing?'Итоговое лечение: <b>':'Итоговый урон: <b>') + amount + '</b>; поглощено временными HP: ' + absorbed + '.');
         report.push('HP токена: ' + plan.value + ' → ' + nextHp + (healing?' (восстановлено ':' (списано ') + Math.abs(plan.value-nextHp) + ').');
         if (temp.bar) report.push('Временные HP: ' + temp.value + ' → ' + nextTemp + '.');
-        report.push('[Отменить](!ad5 undo ' + key + ')');
+        report.push('[Отменить](!ad5 undo ' + key + ')'+fullButton(key,entry));
         if(p.batch)multiResult(p.batch,p.target,(active(f,'save') ? (success?'успех':'провал') : (healing?'лечение ':'урон ')+amount),key,report.slice(1,-1).join('<br>'));
         else if(autoNpcSave){
             // No GM request is emitted for an uncontrolled NPC. Only the final
             // result with a reversible effect is reported.
-            gm('<b>'+esc(p.name)+' — спасбросок</b><br>'+esc(t.token.get('name')||t.token.id)+' [Отменить](!ad5 undo '+key+')');
+            gm('<b>'+esc(p.name)+' — спасбросок</b><br>'+esc(t.token.get('name')||t.token.id)+'<br>'+report.slice(1,-1).join('<br>')+'<br>[Отменить](!ad5 undo '+key+')'+fullButton(key,entry));
         }else gm(report.join('<br>'));
     }
 
@@ -1008,10 +1071,11 @@ var AD5 = (function () {
     }
     function multiReport(q){
         if(q.compactSaveReport){
+            if(q.targets.some(function(t){return !q.results[t.id];}))return;
             var saveLines=q.targets.map(function(t){
                 var r=q.results[t.id]||{status:'ожидается'},h=r.key&&history[r.key];
                 if(!h)return esc(t.name)+' — '+esc(r.status);
-                return esc(t.name)+' — '+esc(r.status)+' '+(h.undone?'[Восстановить](!ad5 redo '+r.key+')':'[Отменить](!ad5 undo '+r.key+')');
+                return esc(t.name)+' — '+esc(r.status)+' '+(h.undone?'[Восстановить](!ad5 redo '+r.key+')':'[Отменить](!ad5 undo '+r.key+')')+fullButton(r.key,h)+(r.details?'<br>'+r.details:'');
             });
             for(var si=0;si<saveLines.length;si+=12)gm('<b>'+esc(q.name)+' — спасброски</b><br>'+saveLines.slice(si,si+12).join('<br>'));
             return;
@@ -1019,7 +1083,7 @@ var AD5 = (function () {
         var lines=q.targets.map(function(t){var r=q.results[t.id]||{status:'ожидается'};
             var h=r.key&&history[r.key];
             return esc(t.name)+' — '+esc(r.status)+(h?' · HP '+h.beforeHp+' → '+h.afterHp+
-                (h.undone?' · отменено [Восстановить](!ad5 redo '+r.key+')':' [Отменить](!ad5 undo '+r.key+')'):'')+(r.details?'<br>'+r.details:'');
+                (h.undone?' · отменено [Восстановить](!ad5 redo '+r.key+')':' [Отменить](!ad5 undo '+r.key+')')+fullButton(r.key,h):'')+(r.details?'<br>'+r.details:'');
         });
         for(var i=0;i<lines.length;i+=8)gm('<b>'+esc(q.name)+' · '+q.id+'</b><br>'+lines.slice(i,i+8).join('<br><br>')+'<br>[Обновить отчёт](!ad5 multi-report '+q.id+')');
     }
@@ -1073,7 +1137,7 @@ var AD5 = (function () {
         else if(sub==='multi-cancel'){if(q.status!=='choosing')throw new Error('Применённый эффект отменяйте кнопками отчёта.');q.status='cancelled';selectionReply(q.owner,'Выбор целей отменён. Эффект не применён.');}
         else throw new Error('Неизвестная команда выбора целей.');
     }
-    function historyChange(key,pid,redo){
+    function historyChange(key,pid,redo,silent){
         if(!playerIsGM(pid))throw new Error('Отмена и восстановление доступны мастеру.');
         if(key==='last')key=historyKeys[historyKeys.length-1];
         var h=history[key];if(!h || h.undone!==redo)throw new Error('Эффект уже в нужном состоянии или запись не найдена.');
@@ -1090,11 +1154,12 @@ var AD5 = (function () {
         restoreConditions(t.token,h.markerChanges||[],redo);
         if(h.wounds)AD5Wounds.set(t.token,redo?h.wounds.after:h.wounds.before);
         h.undone=!redo;
-        gm((redo?'Восстановлено':'Отменено')+' · '+esc(t.token.get('name')||h.tokenId)+' [Отменить](!ad5 undo '+key+') [Восстановить](!ad5 redo '+key+')');
+        if(!silent)gm((redo?'Восстановлено':'Отменено')+' · '+esc(t.token.get('name')||h.tokenId)+' [Отменить](!ad5 undo '+key+') [Восстановить](!ad5 redo '+key+')');
     }
 
     function command(msg) {
         var args = msg.content.trim().split(/\s+/), sub = (args[1] || 'help').toLowerCase(), pid = msg.playerid;
+        if(sub==='full'){fullDamage(args[2],pid);return;}
         if(sub==='wounds'){
             if(!playerIsGM(pid))throw new Error('Управление ранами доступно только мастеру.');
             if(args[2]==='reset'){
@@ -1360,3 +1425,4 @@ var AD5 = (function () {
         cancel:function(id,pid){var q=multiGet(id,pid,true);if(q.status!=='choosing')throw new Error('Применение уже завершено.');q.status='cancelled';return true;}
     }};
 }());
+
