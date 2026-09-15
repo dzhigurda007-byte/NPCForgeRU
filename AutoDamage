@@ -1,5 +1,5 @@
 /*
-AutoDamage 4.2 / NPC Forge RU 2.5.0 — «шепот звезд».
+AutoDamage 4.2.1 / NPC Forge RU 2.5.0 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Название -> цель -> атака, урон и крит. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -245,7 +245,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: false, tempBar: 0, ttl: 120000 };
-    var VERSION = '4.2', diagnostics = [], debug = false;
+    var VERSION = '4.2.1', diagnostics = [], debug = false;
     var boundActors = Object.create(null);
     function record(text) {
         diagnostics.push(text);
@@ -806,9 +806,13 @@ var AD5 = (function () {
     }
     function parseResistances(raw) {
         var text=String(raw||'');
-        if(/%[0-9a-f]{2}/i.test(text)){try{text=decodeURIComponent(text);}catch(e){}}
+        for(var pass=0;pass<2;pass++){
+            text=text.replace(/%u([0-9a-f]{4})/gi,function(_,hex){return String.fromCharCode(parseInt(hex,16));});
+            if(/%[0-9a-f]{2}/i.test(text)){try{text=decodeURIComponent(text);}catch(e){text=text.replace(/%([0-7][0-9a-f])/gi,function(_,hex){return String.fromCharCode(parseInt(hex,16));});}}
+        }
         text=text.replace(/<br\s*\/?\s*>|<\/p>|<\/div>/gi,'\n').replace(/<[^>]*>/g,'').replace(/&nbsp;/gi,' ').replace(/&minus;/gi,'-').replace(/&#(\d+);/g,function(_,n){return String.fromCharCode(Number(n));}).replace(/&amp;/g,'&');
-        var out={},re=/(?:^|[,;\n])\s*([^:,;\n]+)\s*:\s*([+-]?\d+(?:\.\d+)?)\s*%?\s*(?=$|[,;\n])/g,m;
+        text=text.replace(/&quot;|&#34;|&apos;|&#39;|["«»“”]/gi,'').replace(/&#x([0-9a-f]+);/gi,function(_,hex){return String.fromCharCode(parseInt(hex,16));}).replace(/[−–]/g,'-');
+        var out={},re=/(?:^|[:,;\n])\s*([^:,;\n]+)\s*:\s*([+-]?\d+(?:\.\d+)?)\s*%?\s*(?=$|[,;\n])/g,m;
         while((m=re.exec(text))){
             var type=effectType(m[1]);if(!type||type==='лечение')continue;
             var percent=Number(m[2]);if(!Number.isFinite(percent)||percent>100)throw new Error('Сопротивление '+type+': процент должен быть не больше 100.');
@@ -816,6 +820,27 @@ var AD5 = (function () {
             out[type]=percent;
         }
         return out;
+    }
+    function npcResistanceData(t,done) {
+        var character=getObj('character',t.cid),sources=[],settled=false;
+        function add(label,raw){if(String(raw||'').trim())sources.push({label:label,raw:raw});}
+        try{
+            findObjs({_type:'attribute',_characterid:t.cid}).forEach(function(a){
+                if(/^(npc_notes|npc_gmnotes|gmnotes|npc_gm_notes)$/i.test(a.get('name')||''))add('Поле листа '+a.get('name'),a.get('current'));
+            });
+            add('Заметки токена',t.token.get('gmnotes'));
+            character.get('gmnotes',function(raw){
+                if(settled)return;settled=true;
+                try{
+                    add('Заметки мастера персонажа',raw);
+                    var merged={},used=[];
+                    sources.forEach(function(source){var parsed=parseResistances(source.raw),keys=Object.keys(parsed);if(keys.length)used.push(source.label);
+                        keys.forEach(function(type){if(merged[type]!==undefined&&merged[type]!==parsed[type])throw new Error('Разные значения '+type+' в заметках NPC. Оставьте согласованные записи.');merged[type]=parsed[type];});
+                    });
+                    done(null,merged,used);
+                }catch(e){done(e);}
+            });
+        }catch(e){if(!settled){settled=true;done(e);}}
     }
     function typedDamage(effect,factor,saveMultiplier,resistances) {
         var grouped={},rows=[],full=0,amount=0;
@@ -876,12 +901,13 @@ var AD5 = (function () {
             var flag=attr(t.cid,'npc',true);
             if(flag&&String(flag.get('current'))==='1'){
                 var beforeHP=plan.value,beforeTemp=temp.value,beforeMax=plan.max,settled=false;
-                getObj('character',t.cid).get('gmnotes',function(notes){
+                npcResistanceData(t,function(readError,modifiers){
                     if(settled)return;settled=true;
                     try{
+                        if(readError)throw readError;
                         var now=target(p.target,msg.playerid);
                         if(now.cid!==p.cid||hpPlan(now).value!==beforeHP||String(hpPlan(now).max)!==String(beforeMax)||tokenTemp(now).value!==beforeTemp)throw new Error('HP изменились во время чтения сопротивлений. Повторите способность.');
-                        finish(msg,f,p,saveResult,parseResistances(notes));
+                        finish(msg,f,p,saveResult,modifiers);
                     }catch(e){if(p.batch)multiResult(p.batch,p.target,'ошибка: '+e.message);gm('Сопротивления: '+esc(e.message));}
                 });
                 return;
@@ -1159,6 +1185,15 @@ var AD5 = (function () {
 
     function command(msg) {
         var args = msg.content.trim().split(/\s+/), sub = (args[1] || 'help').toLowerCase(), pid = msg.playerid;
+        if(sub==='resistances'){
+            if(!playerIsGM(pid))throw new Error('Диагностика сопротивлений доступна мастеру.');
+            if(!msg.selected||msg.selected.length!==1)throw new Error('Выделите один токен.');
+            var checked=target(msg.selected[0]._id,pid),flag=attr(checked.cid,'npc',true);
+            function show(error,data,used){if(error){gm('Сопротивления: '+esc(error.message));return;}gm('<b>'+esc(checked.token.get('name'))+'</b><br>'+ (Object.keys(data).map(function(k){return esc(k)+': '+data[k]+'%';}).join(', ')||'Сопротивления не распознаны. Запишите отдельной строкой: огонь: 25, звук: 50')+'<br>Источник: '+esc((used||[]).join(', ')||'нет записей'));}
+            if(flag&&String(flag.get('current'))==='1')npcResistanceData(checked,show);
+            else{var flaws=attr(checked.cid,'flaws',true);show(null,parseResistances(flaws&&flaws.get('current')),['Слабости (flaws)']);}
+            return;
+        }
         if(sub==='full'){fullDamage(args[2],pid);return;}
         if(sub==='wounds'){
             if(!playerIsGM(pid))throw new Error('Управление ранами доступно только мастеру.');
