@@ -1,5 +1,5 @@
 /*
-AutoDamage 4.1 / NPC Forge RU 2.5.0 — «шепот звезд».
+AutoDamage 4.1.1 / NPC Forge RU 2.5.0 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Название -> цель -> атака, урон и крит. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -151,6 +151,16 @@ var AD5Conditions = (function () {
 
 var AD5Wounds = (function () {
     'use strict';
+    var observed=Object.create(null);
+    function hp(value){return value!==undefined&&value!==null&&String(value).trim()!==''&&Number.isFinite(Number(value))?Math.max(0,Number(value)):null;}
+    function observe(t,value){observed[t.id]=hp(value===undefined?t.get('bar1_value'):value);}
+    function changed(t,prev){
+        if(!t||t.get('_subtype')!=='token'||t.get('isdrawing'))return;
+        var current=hp(t.get('bar1_value')),before=Object.prototype.hasOwnProperty.call(observed,t.id)?observed[t.id]:hp(prev&&prev.bar1_value);
+        observe(t);
+        if(current!==null&&before!==null&&current<before){var p=plan(t,before,current,false);set(t,p.after);}
+        else sync(t);
+    }
     function db() {
         if(!state.AD5Wounds)state.AD5Wounds={version:1,tokens:{}};
         return state.AD5Wounds.tokens;
@@ -185,8 +195,11 @@ var AD5Wounds = (function () {
     function set(t,c) {db()[t.id]={light:c.light,medium:c.medium,heavy:c.heavy};sync(t);}
     function equals(a,b) {return a.light===b.light&&a.medium===b.medium&&a.heavy===b.heavy;}
     function refresh(){findObjs({_type:'graphic',_subtype:'token'}).forEach(sync);}
-    on('destroy:graphic',function(t){delete db()[t.id];});
-    return {counts:counts,sync:sync,severity:severity,plan:plan,set:set,equals:equals,refresh:refresh};
+    on('ready',function(){findObjs({_type:'graphic',_subtype:'token'}).forEach(function(t){observe(t);sync(t);});});
+    on('add:graphic',function(t){observe(t);sync(t);});
+    on('change:graphic',changed);
+    on('destroy:graphic',function(t){delete db()[t.id];delete observed[t.id];});
+    return {observe:observe,changed:changed,counts:counts,sync:sync,severity:severity,plan:plan,set:set,equals:equals,refresh:refresh};
 }());
 
 var AD5HealthView = (function () {
@@ -230,7 +243,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: false, tempBar: 0, ttl: 120000 };
-    var VERSION = '4.1', diagnostics = [], debug = false;
+    var VERSION = '4.1.1', diagnostics = [], debug = false;
     var boundActors = Object.create(null);
     function record(text) {
         diagnostics.push(text);
@@ -475,14 +488,17 @@ var AD5 = (function () {
         var hp=attr(t.cid,'hp',true), npc=attr(t.cid,'npc',true);
         if(!npc || String(npc.get('current'))!=='1'){
             if(!hp)throw new Error('Нет hp в листе персонажа.');
+            findObjs({_type:'graphic',_subtype:'token',represents:t.cid}).forEach(function(token){var link=token.get('bar1_link');if(!link||link==='hp'||link===hp.id)AD5Wounds.observe(token,plan.value);});
             hp.set('current',plan.value);
             findObjs({_type:'graphic',_subtype:'token',represents:t.cid}).forEach(function(token){
                 var link=token.get('bar1_link');if(link&&link!=='hp'&&link!==hp.id)return;
+                AD5Wounds.observe(token,plan.value);
                 token.set({bar1_link:hp.id,bar1_value:plan.value,bar1_max:plan.max});AD5HealthView.update(token);
             });return;
         }
         // Unlink FIRST, in a separate write, to prevent attribute propagation.
         t.token.set({ bar1_link: '' });
+        AD5Wounds.observe(t.token,plan.value);
         t.token.set({ bar1_value: plan.value, bar1_max: plan.max });
         AD5HealthView.update(t.token);
     }
