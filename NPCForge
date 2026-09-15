@@ -1,12 +1,12 @@
 /*
- * NPC Forge RU v2.5.0
+ * NPC Forge RU v2.5.1
  * Roll20 Mod for the legacy "D&D 5E by Roll20" (2014) character sheet.
  * Install in Roll20: Game Settings -> Mod (API) Scripts -> New Script.
  */
 var NPCForge = NPCForge || (function () {
     'use strict';
 
-    var VERSION = '2.5.0';
+    var VERSION = '2.5.1';
     var SCRIPT = 'NPC Forge RU';
     var STATE_KEY = 'NPCForgeRU';
     var repairJob = null;
@@ -602,8 +602,10 @@ var NPCForge = NPCForge || (function () {
         else throw new Error('Раздел: trait, action, bonus, reaction, legendary.');
         return c;
     }
-    function importPayload(payload,opts){
-        var data=parseJsonPayload(payload), list=Array.isArray(data)?data:[data], results=[];
+    function importPayload(payload,opts){return importData(parseJsonPayload(payload),opts);}
+    function importData(data,opts){
+        var list=Array.isArray(data)?data:[data], results=[];
+        if(!list.length)throw new Error('Массив NPC пуст.');
         if(list.length>50){throw new Error('За один импорт разрешено создать не более 50 NPC.');}
         var prepared=list.map(function(spec){var npc=(spec.generate===true||!spec.stats)?generate(spec):spec;var errors=validate(npc);if(errors.length)throw new Error(errors.join(' '));return npc;});
         prepared.forEach(function(npc){results.push(writeCharacter(npc,opts));}); return results;
@@ -622,11 +624,30 @@ var NPCForge = NPCForge || (function () {
         var list=results.map(function(r){return '<li><b>'+esc(r.npc.name)+'</b> — CR '+esc(r.npc.cr)+', КД '+esc(r.npc.ac)+', '+esc(r.npc.hp)+' хитов '+button('Панель NPC','!npc-controls --id|'+r.id)+'</li>';}).join('');
         whisper(who,panel('NPC создан'+(results.length>1?'ы':''),'<ul>'+list+'</ul>'+(tokenMade?'<p>Токен размещён на текущей странице игроков.</p>':'')));
     }
+    function directJson(msg,who) {
+        var match=String(msg.content).match(/^!npc-json\s+(--token\s+)?--(json|encoded)\|([\s\S]+)$/);
+        if(!match)throw new Error('Формат: !npc-json --token --json|{...} или макрос NPC-JSON.');
+        var raw=match[3].trim();
+        if(raw.length>250000)throw new Error('JSON слишком большой: максимум 250000 символов.');
+        if(match[2]==='encoded'){
+            try{raw=decodeURIComponent(raw);}catch(e){throw new Error('Повреждено кодирование JSON. Повторите отправку из окна.');}
+        }
+        raw=raw.replace(/^\uFEFF/,'').replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'').trim();
+        var data;
+        try{data=JSON.parse(raw);}catch(e){throw new Error('Некорректный JSON: '+e.message);}
+        // Use the shared importer, but do not pass literal HTML-like strings
+        // through the Handout HTML decoder.
+        var results=importData(data,{}), made=false;
+        if(match[1]&&results[0]){createToken(results[0],{});made=true;}
+        success(who,results,made);
+    }
     function handle(msg){
         if(msg.type!=='api'||String(msg.content).indexOf('!npc')!==0){return;} var who=(msg.who||'GM').replace(/\s+\(GM\)$/,'');
         if(!playerIsGM(msg.playerid)){whisper(who,panel('Доступ запрещён','Команды создания NPC доступны только Мастеру.'));return;}
-        var args=parseArgs(msg.content);
+        var args;
         try{
+            if(/^!npc-json(?:\s|$)/.test(msg.content)){directJson(msg,who);return;}
+            args=parseArgs(msg.content);
             if(args.command==='!npc'||args.command==='!npc-menu'){menu(who);return;}
             if(args.command==='!npc-help'){help(who);return;}
             if(['!npc-controls','!npc-mode','!npc-aura'].indexOf(args.command)>=0){
