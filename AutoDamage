@@ -1,5 +1,5 @@
 /*
-AutoDamage 4.0 / NPC Forge RU 2.5.0 — «шепот звезд».
+AutoDamage 4.1 / NPC Forge RU 2.5.0 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Название -> цель -> атака, урон и крит. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -149,11 +149,52 @@ var AD5Conditions = (function () {
     return {map:MAP,key:key,set:set,clearAll:clearAll,syncHP:syncHP,list:list,byMarker:BY_MARKER};
 }());
 
+var AD5Wounds = (function () {
+    'use strict';
+    function db() {
+        if(!state.AD5Wounds)state.AD5Wounds={version:1,tokens:{}};
+        return state.AD5Wounds.tokens;
+    }
+    function counts(id) {
+        var c=db()[id]||{};
+        return {light:Number.isSafeInteger(c.light)&&c.light>=0?c.light:0,
+            medium:Number.isSafeInteger(c.medium)&&c.medium>=0?c.medium:0,
+            heavy:Number.isSafeInteger(c.heavy)&&c.heavy>=0?c.heavy:0};
+    }
+    function text(c) {return 'Легкая рана - '+c.light+', Средняя рана - '+c.medium+', Тяжелая рана - '+c.heavy;}
+    function sync(t) {
+        if(!t||t.get('_subtype')!=='token'||t.get('isdrawing'))return;
+        var c=counts(t.id);db()[t.id]=c;
+        var tooltip=text(c),changes={};
+        if(t.get('tooltip')!==tooltip)changes.tooltip=tooltip;
+        if(t.get('show_tooltip')!==true)changes.show_tooltip=true;
+        if(Object.keys(changes).length)t.set(changes);
+    }
+    function severity(before,lost) {
+        if(!Number.isFinite(before)||!Number.isFinite(lost)||before<=0||lost<=0)return null;
+        if(lost*4<=before)return null;
+        if(lost*2<=before)return 'light';
+        if(lost*4<=before*3)return 'medium';
+        return 'heavy';
+    }
+    function plan(t,before,after,healing) {
+        var a=counts(t.id),b=counts(t.id),lost=healing?0:Math.max(0,before-after),kind=severity(before,lost);
+        if(kind)b[kind]++;
+        return {before:a,after:b,kind:kind,lost:lost,percent:before>0?lost/before*100:0};
+    }
+    function set(t,c) {db()[t.id]={light:c.light,medium:c.medium,heavy:c.heavy};sync(t);}
+    function equals(a,b) {return a.light===b.light&&a.medium===b.medium&&a.heavy===b.heavy;}
+    function refresh(){findObjs({_type:'graphic',_subtype:'token'}).forEach(sync);}
+    on('destroy:graphic',function(t){delete db()[t.id];});
+    return {counts:counts,sync:sync,severity:severity,plan:plan,set:set,equals:equals,refresh:refresh};
+}());
+
 var AD5HealthView = (function () {
     'use strict';
     var managed = Object.create(null);
     function update(t) {
         if (!t || t.get('_subtype') !== 'token' || t.get('isdrawing')) return;
+        AD5Wounds.sync(t);
         var cid = t.get('represents'), c = getObj('character', cid);
         if (!c) return;
         var npcAttrs = findObjs({ _type: 'attribute', _characterid: cid }).filter(function (a) { return String(a.get('name')).toLowerCase() === 'npc'; });
@@ -189,7 +230,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: false, tempBar: 0, ttl: 120000 };
-    var VERSION = '4.0', diagnostics = [], debug = false;
+    var VERSION = '4.1', diagnostics = [], debug = false;
     var boundActors = Object.create(null);
     function record(text) {
         diagnostics.push(text);
@@ -804,12 +845,14 @@ var AD5 = (function () {
         if(markerChanges.length)report.push('Наложены состояния: '+esc((spec.conditions||[]).map(function(k){return AD5Conditions.map[k].ru;}).join(', '))+'.');
         var absorbed=healing?0:Math.min(temp.value,amount);
         var nextHp=healing?Math.max(plan.value,Math.min(Number(plan.max),plan.value+amount)):Math.max(0,plan.value-amount+absorbed), nextTemp=temp.value-absorbed;
+        var woundPlan=AD5Wounds.plan(t.token,plan.value,nextHp,healing);
         delete pending[msg.playerid];
         var key = String(++sequence);
         var entry = { tokenId: t.token.id, cid: t.cid, tempBar: temp.bar,sheetHpId:plan.sheetHpId||null,
-            markerChanges:markerChanges,max:plan.max, beforeHp: plan.value, afterHp: nextHp, beforeTemp: temp.value, afterTemp: nextTemp, undone: false };
+            wounds:woundPlan,markerChanges:markerChanges,max:plan.max, beforeHp: plan.value, afterHp: nextHp, beforeTemp: temp.value, afterTemp: nextTemp, undone: false };
         commitHP(t, { value: nextHp, max: plan.max });
         restoreConditions(t.token,markerChanges,true);
+        AD5Wounds.set(t.token,woundPlan.after);
         if (temp.bar) {
             var unlink = {}, change = {};
             unlink['bar' + temp.bar + '_link'] = '';
@@ -820,6 +863,7 @@ var AD5 = (function () {
         if (historyKeys.length > 100) delete history[historyKeys.shift()];
         record('Списание ' + key + ': токен=' + t.token.id + ', HP ' + plan.value + ' -> ' + nextHp + ', временные HP ' + temp.value + ' -> ' + nextTemp);
         report.push(rounding);
+        report.push('Потеря HP: '+woundPlan.lost+' из '+plan.value+' ('+woundPlan.percent.toFixed(2)+'%). Рана: '+({light:'лёгкая',medium:'средняя',heavy:'тяжёлая'}[woundPlan.kind]||'нет')+'.');
         report.push((healing?'Итоговое лечение: <b>':'Итоговый урон: <b>') + amount + '</b>; поглощено временными HP: ' + absorbed + '.');
         report.push('HP токена: ' + plan.value + ' → ' + nextHp + (healing?' (восстановлено ':' (списано ') + Math.abs(plan.value-nextHp) + ').');
         if (temp.bar) report.push('Временные HP: ' + temp.value + ' → ' + nextTemp + '.');
@@ -1022,15 +1066,27 @@ var AD5 = (function () {
             if(JSON.stringify(conditionMarkers(t.token,c.marker))!==JSON.stringify(redo?c.before:c.after))
                 throw new Error('Наложенное состояние изменилось. Отмена/восстановление остановлены.');
         });
+        if(h.wounds&&!AD5Wounds.equals(AD5Wounds.counts(t.token.id),redo?h.wounds.before:h.wounds.after))throw new Error('Счётчики ран изменились. Отмена/восстановление остановлены.');
         var value=redo?h.afterHp:h.beforeHp;commitHP(t,{value:value,max:p.max});
         if(h.tempBar)t.token.set('bar'+h.tempBar+'_value',redo?h.afterTemp:h.beforeTemp);
         restoreConditions(t.token,h.markerChanges||[],redo);
+        if(h.wounds)AD5Wounds.set(t.token,redo?h.wounds.after:h.wounds.before);
         h.undone=!redo;
         gm((redo?'Восстановлено':'Отменено')+' · '+esc(t.token.get('name')||h.tokenId)+' [Отменить](!ad5 undo '+key+') [Восстановить](!ad5 redo '+key+')');
     }
 
     function command(msg) {
         var args = msg.content.trim().split(/\s+/), sub = (args[1] || 'help').toLowerCase(), pid = msg.playerid;
+        if(sub==='wounds'){
+            if(!playerIsGM(pid))throw new Error('Управление ранами доступно только мастеру.');
+            if(args[2]==='reset'){
+                if(!msg.selected||!msg.selected.length)throw new Error('Выделите токены для сброса ран.');
+                msg.selected.forEach(function(x){var t=getObj('graphic',x._id);if(t&&t.get('_subtype')==='token')AD5Wounds.set(t,{light:0,medium:0,heavy:0});});
+                gm('Раны выбранных токенов сброшены.');
+            }else if(args[2]===undefined){AD5Wounds.refresh();gm('Подсказки ран обновлены. Сброс выбранных: !ad5 wounds reset.');}
+            else throw new Error('Команды: !ad5 wounds; !ad5 wounds reset.');
+            return;
+        }
         if(sub.indexOf('multi-')===0){multiCommand(msg,args);return;}
         if(['save','save-cancel','saves'].indexOf(sub)>=0){saveCommand(msg,args);return;}
         if (sub === 'visibility') {
