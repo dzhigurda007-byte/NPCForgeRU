@@ -1,0 +1,529 @@
+/* Installation guard: disable old unguarded versions before installing. */
+if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine) {
+    log('AD5ConditionEngine: duplicate module skipped; keep one installed copy.');
+} else {
+/*
+ * AD5 Condition Engine 1.2.9
+ * Central combat-condition rules for the Arvenor Roll20 / Legacy D&D 5E stack.
+ *
+ * Phase 1 scope:
+ * - Standard combat mechanics for Blinded, Charmed (source restriction remains in AD5),
+ *   Frightened, Grappled, Incapacitated, Invisible, Paralyzed, Petrified, Poisoned,
+ *   Prone, Restrained, Stunned, Unconscious and Death.
+ * - Roll20 Legacy D&D 5E exhaustion sheet scale is authoritative for PCs:
+ *     attr_exhaustion_level = 0..6.
+ * - Exhaustion 2014: 1 checks disadvantage; 2 speed half; 3 attacks+saves disadvantage;
+ *   4 effective max HP half; 5 speed 0; 6 death.
+ * - Effect Turns remains the owner of timed conditions; Condition Engine interprets them.
+ * - Existing campaign house rule is preserved: attacks against Paralyzed within 5 ft
+ *   automatically hit (except natural 1) and are critical.
+ * - 1.1.0 adds D&D 2014 opposed ability contests: Grapple, Escape Grapple,
+ *   Shove (prone/push 5 ft), and optional Grappler-feat Pin. Ability checks do
+ *   NOT use save nat-1/nat-20 rules; ties preserve the existing situation.
+ * - 1.2.0 makes Grappled/Prone lifecycle-based: Grappled ends by escape/release/lost reach;
+ *   Prone ends through the existing «Встать» action. A moving grappler carries linked targets;
+ *   grappling a creature not two sizes smaller halves the grappler's speed.
+ * - 1.2.1 keeps every Grappled target physically adjacent to its grappler: after a successful
+ *   grapple and after every grappler move the target is normalized to the 5-ft contact ring,
+ *   preserving its relative bearing. Carry remains forced movement (no target speed/AOO).
+ * - 1.2.6: ability contests consume Effect Turns «Проверка СИЛ/ЛОВ/... ±формула» modifiers, including dice formulas.
+ * - 1.2.9: reaction-only temporary lock. Effect Turns «Реакции 0» blocks Reactions-engine windows; no temporary action or movement lock is added.
+ * - 1.2.3 performance: relationship cleanup is no longer queued for unrelated graphic
+ *   changes such as HP bars/tooltips/auras; only movement, layer, identity or status changes trigger it.
+ *
+ * Public API is intentionally small so AD5/Movement/Reactions/Concentration can all
+ * consume the same rule source instead of duplicating condition logic.
+ */
+var AD5ConditionEngine=(function(){
+    'use strict';
+    var VERSION='1.2.9',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
+    var MARKERS={
+        blinded:'bleeding-eye',charmed:'chained-heart',deafened:'half-haze',frightened:'screaming',
+        grappled:'grab',incapacitated:'broken-shield',no_reactions:'interdiction',invisible:'ninja-mask',paralyzed:'padlock',
+        petrified:'white-tower',poisoned:'chemical-bolt',prone:'pummeled',restrained:'fishing-net',
+        stunned:'lightning-helix',unconscious:'sleepy',exhaustion:'back-pain',death:'skull'
+    };
+    var LABELS={
+        blinded:'Ослеплён',charmed:'Очарован',deafened:'Оглохший',frightened:'Испуган',
+        grappled:'Схвачен',incapacitated:'Недееспособен',no_reactions:'Без реакций',invisible:'Невидим',paralyzed:'Парализован',
+        petrified:'Окаменел',poisoned:'Отравлен',prone:'Сбит с ног',restrained:'Опутан',
+        stunned:'Оглушён',unconscious:'Без сознания',exhaustion:'Истощение',death:'Мёртв'
+    };
+    var ACTION_BLOCKERS=['incapacitated','paralyzed','petrified','stunned','unconscious','death'];
+    var REACTION_BLOCKERS=ACTION_BLOCKERS.concat(['no_reactions']);
+    var MOVE_ZERO=['grappled','paralyzed','petrified','restrained','stunned','unconscious','death'];
+
+    function root(){
+        if(!state.AD5ConditionEngine||typeof state.AD5ConditionEngine!=='object')state.AD5ConditionEngine={};
+        var r=state.AD5ConditionEngine;r.version=VERSION;
+        r.tokenExhaustion=r.tokenExhaustion&&typeof r.tokenExhaustion==='object'?r.tokenExhaustion:{};
+        r.npcBaseHpMax=r.npcBaseHpMax&&typeof r.npcBaseHpMax==='object'?r.npcBaseHpMax:{};
+        r.deathByExhaustion=r.deathByExhaustion&&typeof r.deathByExhaustion==='object'?r.deathByExhaustion:{};
+        r.contests=r.contests&&typeof r.contests==='object'?r.contests:{};
+        r.contestSequence=Number(r.contestSequence)||0;
+        return r;
+    }
+    function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+    function norm(s){try{if(typeof AD5Syntax!=='undefined'&&AD5Syntax&&typeof AD5Syntax.normalize==='function')return AD5Syntax.normalize(s);}catch(ignore){}return String(s==null?'':s).replace(/<[^>]*>/g,' ').replace(/&nbsp;|&#160;/gi,' ').replace(/[‐-‒–—―]/g,'-').replace(/\s+/g,' ').trim().toLocaleLowerCase('ru-RU').replace(/ё/g,'е');}
+    function num(v){if(v===null||v===undefined||String(v).trim()==='')return null;var n=Number(String(v).replace(',','.'));return Number.isFinite(n)?n:null;}
+    function clampLevel(v){v=Math.floor(Number(v)||0);return Math.max(0,Math.min(6,v));}
+    function isToken(t){return !!(t&&t.get&&String(t.get('_type')||'graphic')==='graphic'&&String(t.get('_subtype')||'token')==='token'&&!t.get('isdrawing'));}
+    function attr(cid,name){if(!cid)return null;var a=findObjs({_type:'attribute',_characterid:String(cid),name:String(name)})[0];if(a)return a;var low=String(name).toLowerCase();return (findObjs({_type:'attribute',_characterid:String(cid)})||[]).filter(function(x){return String(x.get('name')||'').toLowerCase()===low;})[0]||null;}
+    function characterId(token){
+        if(!isToken(token))return '';
+        try{if(typeof AD5Transform!=='undefined'&&AD5Transform&&typeof AD5Transform.originalActorId==='function'){var original=AD5Transform.originalActorId(token);if(original)return String(original);}}catch(ignore){}
+        return String(token.get('represents')||'');
+    }
+    function representedId(token){return isToken(token)?String(token.get('represents')||''):'';}
+    function npcToken(token){var cid=representedId(token),a=cid&&attr(cid,'npc');return !!(a&&String(a.get('current'))==='1');}
+    function exhaustionAttrForToken(token){var cid=characterId(token);return cid&&attr(cid,'exhaustion_level');}
+    function exhaustionLevel(tokenOrId){
+        var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;if(!isToken(token))return 0;
+        var a=exhaustionAttrForToken(token),v=a&&num(a.get('current'));if(v!==null)return clampLevel(v);
+        var ov=root().tokenExhaustion[token.id];return ov===undefined?0:clampLevel(ov);
+    }
+    function setStatusMarker(token,marker,value){
+        if(!isToken(token)||!marker)return false;var list=String(token.get('statusmarkers')||'').split(',').filter(Boolean),out=[];
+        list.forEach(function(m){if(String(m).replace(/@[^,]+$/,'')!==marker)out.push(m);});
+        if(value){var numbered=(typeof value==='number'&&Number.isFinite(value)&&value>0);out.push(marker+(numbered?'@'+Math.max(1,Math.min(9,Math.floor(value))):''));}
+        var next=out.join(',');if(next!==String(token.get('statusmarkers')||'')){token.set('statusmarkers',next);return true;}return false;
+    }
+    function hasMarker(token,marker){return isToken(token)&&String(token.get('statusmarkers')||'').split(',').some(function(m){return String(m).replace(/@[^,]+$/,'')===marker;});}
+    function effectSnapshot(token){try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.snapshot==='function')return AD5EffectTurns.snapshot(token.id)||null;}catch(ignore){}return null;}
+    function conditionEntry(token,key){
+        if(!isToken(token))return null;var rec=effectSnapshot(token),effects=rec&&rec.effects;if(!effects)return null;
+        var direct=effects['condition:'+key];if(direct&&direct.condition===key)return direct;var found=null;
+        Object.keys(effects).some(function(k){var e=effects[k];if(e&&e.kind==='condition'&&e.condition===key){found=e;return true;}return false;});return found;
+    }
+    function has(tokenOrId,key){
+        var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;key=norm(key).replace(/\s+/g,'_');if(!isToken(token))return false;
+        if(key==='frightened'&&typeof AD5SpellEffects!=='undefined'&&AD5SpellEffects.immune(token.id).frightened)return false;
+        if(key==='exhaustion')return exhaustionLevel(token)>0;
+        if(conditionEntry(token,key))return true;
+        var marker=MARKERS[key];return marker?hasMarker(token,marker):false;
+    }
+    function sourceInfo(token,key){var e=conditionEntry(token,key);return e&&e.source&&typeof e.source==='object'?e.source:null;}
+    function sourceToken(token,key){
+        var src=sourceInfo(token,key);if(!src)return null;var tid=String(src.sourceToken||''),t=tid&&getObj('graphic',tid);if(isToken(t))return t;
+        var actor=String(src.actor||'');if(!actor)return null;var page=String(token.get('_pageid')||'');var found=(findObjs({_type:'graphic',_subtype:'token',_pageid:page})||[]).filter(function(x){return isToken(x)&&(representedId(x)===actor||characterId(x)===actor);});return found.length===1?found[0]:null;
+    }
+    function rangeFeet(a,b){
+        if(!isToken(a)||!isToken(b)||String(a.get('_pageid'))!==String(b.get('_pageid')))return Infinity;
+        try{if(typeof AD5Floors!=='undefined'&&AD5Floors&&typeof AD5Floors.sameFloor==='function'&&!AD5Floors.sameFloor(a,b))return Infinity;}catch(ignoreFloor){}
+        try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.rangeFeet==='function'){var h=Number(AD5Height.rangeFeet(a,b));if(Number.isFinite(h))return h;}}catch(ignoreHeight){}
+        try{if(typeof AD5Movement!=='undefined'&&AD5Movement&&typeof AD5Movement.rangeFeet==='function'){var d=Number(AD5Movement.rangeFeet(a,b));if(Number.isFinite(d))return d;}}catch(ignoreMove){}
+        var page=getObj('page',a.get('_pageid')),scale=Number(page&&page.get('scale_number'))||5,dx=Math.abs(Number(a.get('left')||0)-Number(b.get('left')||0))/70,dy=Math.abs(Number(a.get('top')||0)-Number(b.get('top')||0))/70;return Math.max(dx,dy)*scale;
+    }
+    function blockedBy(token,keys){var reasons=[];(keys||[]).forEach(function(k){if(has(token,k))reasons.push(LABELS[k]||k);});return reasons;}
+    function canAct(token){var reasons=blockedBy(token,ACTION_BLOCKERS);if(exhaustionLevel(token)>=6&&reasons.indexOf('Истощение 6')<0)reasons.push('Истощение 6');return {allowed:reasons.length===0,reasons:reasons};}
+    function canReact(token){var reasons=blockedBy(token,REACTION_BLOCKERS);if(exhaustionLevel(token)>=6&&reasons.indexOf('Истощение 6')<0)reasons.push('Истощение 6');return {allowed:reasons.length===0,reasons:reasons};}
+    function attackRule(source,target){
+        var adv=[],dis=[],forceCritical=false,autoHitClose=false,blocked=source?canAct(source):{allowed:true,reasons:[]},dist=(source&&target)?rangeFeet(source,target):Infinity;
+        if(target){
+            if(has(target,'blinded'))adv.push('Ослеплён');
+            if(has(target,'paralyzed')){if(dist<=5.0001){autoHitClose=true;forceCritical=true;}else adv.push('Парализован >5 фт');}
+            if(has(target,'petrified'))adv.push('Окаменел');
+            if(has(target,'restrained'))adv.push('Опутан');
+            if(has(target,'stunned'))adv.push('Оглушён');
+            if(has(target,'unconscious')){adv.push('Без сознания');if(dist<=5.0001)forceCritical=true;}
+            if(has(target,'prone')){if(dist<=5.0001)adv.push('Сбит с ног ≤5 фт');else dis.push('Сбит с ног >5 фт');}
+            if(has(target,'invisible'))dis.push('Невидимая цель');
+        }
+        if(source){
+            if(has(source,'blinded'))dis.push('Ослеплён');
+            if(has(source,'poisoned'))dis.push('Отравлен');
+            if(has(source,'restrained'))dis.push('Опутан');
+            if(has(source,'prone'))dis.push('Сбит с ног');
+            if(has(source,'invisible'))adv.push('Невидим');
+            if(has(source,'frightened')){var fear=sourceToken(source,'frightened');if(fear&&rangeFeet(source,fear)<=50.0001)dis.push('Испуган ≤50 фт');}
+            if(exhaustionLevel(source)>=3)dis.push('Истощение 3+');
+        }
+        return {advantage:adv,disadvantage:dis,forceCritical:forceCritical,autoHitClose:autoHitClose,blocked:!blocked.allowed,blockedReasons:blocked.reasons||[]};
+    }
+    function saveRule(token,ability){
+        ability=norm(ability);var labels=[],autoFail=false,mode='normal';
+        if(['strength','dexterity'].indexOf(ability)>=0){
+            ['paralyzed','petrified','stunned','unconscious'].forEach(function(k){if(has(token,k)){autoFail=true;labels.push(LABELS[k]);}});
+        }
+        if(ability==='dexterity'&&has(token,'restrained')){mode='dis';labels.push('Опутан');}
+        if(exhaustionLevel(token)>=3){mode='dis';labels.push('Истощение 3+');}
+        return {autoFail:autoFail,mode:mode,labels:labels};
+    }
+    function abilityCheckRule(token,ability,context){
+        context=context||{};var labels=[],autoFail=false,mode='normal';
+        if(typeof AD5SpellEffects!=='undefined'&&AD5SpellEffects.checkDisadvantage(token,ability)){mode='dis';labels.push('Сглаз');}
+        if(exhaustionLevel(token)>=1){mode='dis';labels.push('Истощение 1+');}
+        if(has(token,'poisoned')){mode='dis';labels.push('Отравлен');}
+        if(has(token,'frightened')){var fear=sourceToken(token,'frightened');if(fear&&rangeFeet(token,fear)<=50.0001){mode='dis';labels.push('Испуган ≤50 фт');}}
+        if(context.requiresHearing&&has(token,'deafened')){autoFail=true;labels.push('Оглохший');}
+        return {autoFail:autoFail,mode:mode,labels:labels,ability:ability||''};
+    }
+    function damageDefense(token){var petrified=has(token,'petrified');return {allResistance:petrified,poisonImmunity:petrified};}
+    function movementRule(token,currentSpeed){
+        var current=Number(currentSpeed),reasons=[];if(!Number.isFinite(current))return {effective:currentSpeed,reasons:reasons,half:false,zero:false};
+        var zero=blockedBy(token,MOVE_ZERO);if(zero.length){reasons=reasons.concat(zero);return {effective:0,reasons:reasons,half:false,zero:true};}
+        var ex=exhaustionLevel(token),half=false;
+        if(ex>=5)return {effective:0,reasons:['Истощение 5+'],half:false,zero:true};
+        if(ex>=2){current=current/2;half=true;reasons.push('Истощение 2+');}
+        var held=grappledTargetsOf(token),grappleBurden=held.some(function(row){return sizeRank(row.target)>sizeRank(token)-2;});
+        if(grappleBurden){current=current/2;half=true;reasons.push('Перемещение с захваченной целью');}
+        return {effective:Math.max(0,current),reasons:reasons,half:half,zero:false,grappleCarry:grappleBurden,grappledTargets:held.length};
+    }
+    function effectiveHpMax(token,baseMax){var b=Number(baseMax);if(!Number.isFinite(b)||b<0)return baseMax;return exhaustionLevel(token)>=4?Math.floor(b/2):b;}
+    function writePcHpCurrent(cid,value){var hp=attr(cid,'hp');if(!hp)return false;hp.set('current',Math.max(0,Number(value)||0));return true;}
+    function syncHpLimit(token,level){
+        if(!isToken(token))return;var r=root(),rid=representedId(token),npc=npcToken(token),base=null,effective=null,current=num(token.get('bar1_value'));
+        if(npc){
+            var shownMax=num(token.get('bar1_max'));if(level>=4){if(r.npcBaseHpMax[token.id]===undefined&&shownMax!==null)r.npcBaseHpMax[token.id]=shownMax;base=num(r.npcBaseHpMax[token.id]);if(base!==null){effective=Math.floor(base/2);token.set('bar1_max',effective);if(current!==null&&current>effective)token.set('bar1_value',effective);}}
+            else if(r.npcBaseHpMax[token.id]!==undefined){base=num(r.npcBaseHpMax[token.id]);if(base!==null)token.set('bar1_max',base);delete r.npcBaseHpMax[token.id];}
+            return;
+        }
+        var hp=rid&&attr(rid,'hp'),sheetMax=hp&&num(hp.get('max'));if(sheetMax===null)return;effective=level>=4?Math.floor(sheetMax/2):sheetMax;
+        if(num(token.get('bar1_max'))!==effective)token.set('bar1_max',effective);
+        var sheetCurrent=hp&&num(hp.get('current'));if(level>=4&&sheetCurrent!==null&&sheetCurrent>effective){hp.set('current',effective);(findObjs({_type:'graphic',_subtype:'token',represents:rid})||[]).filter(isToken).forEach(function(t){t.set({bar1_value:effective,bar1_max:effective});});}
+    }
+    function syncDeath(token,level){
+        var r=root();if(level>=6){r.deathByExhaustion[token.id]=true;setStatusMarker(token,MARKERS.death,true);if(npcToken(token))token.set('bar1_value',0);else{var cid=representedId(token),hp=cid&&attr(cid,'hp');if(hp)hp.set('current',0);token.set('bar1_value',0);}return;}
+        // Exhaustion 6 is death, not an ordinary timed marker. Lowering the sheet
+        // value later must never resurrect a dead creature automatically; revival
+        // remains an explicit game action. Keep skull/0 HP until another system/GM clears it.
+    }
+    function syncToken(token){
+        if(!isToken(token)||!representedId(token))return false;var level=exhaustionLevel(token);setStatusMarker(token,MARKERS.exhaustion,level||false);syncHpLimit(token,level);syncDeath(token,level);return true;
+    }
+    function allTokens(){return (findObjs({_type:'graphic',_subtype:'token'})||[]).filter(isToken);}
+    function syncCharacter(cid){if(!cid||syncing[cid])return;syncing[cid]=true;try{allTokens().forEach(function(t){if(characterId(t)===String(cid)||representedId(t)===String(cid))syncToken(t);});}finally{delete syncing[cid];}}
+    function setExhaustion(token,level){
+        if(!isToken(token)||!representedId(token))throw new Error('Нужен токен с листом персонажа.');level=clampLevel(level);var cid=characterId(token),a=cid&&attr(cid,'exhaustion_level');
+        if(a){a.set('current',level);syncCharacter(cid);return level;}
+        // NPC Legacy sheet has no visible exhaustion scale. Keep a token-local override
+        // instead of making every copy of a shared NPC sheet exhausted together.
+        root().tokenExhaustion[token.id]=level;syncToken(token);return level;
+    }
+    // ---------- D&D 2014 opposed ability contests ----------
+    var SKILLS={
+        athletics:{label:'Атлетика',ability:'strength',pc:'athletics_bonus',npc:'npc_athletics'},
+        acrobatics:{label:'Акробатика',ability:'dexterity',pc:'acrobatics_bonus',npc:'npc_acrobatics'}
+    };
+    function tokenName(t){return String(t&&t.get&&t.get('name')||t&&t.id||'токен');}
+    function tokenControllers(token){
+        if(!isToken(token))return [];var out=[],raw=String(token.get('controlledby')||'');
+        raw.split(',').filter(Boolean).forEach(function(id){if(out.indexOf(id)<0)out.push(id);});
+        var cid=representedId(token),c=cid&&getObj('character',cid);if(c)String(c.get('controlledby')||'').split(',').filter(Boolean).forEach(function(id){if(out.indexOf(id)<0)out.push(id);});
+        return out;
+    }
+    function canControl(token,pid){return playerIsGM(pid)||tokenControllers(token).some(function(id){return id==='all'||String(id)===String(pid);});}
+    function whisperPlayer(pid,html){var p=getObj('player',pid),name=String(p&&(p.get('_displayname')||p.get('displayname'))||'').replace(/"/g,'');if(name)sendChat(SCRIPT,'/w "'+name+'" '+html,null,{noarchive:true});}
+    function whisperControllers(token,html){
+        var ids=tokenControllers(token),sent=false;if(ids.indexOf('all')>=0){sendChat(SCRIPT,html,null,{noarchive:true});return true;}
+        ids.forEach(function(id){if(getObj('player',id)){whisperPlayer(id,html);sent=true;}});return sent;
+    }
+    function gm(html){sendChat(SCRIPT,'/w gm '+html,null,{noarchive:true});}
+    function btn(label,cmd){return '['+label+']('+cmd+')';}
+    function abilityModFromScore(v){v=num(v);return v===null?0:Math.floor((v-10)/2);}
+    function skillBonus(token,skill){
+        var spec=SKILLS[skill];if(!spec||!isToken(token))return 0;var cid=characterId(token),rid=representedId(token),a=null,v=null;
+        if(npcToken(token)){
+            a=rid?attr(rid,spec.npc):null;v=a?num(a.get('current')):null;if(v!==null)return v;
+        }
+        a=cid?attr(cid,spec.pc):null;v=a?num(a.get('current')):null;if(v!==null)return v;
+        a=rid?attr(rid,spec.pc):null;v=a?num(a.get('current')):null;if(v!==null)return v;
+        a=cid?attr(cid,spec.ability+'_mod'):null;v=a?num(a.get('current')):null;if(v!==null)return v;
+        a=rid?attr(rid,spec.ability+'_mod'):null;v=a?num(a.get('current')):null;if(v!==null)return v;
+        a=cid&&attr(cid,spec.ability);if(a)return abilityModFromScore(a.get('current'));
+        a=rid&&attr(rid,spec.ability);return a?abilityModFromScore(a.get('current')):0;
+    }
+    function randomD20(){return typeof randomInteger==='function'?randomInteger(20):(Math.floor(Math.random()*20)+1);}
+    function effectCheckModifier(token,ability){
+        try{
+            if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.checkModifierForToken==='function'){
+                var m=AD5EffectTurns.checkModifierForToken(token.id,ability)||{};
+                return {bonus:Number(m.bonus)||0,rolls:Array.isArray(m.rolls)?m.rolls:[]};
+            }
+        }catch(ignore){}
+        return {bonus:0,rolls:[]};
+    }
+    function rollCheckModifiers(rows){
+        try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.rollModifiers==='function')return AD5EffectTurns.rollModifiers(rows||[]);}catch(ignore){}
+        return {total:0,rolled:[]};
+    }
+    function rollAbilityCheck(token,skill){
+        var spec=SKILLS[skill];if(!spec)throw new Error('Неизвестный навык проверки: '+skill+'.');
+        var rule=abilityCheckRule(token,spec.ability,{skill:skill,contest:true}),mode=rule&&rule.mode||'normal',d1=randomD20(),d2=null,die=d1;
+        if(mode==='adv'||mode==='dis'){d2=randomD20();die=mode==='adv'?Math.max(d1,d2):Math.min(d1,d2);}
+        var baseBonus=skillBonus(token,skill),effect=effectCheckModifier(token,spec.ability),dynamic=rollCheckModifiers(effect.rolls),bonus=baseBonus+Number(effect.bonus||0)+Number(dynamic.total||0),total=rule&&rule.autoFail?-999999:die+bonus;
+        return {skill:skill,label:spec.label,ability:spec.ability,mode:mode,d1:d1,d2:d2,die:die,baseBonus:baseBonus,effectBonus:Number(effect.bonus||0),dynamicBonus:Number(dynamic.total||0),dynamicRolls:dynamic.rolled||[],bonus:bonus,total:total,autoFail:!!(rule&&rule.autoFail),labels:(rule&&rule.labels)||[]};
+    }
+    function modeText(r){return r.autoFail?'автопровал':(r.mode==='adv'?'ПРЕМ':(r.mode==='dis'?'ПОМ':'обычно'));}
+    function rollText(r){
+        if(r.autoFail)return 'автопровал';
+        var details=(r.dynamicRolls||[]).map(function(x){return String(x.label||x.formula||'модификатор')+'='+(Number(x.delta)>=0?'+':'')+Number(x.delta||0);});
+        return (String(r.die)+(r.bonus>=0?'+':'')+r.bonus+' = <b>'+r.total+'</b>')+(r.d2!==null?' ['+r.d1+'/'+r.d2+']':'')+(details.length?' {'+details.join(', ')+'}':'');
+    }
+    function sizeRankFromText(raw){
+        var n=norm(raw).replace(/[._-]/g,' ');if(!n)return null;
+        if(/(?:^|\s)(?:tiny|крошечн|t)(?:\s|$)/.test(n))return 0;
+        if(/(?:^|\s)(?:small|мал(?:ый|енький)?|s)(?:\s|$)/.test(n))return 1;
+        if(/(?:^|\s)(?:medium|средн(?:ий|ее)?|m)(?:\s|$)/.test(n))return 2;
+        if(/(?:^|\s)(?:large|больш(?:ой|ое)?|l)(?:\s|$)/.test(n))return 3;
+        if(/(?:^|\s)(?:huge|огромн(?:ый|ое)?|h)(?:\s|$)/.test(n))return 4;
+        if(/(?:^|\s)(?:gargantuan|гигантск(?:ий|ое)|g)(?:\s|$)/.test(n))return 5;
+        return null;
+    }
+    function sizeRank(token){
+        if(!isToken(token))return 2;var cid=representedId(token),names=npcToken(token)?['npc_size','size','creature_size']:['size','creature_size','npc_size'],rank=null;
+        names.some(function(name){var a=cid&&attr(cid,name);rank=a?sizeRankFromText(a.get('current')):null;return rank!==null;});if(rank!==null)return rank;
+        var page=getObj('page',token.get('_pageid')),step=70,scale=Number(page&&page.get('snapping_increment'));if(Number.isFinite(scale)&&scale>0)step=70*scale;
+        var cells=Math.max(Number(token.get('width')||70),Number(token.get('height')||70))/Math.max(1,step);if(cells<=0.55)return 0;if(cells<=1.05)return 2;if(cells<=2.05)return 3;if(cells<=3.05)return 4;return 5;
+    }
+    function incapacitatedLike(token){return ['incapacitated','paralyzed','petrified','stunned','unconscious','death'].some(function(k){return has(token,k);});}
+    function effectEntries(token,condition){
+        var rec=effectSnapshot(token),out=[];if(!rec||!rec.effects)return out;Object.keys(rec.effects).forEach(function(k){var e=rec.effects[k];if(e&&e.kind==='condition'&&e.condition===condition)out.push({effectKey:k,effect:e,source:e.source||{}});});return out;
+    }
+    function grapplesOf(target){return effectEntries(target,'grappled').filter(function(x){return !!String(x.source&&x.source.sourceToken||'');});}
+    function grappledTargetsOf(grappler){
+        var out=[];if(!isToken(grappler))return out;
+        allTokens().forEach(function(target){grapplesOf(target).forEach(function(ref){if(String(ref.source.sourceToken||'')===String(grappler.id))out.push({target:target,ref:ref});});});
+        return out;
+    }
+    function relationExists(target,relationshipKey){return effectEntries(target,'grappled').some(function(x){return String(x.source.relationshipKey||'')===String(relationshipKey||'');});}
+    function effectContext(source,relationshipKey,relationshipType,extra){
+        extra=extra||{};var cid=characterId(source),c=cid&&getObj('character',cid);return {ownerPid:null,actor:cid||representedId(source)||null,actorName:String(c&&c.get('name')||tokenName(source)),sourceToken:source.id,relationshipKey:relationshipKey,relationshipType:relationshipType,parentRelationshipKey:extra.parentRelationshipKey||null,reach:extra.reach===undefined?null:extra.reach};
+    }
+    function applyManagedCondition(target,text,sourceContext){
+        if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.applyCondition==='function')return AD5EffectTurns.applyCondition(target,text,sourceContext||{});
+        var key=norm(text),marker=/схвачен|grapple/.test(key)?MARKERS.grappled:/опутан|restrain/.test(key)?MARKERS.restrained:/сбит с ног|prone/.test(key)?MARKERS.prone:null;if(marker)setStatusMarker(target,marker,true);return {changed:!!marker,applied:[]};
+    }
+    function removeManagedCondition(target,condition,options){
+        if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.removeCondition==='function')return AD5EffectTurns.removeCondition(target,condition,options||{});
+        var marker=MARKERS[condition];if(marker)setStatusMarker(target,marker,false);return {changed:!!marker,removed:marker?1:0};
+    }
+    function standUp(token,pid){
+        if(!isToken(token))return {ok:false,reason:'token',removed:0,cost:0};
+        if(pid&&pid!=='API'&&!canControl(token,pid))return {ok:false,reason:'control',removed:0,cost:0};
+        if(typeof AD5SpellEffects!=='undefined'&&!AD5SpellEffects.canStand(token))return {ok:false,reason:'Действующее заклинание не позволяет встать',removed:0,cost:0};
+        var entries=effectEntries(token,'prone'),manual=hasMarker(token,MARKERS.prone);
+        if(!entries.length&&!manual)return {ok:true,already:true,removed:0,cost:0,charged:0};
+        var movement=null;
+        try{if(typeof AD5Movement!=='undefined'&&AD5Movement&&typeof AD5Movement.spendStandCost==='function')movement=AD5Movement.spendStandCost(token);}catch(e){return {ok:false,reason:e.message||String(e),removed:0,cost:0};}
+        if(movement&&!movement.ok){
+            var why=movement.reason==='speed-zero'?'скорость 0 — встать невозможно':movement.reason==='not-enough'?'не хватает оставшегося перемещения, чтобы встать':'невозможно потратить перемещение';
+            return {ok:false,reason:why,removed:0,cost:Number(movement.cost)||0,remaining:movement.remaining};
+        }
+        var r=removeManagedCondition(token,'prone',{}),removed=Number(r&&r.removed)||0;
+        // If the marker was placed manually or restored from markerBase, standing
+        // still clears the Prone marker because the user explicitly ended the condition.
+        setStatusMarker(token,MARKERS.prone,false);
+        return {ok:true,already:false,removed:removed||manual?Math.max(1,removed):0,cost:movement?Number(movement.cost)||0:0,charged:movement?Number(movement.charged)||0:0,activeTurn:movement?!!movement.activeTurn:false};
+    }
+    var GRAPPLE_HOLD_FEET=5;
+    function relationshipId(prefix,a,b){return prefix+':'+String(a.id)+':'+String(b.id);}
+    function tokenActionName(rank,label){return Array(Math.max(0,Number(rank)||0)+1).join('\u200b')+label;}
+    var ESCAPE_ACTION='!ad5cond escape @{selected|token_id}',ESCAPE_MARKER='AD5Condition:escape-action';
+    function escapeActionAbilities(cid){
+        if(!cid)return [];return findObjs({_type:'ability',_characterid:String(cid)}).filter(function(a){return String(a.get('description')||'')===ESCAPE_MARKER||String(a.get('action')||'').trim()===ESCAPE_ACTION;});
+    }
+    function syncEscapeActionForCharacter(cid,neededOverride){
+        cid=String(cid||'');if(!cid||!getObj('character',cid))return;
+        var needed=neededOverride;if(needed===undefined)needed=allTokens().some(function(t){return representedId(t)===cid&&grapplesOf(t).length>0;});
+        var list=escapeActionAbilities(cid);
+        if(!needed){list.forEach(function(a){try{a.remove();}catch(ignore){}});return;}
+        var props={name:tokenActionName(20,'Освободиться'),action:ESCAPE_ACTION,description:ESCAPE_MARKER,istokenaction:true},a=list[0];
+        if(a){var patch={},changed=false;Object.keys(props).forEach(function(k){if(String(a.get(k)==null?'':a.get(k))!==String(props[k]==null?'':props[k])){patch[k]=props[k];changed=true;}});if(changed)a.set(patch);}else{props.characterid=cid;a=createObj('ability',props);}list.slice(1).forEach(function(x){try{x.remove();}catch(ignore2){}});
+    }
+    function syncEscapeAction(token){if(isToken(token))syncEscapeActionForCharacter(representedId(token));}
+    function grappleContactPosition(grappler,target,anchor,moveVector){
+        if(!isToken(grappler)||!isToken(target))return null;
+        anchor=anchor||{left:Number(grappler.get('left'))||0,top:Number(grappler.get('top'))||0};
+        var tx=Number(target.get('left'))||0,ty=Number(target.get('top'))||0,ax=Number(anchor.left)||0,ay=Number(anchor.top)||0;
+        var vx=tx-ax,vy=ty-ay,len=Math.sqrt(vx*vx+vy*vy);
+        if(len<0.001){
+            var mx=Number(moveVector&&moveVector.x)||0,my=Number(moveVector&&moveVector.y)||0,ml=Math.sqrt(mx*mx+my*my);
+            if(ml>0.001){vx=-mx/ml;vy=-my/ml;}else{vx=1;vy=0;}
+        }else{vx/=len;vy/=len;}
+        var halfW=Math.max(1,(Number(grappler.get('width'))||70)/2+(Number(target.get('width'))||70)/2);
+        var halfH=Math.max(1,(Number(grappler.get('height'))||70)/2+(Number(target.get('height'))||70)/2);
+        var txScale=Math.abs(vx)>1e-9?halfW/Math.abs(vx):Infinity;
+        var tyScale=Math.abs(vy)>1e-9?halfH/Math.abs(vy):Infinity;
+        var contact=Math.min(txScale,tyScale);if(!Number.isFinite(contact)||contact<=0)contact=Math.max(halfW,halfH);
+        return {left:(Number(grappler.get('left'))||0)+vx*contact,top:(Number(grappler.get('top'))||0)+vy*contact,bearing:{x:vx,y:vy}};
+    }
+    function normalizeGrapplePosition(grappler,target,ref,anchor,moveVector,reason){
+        if(!isToken(grappler)||!isToken(target))return {moved:false,reason:'token'};
+        var desired=grappleContactPosition(grappler,target,anchor,moveVector);if(!desired)return {moved:false,reason:'position'};
+        var dx=desired.left-(Number(target.get('left'))||0),dy=desired.top-(Number(target.get('top'))||0);
+        if(Math.abs(dx)<0.05&&Math.abs(dy)<0.05)return {moved:false,reason:'already-adjacent',to:desired};
+        var relationshipKey=ref&&ref.source&&(ref.source.relationshipKey||ref.effectKey)||'';
+        if(typeof AD5Movement!=='undefined'&&AD5Movement&&typeof AD5Movement.translateForcedMove==='function')
+            return AD5Movement.translateForcedMove(target,dx,dy,{sourceTokenId:grappler.id,relationshipKey:relationshipKey,reason:reason||'Захват: удержание в 5 фт'});
+        target.set({left:desired.left,top:desired.top,lastmove:''});
+        return {moved:true,to:desired};
+    }
+    function applyGrapple(grappler,target,reach){
+        var rel=relationshipId('grapple',grappler,target);if(relationExists(target,rel))return false;
+        applyManagedCondition(target,'Схвачен',effectContext(grappler,rel,'grapple',{reach:reach||5,holdDistance:GRAPPLE_HOLD_FEET}));
+        var ref=findGrapple(target,grappler.id);
+        try{normalizeGrapplePosition(grappler,target,ref,null,null,'Захват: цель притянута на 5 фт');}catch(e){gm('<b>Захват:</b> не удалось поставить '+esc(tokenName(target))+' в 5 фт от '+esc(tokenName(grappler))+' — '+esc(e.message||e));}
+        syncEscapeAction(target);return true;
+    }
+    function applyProne(source,target){applyManagedCondition(target,'Сбит с ног',effectContext(source,null,null,{}));}
+    function applyPin(grappler,target,parentKey){
+        var rel=relationshipId('pin',grappler,target),ctxT=effectContext(grappler,rel,'pin',{parentRelationshipKey:parentKey}),ctxG=effectContext(target,rel,'pin',{parentRelationshipKey:parentKey});
+        applyManagedCondition(target,'Опутан',ctxT);applyManagedCondition(grappler,'Опутан',ctxG);return rel;
+    }
+    function removePinsByParent(parentKey){
+        if(!parentKey)return 0;var n=0;allTokens().forEach(function(t){effectEntries(t,'restrained').forEach(function(x){if(String(x.source.parentRelationshipKey||'')===String(parentKey)){var r=removeManagedCondition(t,'restrained',{effectKey:x.effectKey});n+=Number(r&&r.removed)||0;}});});return n;
+    }
+    function removeGrappleRef(target,ref,reason){
+        if(!target||!ref)return false;var rel=String(ref.source.relationshipKey||''),opts={effectKey:ref.effectKey};if(rel)opts.relationshipKey=rel;else if(ref.source.sourceToken)opts.sourceToken=ref.source.sourceToken;
+        var r=removeManagedCondition(target,'grappled',opts);if(rel)removePinsByParent(rel);if(r&&r.removed){syncEscapeAction(target);if(reason)gm('<b>'+esc(tokenName(target))+'</b>: захват завершён — '+esc(reason)+'.');}return !!(r&&r.removed);
+    }
+    function findGrapple(target,grapplerId){var list=grapplesOf(target);if(grapplerId)list=list.filter(function(x){return String(x.source.sourceToken||'')===String(grapplerId);});return list[0]||null;}
+    function cleanupRelationships(){
+        relationshipCleanupPending=false;allTokens().forEach(function(target){grapplesOf(target).forEach(function(ref){if(ref.source.relationshipType!=='grapple')return;var g=getObj('graphic',String(ref.source.sourceToken||''));if(!isToken(g)){removeGrappleRef(target,ref,'хватающий токен отсутствует');return;}if(incapacitatedLike(g)){removeGrappleRef(target,ref,'хватающий недееспособен');return;}var hold=Number(ref.source.holdDistance);if(!Number.isFinite(hold)||hold<=0)hold=GRAPPLE_HOLD_FEET;if(rangeFeet(g,target)>hold+0.01)removeGrappleRef(target,ref,'цель вышла дальше '+hold+' фт от хватающего');});});
+    }
+    function scheduleRelationshipCleanup(){if(relationshipCleanupPending)return;relationshipCleanupPending=true;setTimeout(cleanupRelationships,0);}
+
+    function relationshipStatusSignature(raw){
+        var keep={};
+        ['incapacitated','paralyzed','petrified','stunned','unconscious','death','grappled','restrained'].forEach(function(k){var m=MARKERS[k];if(m)keep[m]=true;});
+        return String(raw||'').split(',').map(function(x){return x.replace(/@\d+$/,'').trim();}).filter(function(x){return !!keep[x];}).sort().join(',');
+    }
+    function carryGrappledOnMove(tx){
+        if(!tx||!tx.tokenId||tx.forcedKind==='carry')return;
+        var grappler=getObj('graphic',String(tx.tokenId));if(!isToken(grappler))return;
+        var dx=Number(tx.to&&tx.to.left)-Number(tx.from&&tx.from.left),dy=Number(tx.to&&tx.to.top)-Number(tx.from&&tx.from.top);
+        if(!Number.isFinite(dx)||!Number.isFinite(dy)||(Math.abs(dx)<0.001&&Math.abs(dy)<0.001))return;
+        var held=grappledTargetsOf(grappler);if(!held.length)return;
+        held.forEach(function(row){
+            var target=row.target,ref=row.ref;if(!isToken(target))return;
+            if(String(target.get('_pageid'))!==String(grappler.get('_pageid'))){removeGrappleRef(target,ref,'хватающий переместился на другую карту');return;}
+            try{
+                normalizeGrapplePosition(grappler,target,ref,tx.from,{x:dx,y:dy},'Перемещение вместе с хватающим · удержание 5 фт');
+            }catch(e){gm('<b>Перемещение захваченной цели:</b> '+esc(tokenName(target))+' — '+esc(e.message||e));}
+        });
+        // Movement/Environment may clip the carried token against SOLID. Check after
+        // those handlers finish; a grapple that physically cannot remain adjacent ends.
+        setTimeout(cleanupRelationships,50);
+    }
+    function normalizeExistingGrapples(){
+        allTokens().forEach(function(target){grapplesOf(target).forEach(function(ref){if(ref.source.relationshipType!=='grapple')return;var g=getObj('graphic',String(ref.source.sourceToken||''));if(!isToken(g)||incapacitatedLike(g))return;if(ref.source)ref.source.holdDistance=GRAPPLE_HOLD_FEET;try{normalizeGrapplePosition(g,target,ref,null,null,'Миграция захвата: удержание 5 фт');}catch(ignore){}});});
+    }
+    function registerMovementHook(){
+        if(movementHookRegistered)return true;
+        try{if(typeof AD5Movement!=='undefined'&&AD5Movement&&typeof AD5Movement.onMove==='function'){AD5Movement.onMove(carryGrappledOnMove);movementHookRegistered=true;return true;}}catch(ignore){}
+        return false;
+    }
+    function nextContestId(){var r=root();r.contestSequence++;return 'C'+String(r.contestSequence);}
+    function contestLabel(type){return {grapple:'Захват',shoveProne:'Толчок — сбить с ног',shovePush:'Толчок — оттолкнуть 5 фт',escape:'Освобождение из захвата',pin:'Прижать (Grappler)'}[type]||type;}
+    function contestType(raw){var n=norm(raw).replace(/[ _]+/g,'-');if(['grapple','захват','схватить'].indexOf(n)>=0)return 'grapple';if(['shove-prone','shoveprone','сбить','сбить-с-ног'].indexOf(n)>=0)return 'shoveProne';if(['shove-push','shovepush','толкнуть','оттолкнуть'].indexOf(n)>=0)return 'shovePush';if(['escape','escape-grapple','освободиться','вырваться'].indexOf(n)>=0)return 'escape';if(['pin','прижать'].indexOf(n)>=0)return 'pin';return null;}
+    function contestToken(c,role){return getObj('graphic',role==='initiator'?c.initiatorId:c.opponentId);}
+    function contestChoices(c,role){return role==='initiator'?c.initiatorChoices:c.opponentChoices;}
+    function interactive(token){return tokenControllers(token).length>0;}
+    function promptContestRole(c,role){
+        var t=contestToken(c,role),choices=contestChoices(c,role);if(!t||!choices.length)return;var html='<b>'+esc(contestLabel(c.type))+'</b><br>'+esc(tokenName(t))+': выберите проверку — '+choices.map(function(sk){return btn(SKILLS[sk].label,'!ad5cond contest-roll '+c.id+' '+role+' '+sk);}).join(' ');
+        if(!whisperControllers(t,html))gm(html);
+    }
+    function autoContestRole(c,role){var choices=contestChoices(c,role),t=contestToken(c,role);if(!t||!choices.length)return;var best=choices[0],bestB=skillBonus(t,best);choices.slice(1).forEach(function(sk){var b=skillBonus(t,sk);if(b>bestB){best=sk;bestB=b;}});contestRoll(c.id,role,best,'API');}
+    function contestResultHtml(c,success){
+        var a=c.rolls.initiator,d=c.rolls.opponent,at=contestToken(c,'initiator'),dt=contestToken(c,'opponent');return '<b>'+esc(contestLabel(c.type))+'</b>: '+esc(tokenName(at))+' — '+esc(a.label)+' '+rollText(a)+' ('+modeText(a)+') против '+esc(tokenName(dt))+' — '+esc(d.label)+' '+rollText(d)+' ('+modeText(d)+'). <b>'+(success?'УСПЕХ ИНИЦИАТОРА':'БЕЗ ИЗМЕНЕНИЯ')+'</b>'+(a.total===d.total?' · ничья':'')+'.';
+    }
+    function finalizeContest(c){
+        if(!c||!c.rolls.initiator||!c.rolls.opponent)return false;var initiator=contestToken(c,'initiator'),opponent=contestToken(c,'opponent');if(!isToken(initiator)||!isToken(opponent)){delete root().contests[c.id];return false;}
+        // D&D 2014 contests: only a strictly higher total wins. On a tie the situation stays as it was.
+        var success=c.rolls.initiator.total>c.rolls.opponent.total,extra='';
+        if(success){
+            if(c.type==='grapple'){applyGrapple(initiator,opponent,c.reach);extra=' Цель схвачена.';}
+            else if(c.type==='shoveProne'){applyProne(initiator,opponent);extra=' Цель сбита с ног.';}
+            else if(c.type==='shovePush'){
+                if(typeof AD5Movement!=='undefined'&&AD5Movement&&typeof AD5Movement.forceMove==='function'){var mv=AD5Movement.forceMove(opponent,initiator,5,'push',{reason:'Shove contest'});extra=' Цель оттолкнута на '+(mv&&mv.actual!==undefined?mv.actual:5)+' фт.';}else extra=' Требуется вручную оттолкнуть цель на 5 фт.';
+            }else if(c.type==='escape'){var ref=findGrapple(initiator,opponent.id);if(ref){removeGrappleRef(initiator,ref,'успешная проверка освобождения');extra=' Захват снят.';}}
+            else if(c.type==='pin'){var parent=findGrapple(opponent,initiator.id);if(parent){applyPin(initiator,opponent,String(parent.source.relationshipKey||parent.effectKey));extra=' Оба существа опутаны до окончания захвата.';}}
+        }
+        gm(contestResultHtml(c,success)+esc(extra));delete root().contests[c.id];scheduleRelationshipCleanup();return success;
+    }
+    function contestRoll(id,role,skill,pid){
+        var c=root().contests[String(id||'')];if(!c)throw new Error('Соревнование уже завершено или не найдено.');if(['initiator','opponent'].indexOf(role)<0)throw new Error('Неизвестная сторона соревнования.');var t=contestToken(c,role);if(!isToken(t))throw new Error('Токен участника не найден.');if(pid!=='API'&&!canControl(t,pid))throw new Error('Вы не управляете токеном '+tokenName(t)+'.');if(contestChoices(c,role).indexOf(skill)<0)throw new Error('Эта проверка не разрешена для данного соревнования.');if(c.rolls[role])throw new Error('Эта сторона уже бросила проверку.');c.rolls[role]=rollAbilityCheck(t,skill);finalizeContest(c);return c.rolls[role];
+    }
+    function validateSpecialAttack(attacker,target,reach){
+        if(!isToken(attacker)||!isToken(target)||attacker.id===target.id)throw new Error('Нужны два разных боевых токена.');var act=canAct(attacker);if(!act.allowed)throw new Error(tokenName(attacker)+' не может совершать действия: '+act.reasons.join(', ')+'.');
+        var charm=sourceToken(attacker,'charmed');if(charm&&charm.id===target.id)throw new Error('Очарованный не может атаковать очаровавшее его существо.');reach=Number(reach)||5;if(rangeFeet(attacker,target)>reach+0.01)throw new Error('Цель вне досягаемости ('+reach+' фт).');if(sizeRank(target)>sizeRank(attacker)+1)throw new Error('Цель более чем на одну категорию размера больше атакующего.');return reach;
+    }
+    function startContest(type,initiator,opponent,pid,options){
+        options=options||{};type=contestType(type)||type;if(['grapple','shoveProne','shovePush','escape','pin'].indexOf(type)<0)throw new Error('Неизвестный тип соревнования.');if(!isToken(initiator)||!isToken(opponent))throw new Error('Не найдены участники соревнования.');
+        var reach=Number(options.reach)||5;
+        if(type==='grapple'||type==='shoveProne'||type==='shovePush'){reach=validateSpecialAttack(initiator,opponent,reach);if(incapacitatedLike(opponent)){if(type==='grapple')applyGrapple(initiator,opponent,reach);else if(type==='shoveProne')applyProne(initiator,opponent);else if(typeof AD5Movement!=='undefined'&&AD5Movement&&AD5Movement.forceMove)AD5Movement.forceMove(opponent,initiator,5,'push',{reason:'Shove auto-success vs incapacitated'});gm('<b>'+esc(contestLabel(type))+'</b>: '+esc(tokenName(opponent))+' недееспособен — автоматический успех по правилам 2014.');return null;}}
+        if(type==='pin'){validateSpecialAttack(initiator,opponent,reach);var parent=findGrapple(opponent,initiator.id);if(!parent)throw new Error('Прижать можно только существо, уже схваченное этим токеном.');if(incapacitatedLike(opponent)){applyPin(initiator,opponent,String(parent.source.relationshipKey||parent.effectKey));gm('<b>Прижать:</b> цель недееспособна — автоматический успех.');return null;}}
+        if(type==='escape'){var act=canAct(initiator);if(!act.allowed)throw new Error(tokenName(initiator)+' не может использовать действие для освобождения.');var ref=findGrapple(initiator,opponent.id);if(!ref)throw new Error('Этот токен не удерживает выбранную цель.');}
+        var c={id:nextContestId(),type:type,initiatorId:initiator.id,opponentId:opponent.id,initiatorChoices:type==='escape'?['athletics','acrobatics']:['athletics'],opponentChoices:type==='escape'?['athletics']:['athletics','acrobatics'],reach:reach,rolls:{},created:Date.now(),ownerPid:pid||null};root().contests[c.id]=c;
+        ['initiator','opponent'].forEach(function(role){var t=contestToken(c,role);if(interactive(t))promptContestRole(c,role);else autoContestRole(c,role);});return c;
+    }
+    function chooseEscape(target,pid,grapplerId){
+        var list=grapplesOf(target);if(grapplerId)list=list.filter(function(x){return String(x.source.sourceToken||'')===String(grapplerId);});if(!list.length)throw new Error('На токене нет захвата с известным хватающим.');if(list.length===1){var g=getObj('graphic',String(list[0].source.sourceToken||''));if(!isToken(g))throw new Error('Хватающий токен не найден.');return startContest('escape',target,g,pid,{reach:Number(list[0].source.reach)||5});}
+        var html='<b>Освободиться:</b> выберите захват — '+list.map(function(x){var g=getObj('graphic',String(x.source.sourceToken||''));return g?btn(tokenName(g),'!ad5cond escape '+target.id+' '+g.id):'';}).filter(Boolean).join(' ');if(!whisperControllers(target,html))gm(html);return null;
+    }
+    function releaseGrapple(grappler,targetId){var n=0;allTokens().forEach(function(t){if(targetId&&String(t.id)!==String(targetId))return;grapplesOf(t).forEach(function(ref){if(String(ref.source.sourceToken||'')===String(grappler.id)&&removeGrappleRef(t,ref,'хватающий отпустил цель'))n++;});});return n;}
+    function cleanupContests(){var now=Date.now(),r=root();Object.keys(r.contests).forEach(function(k){var c=r.contests[k];if(!c||now-Number(c.created||0)>10*60*1000)delete r.contests[k];});}
+    function ensureContestMacros(){
+        try{(findObjs({_type:'player'})||[]).forEach(function(pl){
+            var defs=[
+                {rank:4,name:'Толчок',action:'!ad5cond shove-push @{selected|token_id} @{target|Цель толчка|token_id}'},
+                {rank:5,name:'Толчок опрокинуть',action:'!ad5cond shove-prone @{selected|token_id} @{target|Цель толчка|token_id}'},
+                {rank:6,name:'Схватить',action:'!ad5cond grapple @{selected|token_id} @{target|Цель захвата|token_id}'}
+            ],pid=String(pl.id),all=(findObjs({_type:'macro'})||[]).filter(function(m){return String(m.get('_playerid')||m.get('playerid')||'')===pid;});
+            function plain(n){return String(n||'').replace(/^\u200b+/,'');}
+            var legacyActions={
+                '!ad5cond escape @{selected|token_id}':true,
+                '!ad5cond release @{selected|token_id} @{target|Отпустить цель|token_id}':true
+            };
+            all.filter(function(m){var a=String(m.get('action')||'').trim(),p=plain(m.get('name'));return legacyActions[a]||p==='AD5 — Захват'||p==='AD5 — Толчок: сбить'||p==='AD5 — Толчок: 5 фт'||p==='AD5 — Отпустить'||p==='AD5 — Освободиться'||p==='Освободиться';}).forEach(function(m){try{m.remove();}catch(ignoreLegacy){}});
+            all=(findObjs({_type:'macro'})||[]).filter(function(m){return String(m.get('_playerid')||m.get('playerid')||'')===pid;});
+            defs.forEach(function(d){var wanted=tokenActionName(d.rank,d.name),matches=all.filter(function(m){return String(m.get('action')||'').trim()===d.action||plain(m.get('name'))===d.name;}),m=matches[0],props={name:wanted,action:d.action,istokenaction:true,visibleto:''};if(m){var patch={},changed=false;Object.keys(props).forEach(function(k){if(String(m.get(k)==null?'':m.get(k))!==String(props[k]==null?'':props[k])){patch[k]=props[k];changed=true;}});if(changed)m.set(patch);}else m=createObj('macro',{name:wanted,playerid:pl.id,action:d.action,istokenaction:true,visibleto:''});matches.slice(1).forEach(function(x){try{x.remove();}catch(ignoreDup){}});});
+        });}catch(e){gm('Макросы соревнований: '+esc(e.message||e));}
+    }
+
+    function selectedTokens(msg){return (msg.selected||[]).filter(function(x){return x._type==='graphic';}).map(function(x){return getObj('graphic',x._id);}).filter(isToken);}
+    function statusLine(t){var ex=exhaustionLevel(t),a=attackRule(t,t),s=saveRule(t,'constitution'),m=movementRule(t,30),act=canAct(t),gs=grapplesOf(t),gtext=gs.length?gs.map(function(x){var g=getObj('graphic',String(x.source.sourceToken||''));return tokenName(g);}).join(', '):'нет';return '<b>'+esc(t.get('name')||t.id)+'</b>: истощение '+ex+'; действие '+(act.allowed?'можно':'НЕЛЬЗЯ ['+esc(act.reasons.join(', '))+']')+'; save '+esc(s.mode)+(s.autoFail?' автопровал':'')+'; тестовая скорость 30 → '+esc(m.effective)+'; захваты: '+esc(gtext)+'.';}
+    function command(msg){
+        if(!msg||msg.type!=='api'||!/^!ad5cond(?:\s|$)/i.test(String(msg.content||'')))return;var a=String(msg.content||'').trim().split(/\s+/),sub=norm(a[1]||'status');
+        try{
+            var tokens=selectedTokens(msg);
+            if(sub==='ping'){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' '+VERSION+'</b> активен.');return;}
+            if(sub==='status'||sub==='doctor'){if(!tokens.length)throw new Error('Выделите токен.');tokens.forEach(function(t){sendChat(SCRIPT,'/w gm '+statusLine(t),null,{noarchive:true});});return;}
+            if(sub==='sync'){if(!playerIsGM(msg.playerid))throw new Error('Только GM.');(tokens.length?tokens:allTokens()).forEach(syncToken);cleanupRelationships();sendChat(SCRIPT,'/w gm Condition Engine: синхронизация выполнена.',null,{noarchive:true});return;}
+            if(sub==='contest-roll'){contestRoll(a[2],a[3],a[4],msg.playerid);return;}
+            if(sub==='grapple'||sub==='захват'||sub==='shove-prone'||sub==='shove-push'||sub==='pin'||sub==='прижать'){
+                var type=contestType(sub),attacker=getObj('graphic',String(a[2]||'')),target=getObj('graphic',String(a[3]||''));if(!isToken(attacker)||!isToken(target))throw new Error('Формат: !ad5cond '+sub+' ATTACKER_TOKEN TARGET_TOKEN');if(!canControl(attacker,msg.playerid))throw new Error('Вы не управляете атакующим токеном.');startContest(type,attacker,target,msg.playerid,{reach:Number(a[4])||5});return;
+            }
+            if(sub==='escape'||sub==='освободиться'){var targetToken=getObj('graphic',String(a[2]||''));if(!isToken(targetToken))throw new Error('Формат: !ad5cond escape TOKEN_ID [GRAPPLER_ID]');if(!canControl(targetToken,msg.playerid))throw new Error('Вы не управляете этим токеном.');chooseEscape(targetToken,msg.playerid,a[3]);return;}
+            if(sub==='release'||sub==='отпустить'){var grappler=getObj('graphic',String(a[2]||''));if(!isToken(grappler))throw new Error('Формат: !ad5cond release GRAPPLER_ID [TARGET_ID]');if(!canControl(grappler,msg.playerid))throw new Error('Вы не управляете хватающим токеном.');var released=releaseGrapple(grappler,a[3]);gm('<b>'+esc(tokenName(grappler))+'</b>: отпущено захватов — '+released+'.');return;}
+            if(sub==='exhaustion'||sub==='истощение'){
+                if(!playerIsGM(msg.playerid))throw new Error('Только GM.');if(!tokens.length)throw new Error('Выделите токен.');var raw=String(a[2]||'').trim();if(!raw)throw new Error('Формат: !ad5cond exhaustion +1 | -1 | set N | N');var setMode=norm(raw)==='set';var val=setMode?Number(a[3]):Number(raw);
+                tokens.forEach(function(t){var next=setMode?val:(/^[+-]/.test(raw)?exhaustionLevel(t)+val:val);setExhaustion(t,next);sendChat(SCRIPT,'/w gm '+esc(t.get('name')||t.id)+': истощение → <b>'+exhaustionLevel(t)+'</b>.',null,{noarchive:true});});return;
+            }
+            throw new Error('Команды: status, sync, grapple, shove-prone, shove-push, escape, release, pin, exhaustion +1|-1|set N, ping.');
+        }catch(e){sendChat(SCRIPT,'/w "'+String(msg.who||'gm').replace(/"/g,'')+'" <b>'+SCRIPT+':</b> '+esc(e.message||e),null,{noarchive:true});}
+    }
+
+    on('chat:message',command);
+    on('add:graphic',function(t){if(isToken(t))setTimeout(function(){syncToken(t);scheduleRelationshipCleanup();},0);});
+    on('change:graphic',function(t,prev){
+        if(!isToken(t))return;
+        // Grapple validity can change only when geometry, layer/identity, or an
+        // incapacitating status changes. HP bars, tooltip text, auras, names, etc.
+        // used to trigger an O(all tokens) cleanup for no mechanical reason.
+        prev=prev||{};
+        var moved=Number(prev.left)!==Number(t.get('left'))||Number(prev.top)!==Number(t.get('top'));
+        var structural=String(prev.layer==null?'':prev.layer)!==String(t.get('layer')||'')||String(prev.represents==null?'':prev.represents)!==String(t.get('represents')||'');
+        var status=relationshipStatusSignature(prev.statusmarkers)!==relationshipStatusSignature(t.get('statusmarkers'));
+        if(moved||structural||status)scheduleRelationshipCleanup();
+    });
+    on('change:graphic:represents',function(t){if(isToken(t))setTimeout(function(){syncToken(t);scheduleRelationshipCleanup();},0);});
+    on('destroy:graphic',function(t){var r=root();delete r.tokenExhaustion[t.id];delete r.npcBaseHpMax[t.id];delete r.deathByExhaustion[t.id];setTimeout(scheduleRelationshipCleanup,0);});
+    on('change:attribute',function(a){var name=String(a&&a.get&&a.get('name')||'').toLowerCase(),cid=String(a&&a.get&&a.get('_characterid')||'');if(name==='exhaustion_level'||name==='hp')setTimeout(function(){syncCharacter(cid);scheduleRelationshipCleanup();},0);});
+    on('ready',function(){root();cleanupContests();ensureContestMacros();registerMovementHook();setTimeout(function(){registerMovementHook();var startupTokens=allTokens();startupTokens.forEach(syncToken);normalizeExistingGrapples();var seenEscape={},neededEscape={};startupTokens.forEach(function(t){var cid=representedId(t);if(!cid)return;seenEscape[cid]=true;if(grapplesOf(t).length>0)neededEscape[cid]=true;});Object.keys(seenEscape).forEach(function(cid){syncEscapeActionForCharacter(cid,!!neededEscape[cid]);});setTimeout(cleanupRelationships,75);},500);sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' '+VERSION+'</b> запущен. Схвачен/Сбит с ног — условные состояния без таймера; «Встать» снимает Prone, «Освободиться» запускает повторное соревнование. Схваченная цель следует за хватающим и удерживается на расстоянии 5 фт, сохраняя сторону относительно хватающего; её перенос не расходует собственную скорость и не вызывает АОО. Для проверок характеристик nat 1/20 не являются авто-провалом/успехом. Временный эффект «Реакции 0» блокирует только реакции; отдельного запрета действий/движения не добавлено.',null,{noarchive:true});});
+
+    return {version:VERSION,has:has,entry:conditionEntry,source:sourceToken,rangeFeet:rangeFeet,exhaustionLevel:exhaustionLevel,setExhaustion:setExhaustion,attackRule:attackRule,saveRule:saveRule,abilityCheckRule:abilityCheckRule,damageDefense:damageDefense,movementRule:movementRule,canAct:canAct,canReact:canReact,effectiveHpMax:effectiveHpMax,syncToken:syncToken,syncCharacter:syncCharacter,startContest:startContest,contestRoll:contestRoll,grapplesOf:grapplesOf,grappledTargetsOf:grappledTargetsOf,releaseGrapple:releaseGrapple,standUp:standUp,cleanupRelationships:cleanupRelationships,registerMovementHook:registerMovementHook,skillBonus:skillBonus,normalizeGrapplePosition:normalizeGrapplePosition,
+        _test:{clampLevel:clampLevel,markers:MARKERS,labels:LABELS,sizeRankFromText:sizeRankFromText,contestType:contestType,rollAbilityCheck:rollAbilityCheck,skillBonus:skillBonus,effectCheckModifier:effectCheckModifier,grappleContactPosition:grappleContactPosition,normalizeGrapplePosition:normalizeGrapplePosition}};
+}());
+}
