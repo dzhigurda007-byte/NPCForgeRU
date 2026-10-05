@@ -1,25 +1,168 @@
-/* AD5 Areas 1.3 — одноразовые площадные эффекты для AD5 3.7.
- * Игрокский сценарий: нажать способность → шаблон появляется сам →
- * игрок перемещает/поворачивает его → «Применить» → AD5 выполняет эффект.
- * Мастер не выбирает цели и не участвует в запуске.
+/* Disable old Areas before installing this guarded module. */
+if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skipped.');}else{
+/* AD5 Areas 2.24.11 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
+ * Обычная область: способность → шаблон → размещение → «Применить».
+ * Аура: Дистанция «аура N фт» → выбор токена-носителя → штатная Token Aura
+ * Roll20 движется вместе с токеном; механика использует тот же фазовый синтаксис.
+ * 2.24.7: Target Discovery использует строгий предикат AD5 для реальных боевых целей: представленные декоративные/технические токены без HP и staging-токены за границами страницы не считаются целями. Сообщение применения показывает имена найденных целей.
+ * 2.24.9: Loop-safe visual dedup: локальный O(n) ключ page/represents/name/position/size/bar4; без Floors/Environment и без обратного вызова в AD5.
+ * 2.24.11: дедупликация только по token.id. Два разных Roll20-токена больше никогда не схлопываются из-за одинаковой позиции/имени; повторные ссылки одного и того же graphic ID удаляются безопасно.
+ * 2.24.6: постоянные области и ауры могут выдавать временные сопротивления и иммунитеты:
+ *          «СОПР: огонь 50%, холод 25%» / «ИММ: яд, некротическая энергия».
+ *          Защита вычисляется динамически по реальному нахождению токена внутри объёма;
+ *          перекрывающиеся сопротивления одного типа не складываются — берётся сильнейшее.
+ * 2.24.4: resolveFixed — вторичная область атаки создаётся точно на токене первичной цели
+ *          и сразу разрешается без ручного перемещения; источник заклинания при этом остаётся исходным заклинателем.
+ * 2.24.2: «труднопроходимая местность» становится самостоятельным свойством области:
+ *          шаблон остаётся постоянной зоной, а токены внутри получают custom marker
+ *          106-move-impaired; при выходе/окончании последней такой зоны маркер снимается.
+ *          «ПАСС: труднопроходимая местность» не передаётся в Effect Turns как бафф.
  * Roll20 Mod/API не даёт API для перехвата клика по произвольной пустой точке карты,
  * поэтому шаблон создаётся сразу в позиции токена-источника (или в центре страницы)
  * и является обычным управляемым объектом, который игрок может свободно перетащить.
+ * 2.22.0: линия эффекта площадей учитывает ФИЗ/СОЛИД.
+ * 2.22.2: ноль достижимых целей не отменяет каст; область применяется без урона/спасбросков.
+ * 2.23.0: CONE/LINE распространяются от стороны токена заклинателя, а не от центра шаблона;
+ *          эта же точка/грань используется для целей, укрытий, СОЛИД и обрезания постоянной ОБЛ.
+ * 2.23.1: вертикальный объём шаблона привязан к высоте поверхности под областью.
+ *          baseElevation + zHeight заменяет старый жёсткий диапазон 0..zHeight.
+ *          Поэтому области на ФИЗ +10/+20 и в пропастях корректно находят токены.
+ * 2.23.2: если вертикальная высота шаблона не указана, она автоматически равна
+ *          исходному росту заклинателя (baseHeight), а не фиксированным 5 фт.
+ * 2.23.3: одинаковые постоянные эффекты областей образуют логический union.
+ *          В перекрытии один и тот же эффект не складывается: для каждой фазы
+ *          применяется только сильнейший из перекрывающихся экземпляров.
+ *          Идентичность сравнивает механический профиль (фазы, типы урона,
+ *          состояния/эффекты, save ability), игнорируя числовую силу и заклинателя.
+ * укрытие даёт ПРЕМ на ЛОВ-save, полное укрытие/СОЛИД исключают цель. «ОБЛ ПОКР»
+ * игнорирует это правило. Постоянная ОБЛ фиксирует видимую геометрию распространения.
  */
 var AD5Areas=(function(){
     'use strict';
-    var VERSION='1.3';
-    function db(){if(!state.AD5Areas)state.AD5Areas={areas:{}};return state.AD5Areas.areas;}
+    var VERSION='2.24.11';
+    var resolutionSequence=0;
+    function nextResolutionId(prefix){return String(prefix||'area')+':'+Date.now().toString(36)+':'+(++resolutionSequence);}
+    function root(){
+        if(!state.AD5Areas||typeof state.AD5Areas!=='object')state.AD5Areas={};
+        if(!state.AD5Areas.areas||typeof state.AD5Areas.areas!=='object')state.AD5Areas.areas={};
+        if(!state.AD5Areas.persistent||typeof state.AD5Areas.persistent!=='object')state.AD5Areas.persistent={};
+        if(!state.AD5Areas.moveHistory||typeof state.AD5Areas.moveHistory!=='object')state.AD5Areas.moveHistory={};
+        if(!Array.isArray(state.AD5Areas.moveOrder))state.AD5Areas.moveOrder=[];
+        if(!state.AD5Areas.terrainMarkers||typeof state.AD5Areas.terrainMarkers!=='object')state.AD5Areas.terrainMarkers={};
+        if(typeof state.AD5Areas.terrainMarkerWarning!=='boolean')state.AD5Areas.terrainMarkerWarning=false;
+        state.AD5Areas.version=VERSION;
+        return state.AD5Areas;
+    }
+    function db(){return root().areas;}
+    function persistentDb(){return root().persistent;}
+    function normalizeUserText(value){
+        try{if(typeof AD5Syntax!=='undefined'&&AD5Syntax&&typeof AD5Syntax.normalize==='function')return AD5Syntax.normalize(value);}catch(ignoreSyntax){}
+        return String(value==null?'':value)
+            .replace(/&nbsp;|&#160;/gi,' ')
+            .replace(/[‐‑‒–—―]/g,'-')
+            .replace(/\s+/g,' ')
+            .trim()
+            .toLocaleLowerCase('ru-RU')
+            .replace(/ё/g,'е');
+    }
+    function hasSpellTag(text){
+        var raw=String(text||'')
+            .replace(/<br\s*\/?>(?=.)/gi,'\n')
+            .replace(/<[^>]*>/g,' ')
+            .replace(/&nbsp;|&#160;/gi,' ')
+            .replace(/&(?:#10|#13);/gi,'\n');
+        return /(?:^|[\s\[({;,:])ЗАКЛ(?:$|[\s\]});,:.!?])/i.test(raw);
+    }
+    function attrCurrentExact(cid,name){
+        var a=findObjs({_type:'attribute',_characterid:String(cid),name:String(name)})[0];
+        return a?String(a.get('current')||''):'';
+    }
+    function rowPrefixFromFieldName(name,suffix){
+        name=String(name||'');suffix=String(suffix||'');
+        return name.slice(0,Math.max(0,name.length-suffix.length));
+    }
+    function sheetSpellIdentity(q){
+        var result={isSpell:false,source:'',description:String(q&&q.description||'')};
+        if(!q||!q.actor)return result;
+        if(q.isSpell||q.spellMeta){result.isSpell=true;result.source=q.spellSource||'persisted';return result;}
+        if(hasSpellTag(result.description)){result.isSpell=true;result.source='draft-ZАКЛ';return result;}
+        var cid=String(q.actor),wanted=normalizeUserText(q.name||''),attrs=findObjs({_type:'attribute',_characterid:cid});
+        if(characterIsNPC(cid)){
+            var npcRows=attrs.filter(function(a){
+                return /^repeating_(?:npcaction(?:-[lb])?|npcbonusaction|npcreaction)_.+_name$/i.test(String(a.get('name')||''))&&normalizeUserText(a.get('current'))===wanted;
+            });
+            for(var i=0;i<npcRows.length;i++){
+                var prefix=rowPrefixFromFieldName(npcRows[i].get('name'),'name');
+                if(/^(?:1|on|true|yes|да)$/i.test(attrCurrentExact(cid,prefix+'ad5_is_spell').trim())){
+                    result.isSpell=true;result.source='npc-sheet-spell';return result;
+                }
+            }
+            return result;
+        }
+        // Player attacks/features: read the real attack-row description. This is
+        // authoritative when the roll template omitted/HTML-wrapped its desc field.
+        var attackRows=attrs.filter(function(a){
+            return /^repeating_attack_.+_atkname$/i.test(String(a.get('name')||''))&&normalizeUserText(a.get('current'))===wanted;
+        });
+        for(var j=0;j<attackRows.length;j++){
+            var ap=rowPrefixFromFieldName(attackRows[j].get('name'),'atkname'),desc=attrCurrentExact(cid,ap+'atk_desc');
+            if(hasSpellTag(desc)){result.isSpell=true;result.source='sheet-ZАКЛ';result.description=desc;return result;}
+        }
+        // Direct entries from the Spells tab are spells even when the transient
+        // attack card lost its AD5 spell metadata during the area workflow.
+        var book=attrs.filter(function(a){
+            return /^repeating_spell-[^_]+_.+_spellname$/i.test(String(a.get('name')||''))&&normalizeUserText(a.get('current'))===wanted;
+        });
+        if(book.length){result.isSpell=true;result.source='spellbook-name';}
+        return result;
+    }
+    function areaDraftIsSpell(q){return !!sheetSpellIdentity(q).isSpell;}
     function escape(s){return String(s).replace(/[&<>"'{}\[\]|\r\n]/g,function(c){return '&#'+c.charCodeAt(0)+';';});}
     function tell(pid,s){
         var p=getObj('player',pid);if(!p)return;
         sendChat('Области','/w "'+String(p.get('_displayname')).replace(/["\r\n]/g,'')+'" '+s,null,{noarchive:true});
     }
     function api(){if(typeof AD5==='undefined'||!AD5.multi||parseInt(AD5.version,10)<3)throw new Error('Нужен включённый AutoDamage AD5 3.0 или новее.');return AD5.multi;}
+    function areaApi(){if(typeof AD5==='undefined'||!AD5.area||typeof AD5.area.snapshot!=='function'||typeof AD5.area.trigger!=='function')throw new Error('Для постоянных областей нужен AD5 4.2.54 или новее.');return AD5.area;}
+    function movementAreaApi(){var a=areaApi();if(typeof a.prepareMovement!=='function'||typeof a.triggerMovement!=='function')throw new Error('Для МУВ нужен AD5 4.2.69 или новее.');return a;}
     function positive(x,label){var v=Number(x);if(!Number.isFinite(v)||v<=0||v>10000)throw new Error(label+': число больше 0, не более 10000.');return v;}
-    function playerPageId(pid){
-        var c=Campaign(), specific=c.get('playerspecificpages')||{};
-        return specific[pid]||c.get('playerpageid');
+    function tokenHeightFeet(token){
+        try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.heightFeet==='function'){var h=Number(AD5Height.heightFeet(token));return Number.isFinite(h)?h:0;}}catch(ignoreHeight){}
+        var f=token&&token.get?Number(String(token.get('bar3_value')==null?'0':token.get('bar3_value')).replace(',','.')):0,t=0;
+        try{if(typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.terrainHeightFeet==='function')t=Number(AD5Environment.terrainHeightFeet(token))||0;}catch(ignoreTerrain){}
+        return (Number.isFinite(f)?Math.max(0,f):0)+(Number.isFinite(t)?t:0);
+    }
+    function areaHeightFeet(a){
+        if(!a)return 6;
+        // Auras keep their legacy unrestricted vertical behaviour. Ordinary
+        // templates created by 2.23.2 always have a resolved numeric zHeight.
+        if(a.kind==='aura'&&(a.zHeight===null||a.zHeight===undefined))return null;
+        var raw=a.zHeight!==undefined?a.zHeight:a.height,h=Number(raw);
+        if(Number.isFinite(h)&&h>0)return h;
+        var source=areaSourceToken(a),fallback=casterBaseHeightFeet(source);
+        return Number.isFinite(fallback)&&fallback>0?fallback:6;
+    }
+    function areaBaseElevation(a){
+        var z=Number(a&&a.baseElevation);
+        return Number.isFinite(z)?z:0;
+    }
+    function verticalContainsValue(a,elevation){
+        var max=areaHeightFeet(a);if(max===null)return true;
+        var z=Number(elevation);if(!Number.isFinite(z))z=0;
+        var base=areaBaseElevation(a);
+        // Upper edge is exclusive. Template volume is relative to the floor/elevation
+        // where the area was applied, not hard-coded to world elevation 0.
+        return z>=base-0.001&&z<base+max;
+    }
+    function verticalContains(a,token){return verticalContainsValue(a,tokenHeightFeet(token));}
+    // Areas 2.0 follows only the Roll20 Party Ribbon page. Player-specific
+    // split pages and the GM's personal view are intentionally ignored.
+    function playerPageId(pid){return Campaign().get('playerpageid')||'';}
+    function assertPartyPage(pageId){
+        var active=playerPageId();
+        if(!active)throw new Error('Не найдена карта под «Лентой для вечеринок».');
+        if(pageId&&pageId!==active)throw new Error('Лента для вечеринок переключена на другую карту. Используйте способность заново.');
+        return active;
     }
     function canControlCharacter(cid,pid){
         if(playerIsGM(pid))return true;
@@ -28,7 +171,7 @@ var AD5Areas=(function(){
     }
     function characterIsNPC(cid){
         var a=cid&&getObj('character',cid)?findObjs({_type:'attribute',_characterid:cid}).filter(function(x){return String(x.get('name')).toLowerCase()==='npc';})[0]:null;
-        return !!a && String(a.get('current'))==='1';
+        return !!a && /^(?:1|on|true|yes|да)$/i.test(String(a.get('current')||'').trim());
     }
     function characterIsPlayerControlled(cid){
         var c=getObj('character',cid);if(!c)return false;
@@ -50,28 +193,130 @@ var AD5Areas=(function(){
             return selectedToken;
         }
         var selected=(q.selected||[]).filter(function(x){return x._type==='graphic';}).map(function(x){return getObj('graphic',x._id);}).filter(Boolean);
-        var matching=selected.filter(function(t){return t.get('_subtype')==='token'&&t.get('represents')===q.actor&&t.get('_pageid')===page;});
+        var matching=selected.filter(function(t){return t.get('represents')===q.actor&&combatToken(t,page);});
         if(matching.length)return matching[0];
-        var npc=characterIsNPC(q.actor), playerNpc=characterIsPlayerControlled(q.actor);
-        // A player-controlled NPC is deliberately never auto-resolved: the
-        // player must tell AD5 which physical NPC token is casting the area.
-        if(npc && playerNpc)return null;
-        var tokens=findObjs({_type:'graphic',_subtype:'token',_pageid:page,layer:'objects'}).filter(function(t){return t.get('represents')===q.actor;});
-        // For ordinary player characters, use the only/first represented token.
-        // Uncontrolled NPCs are handled by the GM selection workflow below.
-        if(!npc && tokens.length)return tokens[0];
+        var npc=characterIsNPC(q.actor), playerControlled=characterIsPlayerControlled(q.actor);
+        var tokens=findObjs({_type:'graphic',_subtype:'token',_pageid:page,layer:'objects'}).filter(function(t){return t.get('represents')===q.actor&&combatToken(t,page);});
+        // Any character sheet controlled by a player resolves directly to its
+        // physical token on that player's current page. This includes ordinary
+        // PCs and player-controlled NPC sheets. If the player had a matching
+        // token selected it was already preferred above; otherwise use the
+        // first represented token so the area appears immediately on the caster.
+        if(playerControlled && tokens.length===1)return tokens[0];
+        // A normal PC should also resolve immediately when there is exactly one
+        // physical copy. With multiple copies, never choose an arbitrary first
+        // token: return null so begin() can ask for the real caster.
+        if(!npc && tokens.length===1)return tokens[0];
+        // GM-controlled NPCs keep the explicit-token workflow unless there is
+        // only one unambiguous physical token on the page.
         if(npc && playerIsGM(pid) && tokens.length===1)return tokens[0];
         return null;
     }
     function sourcePrompt(q,pid,reason){
-        var target='!ad5-area source '+q.id+' &#64;{target|Токен NPC|token_id}';
-        if(reason==='gm'){
-            gmPrompt('<b>'+escape(q.name)+'</b><br>Выберите токен NPC, из которого создаётся область.<br>[Указать токен NPC]('+target+') [Отмена](!ad5-area cancel '+q.id+')');
-        }else{
-            tell(pid,'<b>'+escape(q.name)+'</b><br>Выберите токен NPC, из которого создаётся область.<br>[Указать токен NPC]('+target+') [Отмена](!ad5-area cancel '+q.id+')');
-        }
+        var target='!ad5-area source '+q.id+' &#64;{target|Токен заклинателя|token_id}';
+        var text='<b>'+escape(q.name)+'</b><br>Не удалось однозначно определить физический токен заклинателя. Выберите токен, на котором должна появиться область.<br>[Указать токен заклинателя]('+target+') [Отмена](!ad5-area cancel '+q.id+')';
+        if(reason==='gm')gmPrompt(text);
+        else tell(pid,text);
     }
     function gmPrompt(s){sendChat('Области','/w gm '+s,null,{noarchive:true});}
+    function firstGMId(){
+        var players=findObjs({_type:'player'}),id='';
+        players.some(function(pl){if(playerIsGM(pl.id)){id=pl.id;return true;}return false;});
+        return id;
+    }
+    function setPathCenter(path,left,top){
+        if(!path)return;
+        if(pathObjectType(path)==='pathv2')path.set({x:Number(left),y:Number(top)});
+        else path.set({left:Number(left),top:Number(top)});
+    }
+    function reflectAreaToCaster(a,q,path,pid,result){
+        var casterId=String(a.source||q.sourceToken||''),caster=casterId&&getObj('graphic',casterId);
+        if(!caster||caster.get('_pageid')!==a.page)throw new Error('Отражение: не найден физический токен исходного заклинателя на активной карте.');
+        var reflectorId=String(result&&result.reflectorTokenId||result&&result.reactorTokenId||''),reflector=reflectorId&&getObj('graphic',reflectorId);
+        if(!reflector)throw new Error('Отражение: не найден токен NPC, применившего реакцию.');
+        var gmPid=firstGMId();if(!gmPid)throw new Error('Отражение: не найден Мастер для передачи управления областью.');
+        setPathCenter(path,Number(caster.get('left')),Number(caster.get('top')));
+        path.set({controlledby:'',rotation:0,stroke:'#ff9900',stroke_width:3});
+        a.reflected=true;a.reflectionSourceTokenId=reflector.id;a.originalOwner=a.originalOwner||a.owner;a.owner=gmPid;a.source=caster.id;
+        a.reflectionCasterTokenId=caster.id;a.reflectionReactorName=String(reflector.get('name')||reflector.id);
+        if(typeof api().setConditionSource==='function')api().setConditionSource(a.draft,pid,reflector.id);
+        if(typeof api().lockToGM==='function')api().lockToGM(a.draft,pid,gmPid);
+        gmPrompt('<b>Отражение — '+escape(q.name||'Заклинание')+'</b><br>Область перенаправлена под токен <b>'+escape(caster.get('name')||caster.id)+'</b> реакцией <b>'+escape(reflector.get('name')||reflector.id)+'</b>.<br>Переместите/поверните шаблон при необходимости и нажмите:<br>[Применить отражение](!ad5-area apply '+a.id+') [Отмена](!ad5-area cancel-reflection '+a.id+')');
+    }
+    function truthy(v){return /^(?:1|true|yes|on|да)$/i.test(String(v==null?'':v).trim());}
+    function auraProp(slot,suffix){return 'aura'+String(slot)+'_'+suffix;}
+    function auraSlotClaimed(tokenId,slot){
+        var store=persistentDb(),claimed=false;
+        Object.keys(store).some(function(id){var r=store[id];if(r&&r.kind==='aura'&&r.anchor===tokenId&&Number(r.auraSlot)===Number(slot)){claimed=true;return true;}return false;});
+        return claimed;
+    }
+    function chooseAuraSlot(token){
+        var free=[],i;
+        for(i=1;i<=2;i++)if(!auraSlotClaimed(token.id,i))free.push(i);
+        if(!free.length)throw new Error('На токене уже заняты обе штатные ауры AD5. Снимите одну из активных аур и повторите способность.');
+        // Prefer an empty native aura radius. If both free slots already contain a
+        // manually configured radius, temporarily reuse the first one and restore
+        // that radius when the AD5 aura ends. Color/shape/visibility are never
+        // overwritten, so Token Aura remains the visual configuration source.
+        for(i=0;i<free.length;i++)if(String(token.get(auraProp(free[i],'radius'))||'').trim()==='')return free[i];
+        return free[0];
+    }
+    function auraShape(token,slot){return truthy(token&&token.get(auraProp(slot,'square'))) ? 'square' : 'circle';}
+    function auraVisualSnapshot(token,slot){return {radius:String(token.get(auraProp(slot,'radius'))==null?'':token.get(auraProp(slot,'radius')))};}
+    function syncAuraVisual(rec){
+        if(!rec||rec.kind!=='aura')return;
+        var token=getObj('graphic',rec.anchor);if(!token)return;
+        var prop=auraProp(rec.auraSlot,'radius'),wanted=String(rec.radius),current=String(token.get(prop)==null?'':token.get(prop));
+        // Roll20 fires change:graphic for Token Aura edits. Rewriting the same
+        // radius on every persistent-area scan creates needless event storms and
+        // can contribute to the sandbox watchdog firing on large games.
+        if(current!==wanted)token.set(prop,wanted);
+        rec.shape=auraShape(token,rec.auraSlot);
+    }
+    function restoreAuraVisual(rec){
+        if(!rec||rec.kind!=='aura'||!rec.auraSlot)return;
+        var token=getObj('graphic',rec.anchor);if(!token)return;
+        var previous=rec.auraPrevious&&rec.auraPrevious.radius!==undefined?String(rec.auraPrevious.radius):'',prop=auraProp(rec.auraSlot,'radius');
+        if(String(token.get(prop)==null?'':token.get(prop))!==previous)token.set(prop,previous);
+    }
+    var AURA_OFF_PREFIX='AD5 · Отключить ауру · ';
+    function auraControlCharacter(rec){
+        if(!rec)return '';
+        var source=rec.source&&getObj('graphic',rec.source),anchor=rec.anchor&&getObj('graphic',rec.anchor),cid='';
+        if(source)cid=String(source.get('represents')||'');
+        if(!cid&&anchor)cid=String(anchor.get('represents')||'');
+        return cid&&getObj('character',cid)?cid:'';
+    }
+    function auraOffAbilityName(rec){
+        var base=String(rec&&rec.name||'Аура').replace(/[\r\n]+/g,' ').trim();
+        if(base.length>55)base=base.slice(0,55)+'…';
+        return Array(21).join('\u200b')+AURA_OFF_PREFIX+base+' ['+String(rec&&rec.id||'').slice(-5)+']';
+    }
+    function ensureAuraOffAbility(rec){
+        if(!rec||rec.kind!=='aura')return null;
+        var cid=auraControlCharacter(rec);if(!cid)return null;
+        var action='!ad5-area cancel '+rec.id,a=rec.auraOffAbilityId&&getObj('ability',rec.auraOffAbilityId);
+        if(!a||String(a.get('_characterid')||a.get('characterid')||'')!==cid){
+            a=findObjs({_type:'ability',_characterid:cid}).filter(function(x){return String(x.get('action')||'').trim()===action;})[0]||null;
+        }
+        if(a)a.set({name:auraOffAbilityName(rec),action:action,istokenaction:true});
+        else a=createObj('ability',{characterid:cid,name:auraOffAbilityName(rec),action:action,istokenaction:true});
+        if(a)rec.auraOffAbilityId=a.id;
+        return a;
+    }
+    function removeAuraOffAbility(rec){
+        if(!rec)return 0;var removed=0,action='!ad5-area cancel '+rec.id,a=rec.auraOffAbilityId&&getObj('ability',rec.auraOffAbilityId);
+        if(a){try{a.remove();removed++;}catch(ignore){}}
+        var cid=auraControlCharacter(rec);
+        if(cid)findObjs({_type:'ability',_characterid:cid}).filter(function(x){return String(x.get('action')||'').trim()===action;}).forEach(function(x){try{x.remove();removed++;}catch(ignore2){}});
+        delete rec.auraOffAbilityId;return removed;
+    }
+
+    function auraPrompt(q,pid,sourceId){
+        if(sourceId&&typeof api().setSource==='function')api().setSource(q.id,pid,sourceId);
+        var target='!ad5-area aura '+q.id+' &#64;{target|Носитель ауры|token_id}';
+        tell(pid,'<b>'+escape(q.name)+'</b><br>Выберите существо, на которое накладывается <b>'+escape(q.areaSpec.raw||('аура '+q.areaSpec.size+' фт'))+'</b>.<br>[Выбрать носителя ауры]('+target+') [Отмена](!ad5-area cancel '+q.id+')');
+    }
     function shapePoints(shape,w,h){
         if(shape==='circle'){
             var out=[];for(var i=0;i<=64;i++){var a=i*Math.PI/32;out.push([i?'L':'M',w/2+w/2*Math.cos(a),h/2+h/2*Math.sin(a)]);}return out;
@@ -79,78 +324,1936 @@ var AD5Areas=(function(){
         if(shape==='cone')return [['M',w/2,h],['L',0,0],['L',w,0],['L',w/2,h]];
         return [['M',0,0],['L',w,0],['L',w,h],['L',0,h],['L',0,0]];
     }
-    function createTemplate(q,pid,sourceId){
+    function isJumpgate(){var c=Campaign(),r='';try{r=String(c.get('release')||'').toLowerCase();}catch(ignoreRelease){}if(r==='jumpgate')return true;try{r=String(c.get('_release')||'').toLowerCase();}catch(ignoreLegacyRelease){}return r==='jumpgate';}
+    function pathObjectType(path){return path&&String(path.get('_type')||path.get('type')||'').toLowerCase()==='pathv2'?'pathv2':'path';}
+    function getAreaPath(id,rec){
+        // Normal areas are Path/PathV2 objects. Auras use the carrier token itself
+        // as the geometric controller, so all containment/turn code can share the
+        // same pipeline without creating a second movable template.
+        if(rec&&rec.kind==='aura')return rec.anchor?getObj('graphic',rec.anchor):null;
+        if(!id)return null;
+        var preferred=rec&&rec.pathType;
+        return (preferred&&getObj(preferred,id))||getObj('pathv2',id)||getObj('path',id)||null;
+    }
+    function pathPage(path){return path?String(path.get('_pageid')||path.get('pageid')||''):'';}
+    function pathLeft(path){return Number(pathObjectType(path)==='pathv2'?path.get('x'):path.get('left'));}
+    function pathTop(path){return Number(pathObjectType(path)==='pathv2'?path.get('y'):path.get('top'));}
+    function pathRotation(path){return Number(path&&path.get('rotation')||0);}
+    function pathV2Points(shape,w,h){
+        if(shape==='circle')return [[0,0],[w,h]];
+        if(shape==='cone')return [[w/2,h],[0,0],[w,0],[w/2,h]];
+        return [[0,0],[w,h]];
+    }
+    function pathDimensions(path,fallback){
+        fallback=fallback||{};
+        if(!path)return {w:Number(fallback.w)||0,h:Number(fallback.h)||0};
+        if(pathObjectType(path)!=='pathv2')return {w:Number(path.get('width'))||Number(fallback.w)||0,h:Number(path.get('height'))||Number(fallback.h)||0};
+        var pts=[];try{pts=JSON.parse(path.get('points')||'[]')||[];}catch(ignore){}
+        if(!Array.isArray(pts)||!pts.length)return {w:Number(fallback.w)||0,h:Number(fallback.h)||0};
+        var minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+        pts.forEach(function(pt){if(!Array.isArray(pt)||pt.length<2)return;var x=Number(pt[0]),y=Number(pt[1]);if(!Number.isFinite(x)||!Number.isFinite(y))return;minX=Math.min(minX,x);minY=Math.min(minY,y);maxX=Math.max(maxX,x);maxY=Math.max(maxY,y);});
+        if(!Number.isFinite(minX)||!Number.isFinite(minY)||!Number.isFinite(maxX)||!Number.isFinite(maxY))return {w:Number(fallback.w)||0,h:Number(fallback.h)||0};
+        return {w:Math.abs(maxX-minX),h:Math.abs(maxY-minY)};
+    }
+    function createAreaPath(pageId,shape,w,h,left,top,rotation,controlledby,stroke,strokeWidth){
+        if(isJumpgate()){
+            var v2Shape=shape==='circle'?'eli':(shape==='cone'?'pol':'rec');
+            return createObj('pathv2',{pageid:pageId,layer:'objects',shape:v2Shape,points:JSON.stringify(pathV2Points(shape,w,h)),x:left,y:top,rotation:Number(rotation)||0,stroke:stroke||'#ff9900',stroke_width:strokeWidth||3,fill:'transparent',controlledby:controlledby||'',fadeOnOverlap:false,renderAsScenery:false,baseOpacity:1});
+        }
+        return createObj('path',{_pageid:pageId,layer:'objects',_path:JSON.stringify(shapePoints(shape,w,h)),width:w,height:h,left:left,top:top,rotation:Number(rotation)||0,scaleX:1,scaleY:1,stroke:stroke||'#ff9900',stroke_width:strokeWidth||3,fill:'transparent',controlledby:controlledby||''});
+    }
+    function pointInPolygonLocal(p,poly){var inside=false;if(!Array.isArray(poly)||poly.length<3)return false;for(var i=0,j=poly.length-1;i<poly.length;j=i++){var a=poly[i],b=poly[j],hit=((a.y>p.y)!==(b.y>p.y))&&(p.x<(b.x-a.x)*(p.y-a.y)/((b.y-a.y)||1e-12)+a.x);if(hit)inside=!inside;}return inside;}
+    function createPolygonAreaPath(pageId,globalPoints,controlledby,stroke,strokeWidth){
+        if(!Array.isArray(globalPoints)||globalPoints.length<3)return null;
+        var minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+        globalPoints.forEach(function(p){minX=Math.min(minX,Number(p.left));minY=Math.min(minY,Number(p.top));maxX=Math.max(maxX,Number(p.left));maxY=Math.max(maxY,Number(p.top));});
+        if(!Number.isFinite(minX)||!Number.isFinite(minY)||!Number.isFinite(maxX)||!Number.isFinite(maxY))return null;
+        var w=Math.max(1,maxX-minX),h=Math.max(1,maxY-minY),cx=(minX+maxX)/2,cy=(minY+maxY)/2;
+        var pts=globalPoints.map(function(p){return [Number(p.left)-minX,Number(p.top)-minY];});
+        var path=null;
+        if(isJumpgate())path=createObj('pathv2',{pageid:pageId,layer:'objects',shape:'pol',points:JSON.stringify(pts),x:cx,y:cy,rotation:0,stroke:stroke||'#1e90ff',stroke_width:strokeWidth||5,fill:'transparent',controlledby:controlledby||'',fadeOnOverlap:false,renderAsScenery:false,baseOpacity:1});
+        else{
+            var commands=pts.map(function(p,i){return [i?'L':'M',p[0],p[1]];});commands.push(['L',pts[0][0],pts[0][1]]);
+            path=createObj('path',{_pageid:pageId,layer:'objects',_path:JSON.stringify(commands),width:w,height:h,left:cx,top:cy,rotation:0,scaleX:1,scaleY:1,stroke:stroke||'#1e90ff',stroke_width:strokeWidth||5,fill:'transparent',controlledby:controlledby||''});
+        }
+        return path?{path:path,w:w,h:h,cx:cx,cy:cy,local:globalPoints.map(function(p){return {x:Number(p.left)-cx,y:Number(p.top)-cy};})}:null;
+    }
+    function localToWorld(path,x,y){
+        var r=pathRotation(path)*Math.PI/180,c=Math.cos(r),sn=Math.sin(r),cx=pathLeft(path),cy=pathTop(path);
+        return {left:cx+Number(x||0)*c-Number(y||0)*sn,top:cy+Number(x||0)*sn+Number(y||0)*c};
+    }
+    function worldToLocal(path,left,top){
+        var dx=Number(left)-pathLeft(path),dy=Number(top)-pathTop(path),r=pathRotation(path)*Math.PI/180,c=Math.cos(r),sn=Math.sin(r);
+        return {x:dx*c+dy*sn,y:-dx*sn+dy*c};
+    }
+    function areaSourceToken(a){
+        var id=String(a&&a.source||'');if(!id)return null;var t=getObj('graphic',id);
+        return t&&t.get('_subtype')==='token'&&String(t.get('_pageid'))===String(a.page||'')?t:null;
+    }
+    function sourceTerrainElevation(a){
+        var t=areaSourceToken(a);if(!t)return 0;
+        try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.heightFeet==='function'){var h=Number(AD5Height.heightFeet(t));if(Number.isFinite(h))return h;}}catch(ignoreHeight){}
+        try{if(typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.totalHeightFeet==='function'){var eh=Number(AD5Environment.totalHeightFeet(t));if(Number.isFinite(eh))return eh;}}catch(ignoreEnvironmentHeight){}
+        return 0;
+    }
+    function terrainElevationAtTemplatePoint(a,path,left,top){
+        var source=areaSourceToken(a);
+        if(source){
+            try{
+                if(typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.terrainHeightAt==='function'){
+                    var h=Number(AD5Environment.terrainHeightAt(source,Number(left),Number(top)));
+                    if(Number.isFinite(h))return h;
+                }
+            }catch(ignoreTerrainAt){}
+        }
+        return 0;
+    }
+    function refreshAreaBaseElevation(a,path){
+        if(!a||!path)return 0;
+        var shape=geometryShape(a,path),base=0;
+        if(shape==='cone'||shape==='line'){
+            // Directional templates originate at the caster's physical elevation.
+            base=sourceTerrainElevation(a);
+        }else{
+            // Ground/point templates sit on the terrain directly under their effect
+            // centre. This supports elevated PHYS floors and negative pit floors.
+            var center=areaEffectCenter(a,path);
+            base=terrainElevationAtTemplatePoint(a,path,center.left,center.top);
+        }
+        if(!Number.isFinite(base))base=0;
+        a.baseElevation=base;
+        return base;
+    }
+    function lineSourceSign(a,path){
+        var source=areaSourceToken(a);if(!source)return 1;
+        var p=worldToLocal(path,Number(source.get('left'))||0,Number(source.get('top'))||0),half=Math.max(0,Number(a&&a.h)||0)/2;
+        // The short end whose centre is nearest to the caster is the emitting side.
+        var plus=p.x*p.x+(p.y-half)*(p.y-half),minus=p.x*p.x+(p.y+half)*(p.y+half);
+        return plus<=minus?1:-1;
+    }
+    function areaEffectCenter(a,path){
+        var cx=pathLeft(path),cy=pathTop(path),off=a&&a.effectCenterOffset;
+        if(off){var r=pathRotation(path)*Math.PI/180,c=Math.cos(r),sn=Math.sin(r),x=Number(off.x)||0,y=Number(off.y)||0;cx+=x*c-y*sn;cy+=x*sn+y*c;}
+        return {left:cx,top:cy,pageId:a&&a.page||pathPage(path),elevation:areaBaseElevation(a)};
+    }
+    function areaEffectOrigin(a,path,target){
+        if(!a||!path)return {left:0,top:0,pageId:a&&a.page||'',elevation:0};
+        var off=a.effectOriginOffset;
+        if(off){var fixed=localToWorld(path,Number(off.x)||0,Number(off.y)||0),fixedZ=Number(a.effectOriginElevation);if(!Number.isFinite(fixedZ))fixedZ=areaBaseElevation(a);return {left:fixed.left,top:fixed.top,pageId:a.page||pathPage(path),elevation:fixedZ};}
+        var shape=geometryShape(a,path),p;
+        if(shape==='cone'){
+            // Cone geometry has a single apex at local +Y. That apex is its emitter.
+            p=localToWorld(path,0,(Number(a.h)||0)/2);
+        }else if(shape==='line'){
+            // A line emits from the short edge nearest the caster. For each target
+            // use the point on that edge matching the target's lateral position,
+            // producing parallel rays instead of an artificial fan from the centre.
+            var sign=lineSourceSign(a,path),x=0;
+            if(target){var lt=worldToLocal(path,Number(target.get('left'))||0,Number(target.get('top'))||0),halfW=Math.max(0,(Number(a.w)||0)/2);x=Math.max(-halfW,Math.min(halfW,lt.x));}
+            p=localToWorld(path,x,sign*(Number(a.h)||0)/2);
+        }else return areaEffectCenter(a,path);
+        var originZ=Number(a.baseElevation);if(!Number.isFinite(originZ))originZ=sourceTerrainElevation(a);return {left:p.left,top:p.top,pageId:a.page||pathPage(path),elevation:originZ};
+    }
+    function areaExposureForToken(a,path,token){
+        if(!a||!path||!token||a.ignoreCover)return {blocked:false,dexAdvantage:false,cover:{tier:'none',label:'нет укрытия'}};
+        try{if(typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.areaExposure==='function')return AD5Environment.areaExposure(areaEffectOrigin(a,path,token),token,areaHeightFeet(a),false);}catch(ignore){}
+        return {blocked:false,dexAdvantage:false,cover:{tier:'none',label:'нет укрытия'}};
+    }
+    function spellTargetMode(q){
+        var mode=String(q&&q.targetMode||'default').toLowerCase();
+        if(['all','allies','enemies'].indexOf(mode)>=0)return mode;
+        if(typeof AD5Sides!=='undefined'&&AD5Sides&&typeof AD5Sides.targetModeFor==='function'){
+            return AD5Sides.targetModeFor({
+                target:(q&&q.target)||(q&&q.f&&q.f.target)||'',
+                description:(q&&q.description)||(q&&q.f&&(q.f.description!==undefined?q.f.description:q.f.desc))||''
+            });
+        }
+        return 'default';
+    }
+    function spellTargetModeLabel(mode){
+        if(mode==='all')return 'каждое / все существа';
+        if(mode==='allies')return 'только союзные / дружественные существа';
+        if(mode==='enemies')return 'только враждебные существа / противники';
+        return 'обычная система свой/чужой';
+    }
+    function spellTargetAllowed(q,a,token,mode){
+        mode=mode||spellTargetMode(q);
+        if(mode==='default'||typeof AD5Sides==='undefined'||!AD5Sides||typeof AD5Sides.targetAllowed!=='function')return true;
+        return AD5Sides.targetAllowed({
+            actor:(q&&q.actor)||(a&&a.snapshot&&a.snapshot.actor)||'',
+            sourceToken:(a&&a.source)||(q&&q.sourceToken)||(a&&a.snapshot&&a.snapshot.sourceToken)||'',
+            targetMode:mode
+        },token,mode);
+    }
+
+    function dedupeAreaTokenIdsFast(tokens){
+        var out=[],seen=Object.create(null);
+        (tokens||[]).forEach(function(t){if(!t)return;var id=String(t.id||'');if(id&&seen[id])return;if(id)seen[id]=true;out.push(t);});
+        return out;
+    }
+    function collectDetailed(a,path,pid){
+        var ids=[],meta={},blocked=[];
+        var raw=(findObjs({_type:'graphic',_subtype:'token',_pageid:a.page,layer:'objects'})||[]).filter(function(t){return combatToken(t,a.page);});
+        dedupeAreaTokenIdsFast(raw).forEach(function(t){
+            if(!containsGeometry(a,path,Number(t.get('left')),Number(t.get('top')),pathLeft(path),pathTop(path),a&&a.kind==='aura'?0:pathRotation(path)))return;
+            if(!targetableCombatToken(t,a.page)||!contains(a,path,t))return;
+            // 2.22.1: once a persistent ОБЛ has been clipped/frozen at cast time,
+            // its stored polygon IS the final line-of-effect footprint.  Re-running
+            // cover/SOLID ray tests on every later НАЧТ incorrectly removed tokens
+            // that are physically inside that frozen footprint and prevented turn
+            // damage such as "НАЧТ: 3д6 огонь".  Cover is evaluated while the
+            // footprint is created; later membership is purely geometric.
+            if(a.coverageFrozen){ids.push(t.id);return;}
+            var exposure=areaExposureForToken(a,path,t);
+            if(exposure&&exposure.blocked){blocked.push({id:t.id,name:String(t.get('name')||t.id),reason:String(exposure.reason||'полное укрытие')});return;}
+            ids.push(t.id);
+            if(exposure&&exposure.dexAdvantage)meta[t.id]={dexAdvantage:true,coverLabel:String(exposure.cover&&exposure.cover.label||exposure.reason||'укрытие')};
+        });
+        return {ids:ids,meta:meta,blocked:blocked};
+    }
+    function radialBoundary(a,path,angle){
+        var cx=pathLeft(path),cy=pathTop(path),maxR=Math.sqrt(a.w*a.w+a.h*a.h)+4,dx=Math.cos(angle),dy=Math.sin(angle);
+        if(!containsGeometry(a,path,cx,cy,cx,cy,pathRotation(path)))return 0;
+        var lo=0,hi=maxR;
+        for(var i=0;i<20;i++){var mid=(lo+hi)/2;if(containsGeometry(a,path,cx+dx*mid,cy+dy*mid,cx,cy,pathRotation(path)))lo=mid;else hi=mid;}
+        return lo;
+    }
+    function clippedRayEnd(a,start,end,height){
+        var dx=Number(end.left)-Number(start.left),dy=Number(end.top)-Number(start.top),len=Math.sqrt(dx*dx+dy*dy),sourceZ=Number(start&&start.elevation);if(!Number.isFinite(sourceZ))sourceZ=areaBaseElevation(a);var lim=AD5Environment.propagationLimit(a.page,start.left,start.top,end.left,end.top,height,false,sourceZ),fraction=lim&&Number.isFinite(Number(lim.fraction))?Math.max(0,Math.min(1,Number(lim.fraction))):1;
+        if(fraction<0.999&&len>0.001)fraction=Math.max(0,fraction-1.5/len);
+        return {left:Number(start.left)+dx*fraction,top:Number(start.top)+dy*fraction,fraction:fraction,blocked:fraction<0.999};
+    }
+    function coneCoveragePolygon(a,path,height){
+        var origin=areaEffectOrigin(a,path,null),count=120,pts=[{left:origin.left,top:origin.top}],changed=false,halfW=(Number(a.w)||0)/2,baseY=-(Number(a.h)||0)/2;
+        for(var i=0;i<=count;i++){
+            var x=-halfW+(2*halfW*i/count),end=localToWorld(path,x,baseY),clipped=clippedRayEnd(a,origin,end,height);if(clipped.blocked)changed=true;pts.push({left:clipped.left,top:clipped.top});
+        }
+        return changed?{points:pts,center:{left:pathLeft(path),top:pathTop(path)},origin:{left:origin.left,top:origin.top,elevation:origin.elevation}}:null;
+    }
+    function lineCoveragePolygon(a,path,height){
+        var sign=lineSourceSign(a,path),nearY=sign*(Number(a.h)||0)/2,farY=-nearY,halfW=(Number(a.w)||0)/2,count=Math.max(24,Math.min(120,Math.ceil((Number(a.w)||70)/7))),near=[],far=[],changed=false;
+        for(var i=0;i<=count;i++){
+            var x=-halfW+(2*halfW*i/count),start=localToWorld(path,x,nearY),end=localToWorld(path,x,farY),clipped=clippedRayEnd(a,start,end,height);near.push(start);far.push({left:clipped.left,top:clipped.top});if(clipped.blocked)changed=true;
+        }
+        if(!changed)return null;
+        // Near edge left→right, then the clipped depth profile right→left.
+        var pts=near.concat(far.slice().reverse()),midOrigin=areaEffectOrigin(a,path,null);
+        return {points:pts,center:{left:pathLeft(path),top:pathTop(path)},origin:{left:midOrigin.left,top:midOrigin.top,elevation:midOrigin.elevation}};
+    }
+    function coveragePolygon(a,path){
+        if(!a||!path||a.ignoreCover||typeof AD5Environment==='undefined'||!AD5Environment||typeof AD5Environment.propagationLimit!=='function')return null;
+        var shape=geometryShape(a,path),height=areaHeightFeet(a)||5;
+        if(shape==='cone')return coneCoveragePolygon(a,path,height);
+        if(shape==='line')return lineCoveragePolygon(a,path,height);
+        var cx=pathLeft(path),cy=pathTop(path),count=180,pts=[],changed=false;
+        for(var i=0;i<count;i++){
+            var angle=i*Math.PI*2/count,boundary=radialBoundary(a,path,angle);if(boundary<=0.1){pts.push({left:cx,top:cy});continue;}
+            var ex=cx+Math.cos(angle)*boundary,ey=cy+Math.sin(angle)*boundary,lim=AD5Environment.propagationLimit(a.page,cx,cy,ex,ey,height,false,areaBaseElevation(a)),fraction=lim&&Number.isFinite(Number(lim.fraction))?Math.max(0,Math.min(1,Number(lim.fraction))):1;
+            if(fraction<0.999){changed=true;boundary=Math.max(0,boundary*fraction-1.5);}
+            pts.push({left:cx+Math.cos(angle)*boundary,top:cy+Math.sin(angle)*boundary});
+        }
+        return changed?{points:pts,center:{left:cx,top:cy},origin:{left:cx,top:cy,elevation:areaBaseElevation(a)}}:null;
+    }
+    function replaceDraftWithCoverage(a,path){
+        var cov=coveragePolygon(a,path);if(!cov)return {a:a,path:path,changed:false};
+        var created=createPolygonAreaPath(a.page,cov.points,a.owner,'#ff9900',3);if(!created)return {a:a,path:path,changed:false};
+        var oldId=a.id,oldPath=path,store=db();delete store[oldId];
+        a.id=created.path.id;a.pathType=pathObjectType(created.path);a.shape='polygon';a.w=created.w;a.h=created.h;a.coveragePolygon=created.local;a.effectCenterOffset={x:cov.center.left-created.cx,y:cov.center.top-created.cy};
+        if(cov.origin){a.effectOriginOffset={x:Number(cov.origin.left)-created.cx,y:Number(cov.origin.top)-created.cy};a.effectOriginElevation=Number(cov.origin.elevation)||0;}
+        a.coverageFrozen=true;
+        store[a.id]=a;
+        try{oldPath.remove();}catch(ignoreRemove){}
+        if(typeof toBack==='function')toBack(created.path);
+        return {a:a,path:created.path,changed:true,oldId:oldId};
+    }
+
+    function environmentTypeFromText(value){
+        var t=normalizeUserText(value||'');
+        if(/(?:^|[\s,;.])(?:солид|solid)(?=$|[\s,;.])/i.test(t))return 'solid';
+        if(/(?:^|[\s,;.])(?:физ|phys|physical)(?=$|[\s,;.])/i.test(t))return 'phys';
+        if(/(?:^|[\s,;.])(?:заслоу|zaslow)(?=$|[\s,;.])/i.test(t))return 'zaslow';
+        if(/(?:^|[\s,;.])(?:засхай|zashigh)(?=$|[\s,;.])/i.test(t))return 'zashigh';
+        return '';
+    }
+    function areaEnvironmentType(q,spec){return String((spec&&spec.environmentType)||environmentTypeFromText((spec&&spec.raw)||'')||environmentTypeFromText(q&&q.description||'')||'');}
+    function environmentLabel(type){type=String(type||'');return type==='phys'?'ФИЗ':type==='zaslow'?'ЗАСЛОУ':type==='zashigh'?'ЗАСХАЙ':type==='solid'?'СОЛИД':'';}
+    function casterBaseHeightFeet(token){
+        if(!token)return 6;
+        try{
+            if(typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.bodyHeightInfo==='function'){
+                var info=AD5Environment.bodyHeightInfo(token),h=Number(info&&info.baseHeight);
+                if(Number.isFinite(h)&&h>0)return h;
+                h=Number(info&&info.height);if(Number.isFinite(h)&&h>0)return h;
+            }
+        }catch(ignoreEnvironmentHeight){}
+        try{
+            if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.sizeProfile==='function'){
+                var p=AD5Height.sizeProfile(token),fallback={tiny:2,small:4,medium:6,large:10,huge:15,gargantuan:20}[p&&p.key];
+                if(Number.isFinite(fallback)&&fallback>0)return fallback;
+            }
+        }catch(ignoreSizeHeight){}
+        return 6;
+    }
+    function resolvedAreaHeight(spec,source){
+        var explicit=spec&&spec.height!==null&&spec.height!==undefined&&String(spec.height).trim()!=='';
+        if(explicit)return {height:positive(spec.height,'Высота области'),auto:false,source:'явно указана'};
+        var h=casterBaseHeightFeet(source);
+        return {height:positive(h,'Рост заклинателя'),auto:true,source:'рост заклинателя'};
+    }
+
+    function createTemplate(q,pid,sourceId,originId){
         var spec=q.areaSpec;
         if(!spec)throw new Error('В способности не определена площадь.');
         var shape=spec.shape,size=positive(spec.size,'Размер');
         if(['circle','square','cone','line'].indexOf(shape)<0)throw new Error('Неподдерживаемая форма области: '+shape+'.');
-        var pageId=playerPageId(pid),page=getObj('page',pageId);if(!page)throw new Error('Страница игрока не найдена.');
-        var source=sourceToken(q,pid,sourceId),unit=positive(page.get('scale_number')||5,'Масштаб страницы'),factor=70/unit;
-        var width=shape==='line'?positive(spec.width||5,'Ширина'):size;
-        var length=shape==='line'?positive(spec.length||size,'Длина'):size;
+        var pageId=assertPartyPage(playerPageId(pid)),page=getObj('page',pageId);if(!page)throw new Error('Карта под «Лентой для вечеринок» не найдена.');
+        var source=sourceToken(q,pid,sourceId),origin=originId?getObj('graphic',String(originId)):null;
+        if(origin&&(!combatToken(origin,pageId)||origin.get('_pageid')!==pageId))throw new Error('Токен-центр вторичной области должен быть боевым токеном на активной карте.');
+        if(!origin)origin=source;
+        var heightSpec=resolvedAreaHeight(spec,origin||source),zHeight=heightSpec.height,unit=positive(page.get('scale_number')||5,'Масштаб страницы'),factor=70/unit;
+        var rectangular=(shape==='line'||shape==='square');
+        var width=rectangular?positive(spec.width||(shape==='line'?5:size),'Ширина'):size;
+        var length=rectangular?positive(spec.length||size,'Длина'):size;
         var w=(shape==='circle'?2*size:width)*factor,h=(shape==='circle'?2*size:length)*factor;
         if(w>100000||h>100000)throw new Error('Область слишком велика для страницы.');
         var left,top;
-        if(source){left=Number(source.get('left'));top=Number(source.get('top'));}
+        if(origin){
+            left=Number(origin.get('left'));top=Number(origin.get('top'));
+            if(shape==='cone'||shape==='line'){
+                // Rotation 0 points toward local -Y. Put the emitting apex/short
+                // edge against the caster's upper token edge, so the template starts
+                // outside the caster instead of extending half its length behind them.
+                var tokenHalfH=Math.max(1,Number(origin.get('height'))||70)/2;
+                top=top-tokenHalfH-h/2;
+            }
+        }
         else {left=Number(page.get('width')||33)*70/2;top=Number(page.get('height')||20)*70/2;}
-        var pathProps={_pageid:page.id,layer:'objects',_path:JSON.stringify(shapePoints(shape,w,h)),width:w,height:h,left:left,top:top,rotation:0,scaleX:1,scaleY:1,stroke:'#ff9900',stroke_width:3,fill:'transparent',controlledby:pid};
-        var path=createObj('path',pathProps);if(!path)throw new Error('Не удалось создать шаблон области.');
-        db()[path.id]={id:path.id,draft:q.id,owner:pid,shape:shape,page:page.id,w:w,h:h,source:source?source.id:null};
+        var path=createAreaPath(page.id,shape,w,h,left,top,0,pid,'#ff9900',3);if(!path)throw new Error('Не удалось создать шаблон области.');
+        // Persist the spell/reaction context on the physical area record itself.
+        // The AD5 draft may outlive the original Roll20 card and may be resumed by
+        // a later API click, so Counterspell must never have to reconstruct these
+        // fields from chat history.
+        var sourceSide='';
+        try{
+            if(source&&typeof AD5Reactions!=='undefined'&&AD5Reactions&&typeof AD5Reactions.sideOf==='function')sourceSide=String(AD5Reactions.sideOf(source)||'');
+        }catch(ignoreSide){}
+        if(!sourceSide){
+            var sourceNpc=characterIsNPC(q.actor),sourcePlayerNpc=characterIsPlayerControlled(q.actor);
+            sourceSide=(!sourceNpc||sourcePlayerNpc)?'players':'npcs';
+        }
+        var envType=areaEnvironmentType(q,spec);
+        var floorId='';try{if(origin&&typeof AD5Floors!=='undefined'&&AD5Floors&&typeof AD5Floors.floorOf==='function')floorId=String(AD5Floors.floorOf(origin)||'');}catch(ignoreFloorId){}
+        db()[path.id]={id:path.id,pathType:pathObjectType(path),draft:q.id,owner:pid,shape:shape,page:page.id,w:w,h:h,zHeight:zHeight,autoHeight:!!heightSpec.auto,heightSource:heightSpec.source,volume:String(spec.volume||''),environmentType:envType,ignoreCover:!!spec.ignoreCover,floorId:floorId,
+            source:source?source.id:null,originToken:origin?origin.id:null,sourceSide:sourceSide,actor:q.actor,
+            isSpell:areaDraftIsSpell(q),spellSource:String(q.spellSource||''),
+            spellMeta:q.spellMeta?JSON.parse(JSON.stringify(q.spellMeta)):null,
+            concentrationId:q.concentrationId||null};
+        if(typeof toBack==='function')toBack(path);
         return path;
     }
     function begin(id,pid,overrideSpec){
-        var q=api().get(id,pid);if(overrideSpec)q.areaSpec=overrideSpec;if(!q.areaSpec)throw new Error('В способности не определена площадь.');
+        var q=api().get(id,pid);if(overrideSpec)q.areaSpec=overrideSpec;if(!q.areaSpec)throw new Error('В способности не определена площадь/аура.');
         var npc=characterIsNPC(q.actor), playerNpc=characterIsPlayerControlled(q.actor);
         if(npc && !playerNpc && !playerIsGM(pid))throw new Error('Эта способность принадлежит NPC под управлением Мастера. Токен выбирает Мастер.');
-        var source=sourceToken(q,pid,null);
-        if(!source && npc){
-            // NPCs require an explicit physical token. A player-controlled NPC
-            // asks its controller; an uncontrolled NPC asks the GM.
-            sourcePrompt(q,playerNpc?pid:'gm',playerNpc?'player':'gm');
+        var source=q.sourceToken?sourceToken(q,pid,q.sourceToken):sourceToken(q,pid,null);
+        if(!source){
+            // 2.24.1: never place an area on an arbitrary copy of a character.
+            // If AD5 could not bind a unique physical caster, ask explicitly.
+            var promptTo=(npc&&!playerNpc)?'gm':pid;
+            sourcePrompt(q,promptTo,(npc&&!playerNpc)?'gm':'player');
             return q.id;
         }
-        if(!source)throw new Error('Не найден токен персонажа способности на текущей странице.');
-        var path=createTemplate(q,pid,source.id);
+        // Bind the exact physical caster to the AD5 draft before the template
+        // is created. This keeps Areas, Reactions and resumed AD5 processing on
+        // the same token even when the original card had no selected token later.
+        try{if(typeof api().setSource==='function')api().setSource(q.id,pid,source.id);}catch(ignoreBindSource){}
+        if(q.areaSpec.aura){auraPrompt(q,pid,source.id);return q.id;}
+        var path=createTemplate(q,pid,source.id,q.areaOriginToken||null),created=db()[path.id];
         var count=q.allArea?'все существа':('до '+q.max+' существ');
-        tell(pid,'<b>'+escape(q.name)+'</b><br>Шаблон создан на месте токена <b>'+escape(source.get('name')||source.id)+'</b>: '+escape(q.areaSpec.raw||q.areaSpec.shape)+' · '+escape(count)+'.<br><b>Переместите и поверните шаблон на поле.</b><br>[Применить](!ad5-area apply '+path.id+') [Отмена](!ad5-area cancel '+path.id+')');
+        var envLabel=environmentLabel(areaEnvironmentType(q,q.areaSpec));
+        var centerToken=q.areaOriginToken&&getObj('graphic',q.areaOriginToken)||source;
+        tell(pid,'<b>'+escape(q.name)+'</b><br>Шаблон создан <b>центром на токене</b> <b>'+escape(centerToken.get('name')||centerToken.id)+'</b>: '+escape(q.areaSpec.raw||q.areaSpec.shape)+' · высота <b>'+escape(created&&created.zHeight||6)+' фт</b>'+(created&&created.autoHeight?' <i>(рост заклинателя)</i>':'')+(envLabel?' · окружение <b>'+escape(envLabel)+'</b>':'')+(q.areaSpec.ignoreCover?' · <b>ПОКР</b>':'')+' · '+escape(count)+areaBatchLabel(q)+'.<br><b>Переместите и поверните шаблон на поле.</b><br>[Применить](!ad5-area apply '+path.id+') [Отмена](!ad5-area cancel '+path.id+')');
+        return path.id;
+    }
+    function resolveFixed(id,pid,originTokenId){
+        var q=api().get(id,pid);
+        if(!q.areaSpec)throw new Error('Во вторичной способности не определена площадь.');
+        if(q.areaSpec.aura)throw new Error('Вторичная фиксированная область не может быть аурой.');
+        var source=q.sourceToken?sourceToken(q,pid,q.sourceToken):sourceToken(q,pid,null);
+        if(!source)throw new Error('Не определён физический токен заклинателя вторичной области.');
+        var origin=getObj('graphic',String(originTokenId||q.areaOriginToken||''));
+        if(!origin||!combatToken(origin,playerPageId(pid)))throw new Error('Не найдена первичная цель — центр вторичной области.');
+        var path=createTemplate(q,pid,source.id,origin.id),created=db()[path.id];
+        tell(pid,'<b>'+escape(q.name)+'</b><br>Вторичная область автоматически создана вокруг <b>'+
+            escape(origin.get('name')||origin.id)+'</b>: '+escape(q.areaSpec.raw||q.areaSpec.shape)+
+            ' · высота <b>'+escape(created&&created.zHeight||5)+' фт</b>'+(q.areaSpec.ignoreCover?' · <b>ПОКР</b>':'')+'. Выполняю эффект…');
+        apply(path.id,pid,{reactionResolved:true,fixedOrigin:true});
         return path.id;
     }
     function owned(id,pid){var a=db()[id];if(!a)throw new Error('Шаблон области не найден.');if(a.owner!==pid&&!playerIsGM(pid))throw new Error('Этот шаблон принадлежит другому игроку.');return a;}
-    function contains(a,path,token){
-        var dx=Number(token.get('left'))-Number(path.get('left')),dy=Number(token.get('top'))-Number(path.get('top'));
-        var r=Number(path.get('rotation')||0)*Math.PI/180,x=dx*Math.cos(r)+dy*Math.sin(r),y=-dx*Math.sin(r)+dy*Math.cos(r),e=1e-7;
-        if(a.shape==='circle')return x*x+y*y<=(a.w/2)*(a.w/2)+e;
-        if(a.shape==='cone'){var depth=a.h/2-y;return depth>=-e&&depth<=a.h+e&&Math.abs(x)<=depth*a.w/(2*a.h)+e;}
+    function activeOwned(id,pid){var a=owned(id,pid);assertPartyPage(a.page);return a;}
+    function geometryShape(a,path){
+        if(a&&a.kind==='aura'&&path&&a.auraSlot){a.shape=auraShape(path,a.auraSlot);return a.shape;}
+        return a.shape;
+    }
+    function containsGeometry(a,path,left,top,centerLeft,centerTop,rotation){
+        var dx=Number(left)-Number(centerLeft),dy=Number(top)-Number(centerTop);
+        var r=Number(rotation||0)*Math.PI/180,x=dx*Math.cos(r)+dy*Math.sin(r),y=-dx*Math.sin(r)+dy*Math.cos(r),e=1e-7,shape=geometryShape(a,path);
+        if(shape==='circle')return x*x+y*y<=(a.w/2)*(a.w/2)+e;
+        if(shape==='cone'){var depth=a.h/2-y;return depth>=-e&&depth<=a.h+e&&Math.abs(x)<=depth*a.w/(2*a.h)+e;}
+        if(shape==='polygon'&&Array.isArray(a.coveragePolygon))return pointInPolygonLocal({x:x,y:y},a.coveragePolygon);
         return Math.abs(x)<=a.w/2+e&&Math.abs(y)<=a.h/2+e;
     }
-    function collect(a,path,pid){
-        var ids=findObjs({_type:'graphic',_subtype:'token',_pageid:a.page,layer:'objects'}).filter(function(t){
-            return !t.get('isdrawing')&&getObj('character',t.get('represents'))&&contains(a,path,t);
-        }).map(function(t){return t.id;});
-        return ids;
+    function contains(a,path,token){
+        var inside=containsGeometry(a,path,Number(token.get('left')),Number(token.get('top')),pathLeft(path),pathTop(path),a&&a.kind==='aura'?0:pathRotation(path))&&verticalContains(a,token);
+        if(!inside)return false;
+        // Multi-floor maps are logically isolated even though all floors live on
+        // one Roll20 Page. A creature can belong only to areas on its own floor.
+        try{if(typeof AD5Floors!=='undefined'&&AD5Floors&&typeof AD5Floors.areaAllowsToken==='function'&&!AD5Floors.areaAllowsToken(a,path,token))return false;}catch(ignoreFloorMembership){}
+        return true;
+    }
+    function combatToken(token,pageId){
+        if(!token||token.get('_subtype')!=='token'||token.get('isdrawing'))return false;
+        if(pageId&&token.get('_pageid')!==pageId)return false;
+        if(token.get('layer')!=='objects')return false;
+        // 2.17.5: Areas only decides geometric membership. It must not invent a
+        // second HP policy based on bar1_value or token name. AD5.target()/hpPlan()
+        // is the authoritative combat validation when a phase is dispatched.
+        return !!getObj('character',token.get('represents'));
+    }
+    function tokenCenterInsidePage(token,pageId){
+        if(!token||!token.get)return false;pageId=String(pageId||token.get('_pageid')||'');
+        var page=pageId&&getObj('page',pageId);if(!page)return false;
+        var left=Number(token.get('left')),top=Number(token.get('top')),width=Number(token.get('width')),height=Number(token.get('height')),
+            pageW=Number(page.get('width'))*70,pageH=Number(page.get('height'))*70;
+        return Number.isFinite(left)&&Number.isFinite(top)&&Number.isFinite(width)&&Number.isFinite(height)&&width>0&&height>0&&Number.isFinite(pageW)&&Number.isFinite(pageH)&&pageW>0&&pageH>0&&left>=0&&top>=0&&left<=pageW&&top<=pageH;
+    }
+    function localTargetableCombatToken(token,pageId){
+        if(!combatToken(token,pageId)||!tokenCenterInsidePage(token,pageId))return false;
+        var cid=String(token.get('represents')||'').trim();if(!cid)return false;
+        var npc=(findObjs({_type:'attribute',_characterid:cid,name:'npc'})||[])[0],isNpc=!!(npc&&String(npc.get('current')||'')==='1');
+        var hp=(findObjs({_type:'attribute',_characterid:cid,name:'hp'})||[]);
+        if(isNpc){var v=String(token.get('bar1_value')==null?'':token.get('bar1_value')).trim(),m=String(token.get('bar1_max')==null?'':token.get('bar1_max')).trim();return (!!v&&!!m)||hp.length>0;}
+        return hp.length>0;
+    }
+    function targetableCombatToken(token,pageId){
+        try{if(typeof AD5!=='undefined'&&AD5&&AD5.combatTargets&&typeof AD5.combatTargets.isTargetable==='function')return !!AD5.combatTargets.isTargetable(token,pageId);}catch(ignoreAD5TargetPredicate){}
+        return localTargetableCombatToken(token,pageId);
+    }
+    function collect(a,path,pid){return collectDetailed(a,path,pid).ids;}
+    function bringCombatTokensFront(pageId){
+        assertPartyPage(pageId);
+        if(typeof toFront!=='function')return 0;
+        var tokens=findObjs({_type:'graphic',_subtype:'token',_pageid:pageId,layer:'objects'}).filter(function(t){
+            return combatToken(t,pageId);
+        });
+        tokens.forEach(function(t){toFront(t);});
+        return tokens.length;
     }
     function validateTemplate(a,path){
-        if(path.get('_pageid')!==a.page)throw new Error('Шаблон перемещён на другую страницу.');
-        if(Math.abs(Number(path.get('width'))-a.w)>0.01||Math.abs(Number(path.get('height'))-a.h)>0.01||Math.abs(Number(path.get('scaleX')||1)-1)>0.001||Math.abs(Number(path.get('scaleY')||1)-1)>0.001)
+        assertPartyPage(a.page);
+        if(pathPage(path)!==a.page)throw new Error('Шаблон перемещён на другую страницу.');
+        var dims=pathDimensions(path,a),legacyScaleBad=pathObjectType(path)==='path'&&(Math.abs(Number(path.get('scaleX')||1)-1)>0.001||Math.abs(Number(path.get('scaleY')||1)-1)>0.001);
+        if(Math.abs(dims.w-a.w)>0.01||Math.abs(dims.h-a.h)>0.01||legacyScaleBad)
             throw new Error('Шаблон изменил размер. Создайте область заново с нужным размером из карточки.');
+        try{
+            if(a.floorId&&typeof AD5Floors!=='undefined'&&AD5Floors&&typeof AD5Floors.floorIdAt==='function'){
+                var placed=String(AD5Floors.floorIdAt(a.page,pathLeft(path),pathTop(path))||'');
+                if(placed&&placed!==String(a.floorId))throw new Error('Шаблон перенесён на другой этаж. Площадная способность должна оставаться на этаже заклинателя.');
+            }
+        }catch(floorError){if(/другой этаж/.test(String(floorError&&floorError.message||floorError)))throw floorError;}
     }
-    function apply(id,pid){
-        var a=owned(id,pid),q=api().get(a.draft,pid),path=getObj('path',a.id);
+    function decodeText(s){
+        return normalizeUserText(String(s||'')
+            .replace(/<br\s*\/?\s*>/gi,' ')
+            .replace(/<[^>]*>/g,' ')
+            .replace(/&#(\d+);/g,function(_,n){var c=Number(n);return Number.isFinite(c)?String.fromCharCode(c):' ';})
+            .replace(/&quot;/gi,'"').replace(/&amp;/gi,'&'));
+    }
+
+    // ---------- Area/Aura damage defenses (2.24.6) ----------
+    // Syntax in spell/ability description:
+    //   СОПР: огонь 50%, холод 25%
+    //   ИММ: яд, некротическая энергия
+    // Percent omitted => standard 50% resistance.
+    function rawAreaDescription(value){
+        if(typeof value==='string')return String(value||'');
+        value=value&&typeof value==='object'?value:{};
+        return [
+            value.description,
+            value.f&&value.f.description,
+            value.f&&value.f.desc
+        ].filter(Boolean).join('\n');
+    }
+    function defenseDirectiveKind(label){
+        var n=normalizeUserText(label||'').replace(/\./g,'').trim();
+        if(/^(?:сопр|сопротивление|resist|resistance)$/.test(n))return 'resistance';
+        if(/^(?:имм|иммунитет|immune|immunity)$/.test(n))return 'immunity';
+        return 'other';
+    }
+    function defenseDirectiveMarks(value){
+        var text=rawAreaDescription(value)
+            .replace(/<br\s*\/?\s*>/gi,'\n')
+            .replace(/<\/p\s*>/gi,'\n')
+            .replace(/<[^>]*>/g,' ')
+            .replace(/&nbsp;|&#160;/gi,' ')
+            .replace(/&quot;/gi,'"').replace(/&amp;/gi,'&');
+        var names='КАСТ|НАЧК|НАЧИ|НАЧТ|КНЦИ|КНЦТ|КОНИ|КОНТ|ОКОН|ОСВОБ|ВХОД|ВЫХОД|ОБЛН|ОБЛК|ПАСС|При\\s+входе|Каждый\\s+ход|МУВ|СОПР(?:ОТИВЛЕНИЕ)?|СОПРОТИВЛЕНИЕ|RESIST(?:ANCE)?|ИММ(?:УНИТЕТ)?|ИММУНИТЕТ|IMMUN(?:E|ITY)';
+        var re=new RegExp('(^|[\\n;.])\\s*('+names+')\\s*[:：—–-]\\s*','ig'),m,marks=[];
+        while((m=re.exec(text))){
+            marks.push({
+                label:m[2],
+                kind:defenseDirectiveKind(m[2]),
+                start:m.index+String(m[1]||'').length,
+                bodyStart:re.lastIndex
+            });
+        }
+        return {text:text,marks:marks};
+    }
+    function areaDamageType(raw){
+        var n=normalizeUserText(raw||'').replace(/[.,;:!?]+$/,'').trim();
+        if(/^(?:весь\s+урон|все\s+типы\s+урона|любой\s+урон|all\s+damage|any\s+damage)$/.test(n))return '*';
+        try{
+            if(typeof AD5!=='undefined'&&AD5&&AD5.phaseBridge&&typeof AD5.phaseBridge.effectType==='function'){
+                var found=AD5.phaseBridge.effectType(raw);
+                if(found&&['лечение','временное хп','атака'].indexOf(found)<0)return found;
+            }
+        }catch(ignore){}
+        return null;
+    }
+    function parseResistanceItem(item){
+        item=String(item||'').trim();
+        if(!item)return null;
+        var percent=50,typeText=item,m=/^(.+?)(?:\s*[:=]\s*|\s+)(\d+(?:[.,]\d+)?)\s*%?\s*$/.exec(item);
+        if(m){
+            typeText=String(m[1]||'').trim();
+            percent=Number(String(m[2]).replace(',','.'));
+        }
+        var type=areaDamageType(typeText);
+        if(!type)throw new Error('СОПР: неизвестный тип урона «'+typeText+'».');
+        if(!Number.isFinite(percent)||percent<=0||percent>100)throw new Error('СОПР '+type+': процент должен быть больше 0 и не больше 100.');
+        return {type:type,percent:percent};
+    }
+    function parseImmunityItem(item){
+        item=String(item||'').trim();if(!item)return null;
+        var type=areaDamageType(item);
+        if(!type)throw new Error('ИММ: неизвестный тип урона «'+item+'».');
+        return type;
+    }
+    function parseAreaDamageDefense(value){
+        var scan=defenseDirectiveMarks(value),out={resistances:{},immunities:{},source:''},found=false;
+        scan.marks.forEach(function(mark,i){
+            if(mark.kind==='other')return;
+            var end=i+1<scan.marks.length?scan.marks[i+1].start:scan.text.length;
+            var body=String(scan.text.slice(mark.bodyStart,end)||'').replace(/^[\s,]+|[\s,]+$/g,'').trim();
+            if(!body)return;
+            if(mark.kind==='resistance'){
+                body.split(/,+/).forEach(function(item){
+                    var parsed=parseResistanceItem(item);if(!parsed)return;
+                    out.resistances[parsed.type]=Math.max(Number(out.resistances[parsed.type]||0),parsed.percent);
+                    found=true;
+                });
+            }else{
+                body.split(/,+/).forEach(function(item){
+                    var type=parseImmunityItem(item);if(!type)return;
+                    out.immunities[type]=true;found=true;
+                });
+            }
+        });
+        if(found)out.source=scan.text;
+        return out;
+    }
+    function hasAreaDamageDefense(value){
+        var d=parseAreaDamageDefense(value);
+        return !!(Object.keys(d.resistances).length||Object.keys(d.immunities).length);
+    }
+    function stripAreaDamageDefenseDirectives(value){
+        var scan=defenseDirectiveMarks(value),ranges=[];
+        scan.marks.forEach(function(mark,i){
+            if(mark.kind==='other')return;
+            ranges.push({
+                start:mark.start,
+                end:i+1<scan.marks.length?scan.marks[i+1].start:scan.text.length
+            });
+        });
+        if(!ranges.length)return scan.text;
+        var out='',cursor=0;
+        ranges.forEach(function(r){
+            out+=scan.text.slice(cursor,r.start);
+            cursor=r.end;
+        });
+        out+=scan.text.slice(cursor);
+        return out.replace(/[ \t]+/g,' ').replace(/\n\s*\n+/g,'\n').trim();
+    }
+    function damageDefenseLabel(defense){
+        defense=defense||{};var parts=[];
+        var r=Object.keys(defense.resistances||{}).sort().map(function(type){
+            return (type==='*'?'весь урон':type)+' '+Number(defense.resistances[type])+'%';
+        });
+        var im=Object.keys(defense.immunities||{}).sort().map(function(type){return type==='*'?'весь урон':type;});
+        if(r.length)parts.push('СОПР: '+r.join(', '));
+        if(im.length)parts.push('ИММ: '+im.join(', '));
+        return parts.join('; ');
+    }
+    function damageDefenseTargetAllowed(rec,token){
+        if(!rec||!token)return false;
+        if(rec.targetMode&&rec.targetMode!=='default'&&typeof AD5Sides!=='undefined'&&AD5Sides&&typeof AD5Sides.targetAllowed==='function'){
+            return AD5Sides.targetAllowed({
+                actor:rec.snapshot&&rec.snapshot.actor||'',
+                sourceToken:rec.source||rec.snapshot&&rec.snapshot.sourceToken||'',
+                targetMode:rec.targetMode
+            },token,rec.targetMode);
+        }
+        return true;
+    }
+    function damageDefenseForToken(tokenOrId){
+        var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;
+        var out={resistances:{},immunities:{},sources:[]};
+        if(!token||token.get('_subtype')!=='token')return out;
+        var page=String(token.get('_pageid')||'');
+        persistentAreas(page).forEach(function(rec){
+            var defense=rec&&rec.damageDefense;
+            if(!defense||(!Object.keys(defense.resistances||{}).length&&!Object.keys(defense.immunities||{}).length))return;
+            var path=getAreaPath(rec.id,rec);if(!path)return;
+            try{
+                if(!contains(rec,path,token)||!damageDefenseTargetAllowed(rec,token))return;
+            }catch(ignoreContains){return;}
+            Object.keys(defense.resistances||{}).forEach(function(type){
+                out.resistances[type]=Math.max(Number(out.resistances[type]||0),Number(defense.resistances[type]||0));
+            });
+            Object.keys(defense.immunities||{}).forEach(function(type){if(defense.immunities[type])out.immunities[type]=true;});
+            out.sources.push({
+                id:rec.id,
+                name:String(rec.name||'Область'),
+                kind:rec.kind==='aura'?'aura':'area',
+                resistances:JSON.parse(JSON.stringify(defense.resistances||{})),
+                immunities:JSON.parse(JSON.stringify(defense.immunities||{}))
+            });
+        });
+        return out;
+    }
+
+    var DIFFICULT_TERRAIN_MARKER='106-move-impaired';
+    function difficultTerrain(q){
+        // The terrain flag may be written in the AD5 description, target/range,
+        // or as "ПАСС: труднопроходимая местность".
+        var parts=[
+            q&&q.description,
+            q&&q.areaSpec&&q.areaSpec.raw,
+            q&&q.f&&q.f.range,
+            q&&q.f&&q.f.target,
+            q&&q.f&&q.f.desc
+        ];
+        var text=decodeText(parts.filter(Boolean).join(' '))
+            .replace(/[.·•]+/g,' ')
+            .replace(/\s+/g,' ')
+            .trim();
+        return /(?:труднопроходим(?:ая|ой|ую)\s+местност(?:ь|и)|трд\.?\s*мст\.?)/.test(text);
+    }
+    function terrainEffectLabel(value){
+        var n=normalizeUserText(value).replace(/[.,;:!?]+$/,'').trim();
+        return /^(?:труднопроходим(?:ая|ой|ую)\s+местност(?:ь|и)|трд\.?\s*мст\.?)$/.test(n);
+    }
+    function stripTerrainPassiveRule(rules){
+        if(!rules||!rules.passive)return rules;
+        var p=rules.passive;
+        if(p.v2&&p.direct){
+            p.direct.effects=(p.direct.effects||[]).filter(function(x){return !terrainEffectLabel(x);});
+            var empty=!(p.direct.refs||[]).length&&!(p.direct.extra||[]).length&&!(p.direct.effects||[]).length&&Number(p.direct.multiplier==null?1:p.direct.multiplier)===1;
+            if(empty)rules.passive=null;
+        }else if(terrainEffectLabel(p.raw||p.description||'')){
+            rules.passive=null;
+        }
+        rules.persistent=!!(rules.entry||rules.exit||rules.areaStart||rules.areaEnd||rules.passive||rules.turn||rules.sourceStart||rules.sourceEnd||rules.targetEnd||rules.end||rules.move||rules.recovery);
+        return rules;
+    }
+
+    // Roll20 custom markers must be written to statusmarkers using the campaign-
+    // specific tag (for example "106-move-impaired::123456"), not display name.
+    function terrainMarkerCatalog(){
+        var raw='[]',list=[];
+        try{raw=Campaign().get('token_markers')||Campaign().get('_token_markers')||'[]';list=JSON.parse(raw)||[];}catch(ignoreMarkerCatalog){list=[];}
+        return Array.isArray(list)?list:[];
+    }
+    function terrainMarkerBase(value){return String(value||'').replace(/@\d+$/,'');}
+    function terrainTokenMarkers(token){return String(token&&token.get&&token.get('statusmarkers')||'').split(',').map(function(x){return x.trim();}).filter(Boolean);}
+    function terrainMarkerRecord(){
+        var wanted=DIFFICULT_TERRAIN_MARKER.toLowerCase(),found=null;
+        terrainMarkerCatalog().some(function(m){
+            var name=String(m&&m.name||'').trim().toLowerCase(),tag=String(m&&m.tag||'').trim(),base=tag.split('::')[0].toLowerCase();
+            if(name===wanted||base===wanted||tag.toLowerCase()===wanted){found=m;return true;}
+            return false;
+        });
+        return found;
+    }
+    function terrainMarkerTag(){var rec=terrainMarkerRecord();return rec&&String(rec.tag||'').trim()?String(rec.tag).trim():null;}
+    function terrainMarkerAliases(){
+        var out={},wanted=DIFFICULT_TERRAIN_MARKER.toLowerCase(),tag=terrainMarkerTag();
+        out[wanted]=true;
+        if(tag)out[String(tag).toLowerCase()]=true;
+        return out;
+    }
+    function hasTerrainMarker(token){
+        var aliases=terrainMarkerAliases();
+        return terrainTokenMarkers(token).some(function(x){return !!aliases[terrainMarkerBase(x).toLowerCase()];});
+    }
+    function setTerrainMarker(token,on){
+        if(!token||token.get('_subtype')!=='token')return {ok:false,error:'token'};
+
+
+        var tag=terrainMarkerTag(),aliases=terrainMarkerAliases(),parts=terrainTokenMarkers(token),next=[],found=false;
+        parts.forEach(function(x){
+            if(aliases[terrainMarkerBase(x).toLowerCase()]){
+                if(on&&!found&&tag){next.push(tag);found=true;}
+                return;
+            }
+            next.push(x);
+        });
+        if(on&&!tag){
+            if(!root().terrainMarkerWarning){
+                root().terrainMarkerWarning=true;
+                log('AD5 Areas '+VERSION+': custom marker "'+DIFFICULT_TERRAIN_MARKER+'" not found in Campaign token_markers.');
+                sendChat('Области','/w gm <b>AD5 Areas:</b> не найден маркер <code>'+DIFFICULT_TERRAIN_MARKER+'</code>. Труднопроходимые области работают, но маркер токена не будет отображаться.',null,{noarchive:true});
+            }
+            return {ok:false,error:'missing-marker'};
+        }
+        if(on&&!found)next.push(tag);
+        var value=next.join(',');
+        if(value!==String(token.get('statusmarkers')||''))token.set('statusmarkers',value);
+        return {ok:true,active:!!on,tag:tag||''};
+    }
+    function terrainAreaClaims(token){
+        if(!token)return [];
+        var page=token.get('_pageid');
+        return persistentAreas(page).filter(function(rec){
+            if(!rec||!rec.terrain)return false;
+            var path=getAreaPath(rec.id,rec);if(!path)return false;
+            try{
+                if(!contains(rec,path,token))return false;
+                if(rec.targetMode&&rec.targetMode!=='default'&&typeof AD5Sides!=='undefined'&&AD5Sides&&typeof AD5Sides.targetAllowed==='function'){
+                    return AD5Sides.targetAllowed({
+                        actor:rec.snapshot&&rec.snapshot.actor||'',
+                        sourceToken:rec.source||rec.snapshot&&rec.snapshot.sourceToken||'',
+                        targetMode:rec.targetMode
+                    },token,rec.targetMode);
+                }
+                return true;
+            }catch(ignoreContains){return false;}
+        }).map(function(rec){return rec.id;});
+    }
+    function reconcileTerrainMarker(token){
+        if(!token||!combatToken(token,token.get('_pageid')))return false;
+        var claims=terrainAreaClaims(token),store=root().terrainMarkers,entry=store[token.id]||null,active=claims.length>0;
+        if(active){
+            var already=hasTerrainMarker(token);
+            if(!entry)entry=store[token.id]={managed:!already,areas:[]};
+            entry.areas=claims.slice();
+            if(!already){
+                var added=setTerrainMarker(token,true);
+                if(added.ok)entry.managed=true;
+            }
+            return true;
+        }
+        if(entry){
+            if(entry.managed&&hasTerrainMarker(token))setTerrainMarker(token,false);
+            delete store[token.id];
+        }
+        return false;
+    }
+    function reconcileTerrainPage(pageId){
+        if(!pageId)return 0;
+        var count=0;
+        findObjs({_type:'graphic',_subtype:'token',_pageid:pageId,layer:'objects'}).filter(function(t){return combatToken(t,pageId);}).forEach(function(t){
+            if(reconcileTerrainMarker(t))count++;
+        });
+        return count;
+    }
+
+    function descriptionText(s){
+        return String(s||'')
+            .replace(/<br\s*\/?\s*>/gi,' ')
+            .replace(/<\/p\s*>/gi,' ')
+            .replace(/<[^>]*>/g,' ')
+            .replace(/&nbsp;|&#160;/gi,' ')
+            .replace(/&quot;/gi,'"').replace(/&amp;/gi,'&')
+            .replace(/\s+/g,' ')
+            .trim();
+    }
+    function cleanPhaseDescription(body){
+        return String(body||'')
+            .replace(/(?:^|[\s,;])урон\s*\d{1,3}(?=$|[\s,;.!?])/gi,' ')
+            .replace(/\s*,\s*,+/g,', ')
+            .replace(/^[\s,;:.—–-]+|[\s,;:—–-]+$/g,'')
+            .replace(/\s+/g,' ')
+            .trim();
+    }
+    function phaseRule(body){
+        body=String(body||'').trim();
+        if(!body)return null;
+        var refs=[],seen={},m,re=/урон\s*(\d{1,3})/gi;
+        while((m=re.exec(body))){
+            var n=Number(m[1]);
+            if(Number.isSafeInteger(n)&&n>=1&&n<=999&&!seen[n]){seen[n]=true;refs.push(n);}
+        }
+        refs.sort(function(a,b){return a-b;});
+        var description=cleanPhaseDescription(body);
+        if(!refs.length&&!description)return null;
+        return {refs:refs,description:description,raw:body};
+    }
+    function movementRule(body){
+        body=String(body||'').replace(/^[\s,;:.—–-]+|[\s,;:.—–-]+$/g,'').trim();
+        if(!body)return null;
+        // Formula first; optional explicit damage type may follow it.
+        // Examples: "1д4", "2d6 + 3", "1д4 колющий".
+        var m=/^([0-9dDдД+*\/().\s-]*\d[0-9dDдД+*\/().\s-]*?)(?:\s+([A-Za-zА-Яа-яЁё]+(?:\s+[A-Za-zА-Яа-яЁё]+)*))?\s*$/u.exec(body);
+        if(!m)return null;
+        var formula=String(m[1]||'').trim(),damageType=String(m[2]||'').trim();
+        if(!formula||!/^[0-9dDдД+*\/().\s-]+$/.test(formula))return null;
+        return {formula:formula,damageType:damageType||null,raw:body};
+    }
+    function parsePersistentRules(description){
+        var phaseDescription=stripAreaDamageDefenseDirectives(description);
+        if(typeof AD5Phases!=='undefined'&&AD5Phases.has(phaseDescription))return stripTerrainPassiveRule(AD5Phases.parse(phaseDescription));
+        var text=descriptionText(phaseDescription),marks=[],re=/(^|[\s,;.])((?:каст)|(?:при\s+входе)|(?:каждый\s+ход)|(?:пасс)|(?:мув))\s*[:：—–-]\s*/ig,m;
+        while((m=re.exec(text))){
+            var label=normalizeUserText(m[2]),kind=label==='каст'?'cast':(/при\s+входе/i.test(m[2])?'entry':(/каждый\s+ход/i.test(m[2])?'turn':(label==='пасс'?'passive':'move')));
+            marks.push({kind:kind,start:m.index+(m[1]||'').length,bodyStart:re.lastIndex});
+        }
+        var out={cast:null,entry:null,passive:null,turn:null,move:null,persistent:false,source:text};
+        marks.forEach(function(mark,i){
+            var end=i+1<marks.length?marks[i+1].start:text.length;
+            var body=text.slice(mark.bodyStart,end),rule=mark.kind==='move'?movementRule(body):phaseRule(body);
+            if(rule)out[mark.kind]=rule;
+        });
+        out.persistent=!!(out.entry||out.passive||out.turn||out.move);
+        return stripTerrainPassiveRule(out);
+    }
+    function phaseLabel(key){if(key==='exit')return 'ВЫХОД';if(key==='areaStart')return 'ОБЛН';if(key==='areaEnd')return 'ОБЛК';if(key==='passive')return 'ПАСС';return key==='cast'?'Каст':(key==='entry'?'При входе':(key==='move'?'МУВ':'Каждый ход'));}
+    function validatePersistentRules(snapshot,rules){
+        if(rules.phased&&typeof AD5Phases!=='undefined')AD5Phases.validate(snapshot,rules);
+        ['cast','entry','exit','areaStart','areaEnd','turn','sourceStart','sourceEnd','targetEnd','end'].forEach(function(key){
+            var phase=rules[key];if(!phase)return;
+            (phase.refs||[]).forEach(function(index){
+                if(!snapshot.components||!snapshot.components[String(index)])
+                    throw new Error(phaseLabel(key)+': в карточке нет активного Урон'+index+' с определённым типом.');
+            });
+        });
+        if(rules.passive){
+            if(typeof AD5Phases==='undefined'||!rules.passive.v2)throw new Error('ПАСС требует AD5 Phases 1.1.0 или новее.');
+            var pass=rules.passive.direct;
+            if(rules.passive.branches||!pass||(pass.refs||[]).length||(pass.extra||[]).length)
+                throw new Error('ПАСС принимает только пассивные модификаторы без УСП/ПРВ и без урона.');
+            var passText=(pass.effects||[]).join(', ').trim();
+            if(!passText)throw new Error('ПАСС: укажите модификаторы, например «+2 КД, +2 Атака, +2 Урон».');
+            if(typeof AD5EffectTurns==='undefined'||!AD5EffectTurns||typeof AD5EffectTurns.applyPassive!=='function'||typeof AD5EffectTurns.removePassiveByScopeToken!=='function')
+                throw new Error('ПАСС требует AD5 Effect Turns 1.2.1 или новее.');
+            if(typeof AD5EffectTurns.validatePassive==='function')AD5EffectTurns.validatePassive(passText);
+        }
+        if(rules.move)rules.move=movementAreaApi().prepareMovement(snapshot,rules.move);
+    }
+    // ---------- Non-stacking identical persistent areas (2.23.3) ----------
+    // Two areas are considered the same EFFECT when their lifecycle mechanics are
+    // the same after numeric strength is removed: same phase set, damage/effect
+    // types, conditions/effect text, save ability, movement damage type, etc.
+    // Geometry and caster identity are deliberately NOT part of the key, so a PC
+    // and an NPC can create two copies of the same effect and their overlap behaves
+    // as one logical union. Numeric values (2d6 vs 3d6, +2 vs +3, DC 14 vs 16)
+    // affect potency, not identity.
+    var STACK_PHASE_KEYS=['cast','entry','exit','areaStart','areaEnd','turn','sourceStart','sourceEnd','targetEnd','end','passive','move'];
+    function stackSemanticText(value){
+        return normalizeUserText(value||'')
+            .replace(/\b\d+\s*[dд]\s*\d+(?:\s*[+\-]\s*\d+)?\b/gi,'#d#')
+            .replace(/[+\-]?\d+(?:[.,]\d+)?/g,'#')
+            .replace(/\s+/g,' ').trim();
+    }
+    function stackComponentType(rec,index){
+        var c=rec&&rec.snapshot&&rec.snapshot.components&&rec.snapshot.components[String(index)];
+        return normalizeUserText(c&&c.type||'');
+    }
+    function stackBranchSignature(rec,b){
+        if(!b)return '';
+        var refs=(b.refs||[]).map(function(i){return stackComponentType(rec,i);}).filter(Boolean).sort();
+        var extra=(b.extra||[]).map(function(c){return normalizeUserText(c&&c.type||'');}).filter(Boolean).sort();
+        var effects=(b.effects||[]).map(stackSemanticText).filter(Boolean).sort();
+        return 'r['+refs.join(',')+']x['+extra.join(',')+']e['+effects.join(',')+']';
+    }
+    function stackPhaseSignature(rec,phase,key){
+        if(!phase)return '';
+        if(key==='move')return 'move:'+normalizeUserText(phase.damageType||'');
+        if(phase.v2){
+            var branches=phase.branches?
+                ('s{'+stackBranchSignature(rec,phase.branches.success)+'}f{'+stackBranchSignature(rec,phase.branches.failure)+'}'):
+                ('d{'+stackBranchSignature(rec,phase.direct)+'}');
+            return (phase.condition?'if['+stackSemanticText(phase.condition)+']':'')+branches;
+        }
+        var types=(phase.refs||[]).map(function(i){return stackComponentType(rec,i);}).filter(Boolean).sort();
+        return 'r['+types.join(',')+']d['+stackSemanticText(phase.description||'')+']';
+    }
+    function areaStackKey(rec){
+        if(!rec)return '';
+        var rules=rec.rules||{},parts=[];
+        STACK_PHASE_KEYS.forEach(function(key){if(rules[key])parts.push(key+'='+stackPhaseSignature(rec,rules[key],key));});
+        var save=rec.snapshot&&rec.snapshot.save?normalizeUserText(rec.snapshot.save.ability||''):'';
+        var env=environmentType(rec)||'';
+        var terrain=rec.terrain?'terrain':'';
+        // Do not include spell/ability name, caster, DC, dice count or area geometry.
+        // This makes mechanically identical effects merge even when sourced by
+        // different sheets, while different conditions/types/phases stay separate.
+        return 'v1|'+parts.join('|')+'|save='+save+'|env='+env+'|'+terrain+'|cover='+(rec.ignoreCover?'ignore':'normal');
+    }
+    function sameAreaStack(a,b){return !!a&&!!b&&areaStackKey(a)===areaStackKey(b);}
+    function stackPeers(rec){
+        if(!rec)return [];
+        var key=areaStackKey(rec);
+        return persistentAreas(rec.page).filter(function(x){return x&&areaStackKey(x)===key;});
+    }
+    function stackPhaseKey(rec,phase,label){
+        if(rec&&rec.rules){
+            for(var i=0;i<STACK_PHASE_KEYS.length;i++){var k=STACK_PHASE_KEYS[i];if(rec.rules[k]===phase)return k;}
+        }
+        var n=normalizeUserText(label||'');
+        var map={'каст':'cast','при входе':'entry','вход':'entry','выход':'exit','облн':'areaStart','облк':'areaEnd','начт':'turn','начк':'sourceStart','начи':'sourceStart','кнцт':'targetEnd','конт':'targetEnd','кнци':'sourceEnd','кони':'sourceEnd','окон':'end','пасс':'passive','мув':'move'};
+        return map[n]||'';
+    }
+    function stackFormulaValue(expression,fallback,mode){
+        var s=String(expression==null?'':expression).replace(/[дД]/g,'d').replace(/\s+/g,'');
+        var pos=0,failed=false;
+        function fail(){failed=true;throw new Error('formula');}
+        function peek(){return s.charAt(pos);}
+        function number(){var m=/^(?:\d+(?:\.\d+)?|\.\d+)/.exec(s.slice(pos));if(!m)fail();pos+=m[0].length;return Number(m[0]);}
+        function dice(){var m=/^(\d*)d(\d+)/i.exec(s.slice(pos));if(!m)return null;pos+=m[0].length;var n=Number(m[1]||1),d=Number(m[2]);if(!Number.isFinite(n)||!Number.isFinite(d)||n<0||d<=0)fail();return mode==='max'?n*d:n*(d+1)/2;}
+        function primary(){
+            if(peek()==='('){pos++;var v=add();if(peek()!==')')fail();pos++;return v;}
+            var rest=s.slice(pos),fm=/^(floor|ceil|round|abs)\(/i.exec(rest);
+            if(fm){var fn=fm[1].toLowerCase();pos+=fm[0].length;var x=add();if(peek()!==')')fail();pos++;return fn==='floor'?Math.floor(x):fn==='ceil'?Math.ceil(x):fn==='round'?Math.round(x):Math.abs(x);}
+            var d=dice();if(d!==null)return d;return number();
+        }
+        function unary(){if(peek()==='+'){pos++;return unary();}if(peek()==='-'){pos++;return -unary();}return primary();}
+        function mul(){var v=unary();while(peek()==='*'||peek()==='/'){var op=s.charAt(pos++),r=unary();v=op==='*'?v*r:v/r;}return v;}
+        function add(){var v=mul();while(peek()==='+'||peek()==='-'){var op=s.charAt(pos++),r=mul();v=op==='+'?v+r:v-r;}return v;}
+        try{if(!s)fail();var out=add();if(pos!==s.length||!Number.isFinite(out))fail();return Math.max(0,out);}catch(ignore){return Math.max(0,Number(fallback)||0);}
+    }
+    function stackComponentPower(comp){
+        if(!comp)return {avg:0,max:0};
+        return {avg:stackFormulaValue(comp.expression,comp.fallback,'avg'),max:stackFormulaValue(comp.expression,comp.fallback,'max')};
+    }
+    function stackBranchPower(rec,b){
+        var avg=0,max=0;
+        if(!b)return {avg:0,max:0};
+        (b.refs||[]).forEach(function(i){var c=rec.snapshot&&rec.snapshot.components&&rec.snapshot.components[String(i)],p=stackComponentPower(c);avg+=p.avg;max+=p.max;});
+        (b.extra||[]).forEach(function(c){var p=stackComponentPower({expression:c&&c.expression,fallback:0});avg+=p.avg;max+=p.max;});
+        // Non-damage numerical effects (+КД, +Атака, counters, etc.) are used only
+        // as a tie breaker when damage is equal/absent.
+        var effectScore=0;(b.effects||[]).forEach(function(x){var m=String(x||'').match(/[+\-]?\d+(?:[.,]\d+)?/g)||[];m.forEach(function(n){effectScore+=Math.abs(Number(String(n).replace(',','.'))||0);});});
+        var mult=Number(b.multiplier);if(Number.isFinite(mult)&&mult>0){avg*=mult;max*=mult;}
+        return {avg:avg,max:max,effect:effectScore};
+    }
+    function stackPhasePower(rec,key){
+        var rule=rec&&rec.rules&&rec.rules[key],best={avg:0,max:0,effect:0,dc:Number(rec&&rec.snapshot&&rec.snapshot.save&&rec.snapshot.save.dc)||0};
+        if(!rule)return best;
+        if(key==='move'){
+            best.avg=stackFormulaValue(rule.formula,0,'avg');best.max=stackFormulaValue(rule.formula,0,'max');return best;
+        }
+        var branches=[];
+        if(rule.v2){if(rule.branches)branches=[rule.branches.success,rule.branches.failure];else if(rule.direct)branches=[rule.direct];}
+        else branches=[rule];
+        branches.filter(Boolean).forEach(function(b){
+            var p=stackBranchPower(rec,b);
+            if(p.avg>best.avg+1e-9||(Math.abs(p.avg-best.avg)<1e-9&&p.max>best.max+1e-9)||(Math.abs(p.avg-best.avg)<1e-9&&Math.abs(p.max-best.max)<1e-9&&p.effect>best.effect))best={avg:p.avg,max:p.max,effect:p.effect,dc:best.dc};
+        });
+        return best;
+    }
+    function compareStackPower(a,b){
+        a=a||{};b=b||{};
+        var keys=['avg','max','effect','dc'];for(var i=0;i<keys.length;i++){var k=keys[i],d=(Number(a[k])||0)-(Number(b[k])||0);if(Math.abs(d)>1e-9)return d;}
+        return 0;
+    }
+    function stackContains(rec,token){var path=rec&&getAreaPath(rec.id,rec);return !!(path&&token&&contains(rec,path,token));}
+    function stackOccupiedByOther(rec,tokenId){
+        return stackPeers(rec).some(function(x){return x.id!==rec.id&&x.occupancy&&x.occupancy[String(tokenId)]===true;});
+    }
+    function stackCandidateAllowed(rec,key,token){
+        if(!rec||!rec.rules||!rec.rules[key]||!token)return false;
+        var phase=rec.rules[key];
+        if(key==='passive'){
+            try{
+                var txt=passiveText(rec.rules);
+                if(typeof AD5Sides!=='undefined'&&AD5Sides&&typeof AD5Sides.passiveText==='function')txt=AD5Sides.passiveText(txt,rec.snapshot||{sourceToken:rec.source},token);
+                if(!txt)return false;
+            }catch(ignorePassiveSide){}
+        }
+        if(key!=='passive'&&key!=='move'){
+            try{var protectedPhase=concentrationAuraOwnerProtection(rec,phase,token);if(protectedPhase.skip)return false;phase=protectedPhase.phase;}catch(ignoreOwner){}
+            try{if(rec.snapshot&&rec.snapshot.areaEffect&&typeof AD5Sides!=='undefined'&&AD5Sides&&typeof AD5Sides.filterPhase==='function'&&!AD5Sides.filterPhase(rec.snapshot,phase,token))return false;}catch(ignoreSide){}
+        }
+        if(!rec.ignoreCover&&rec.kind!=='aura'){
+            try{var exposure=areaExposureForToken(rec,getAreaPath(rec.id,rec),token);if(!rec.coverageFrozen&&exposure&&exposure.blocked)return false;}catch(ignoreCover){}
+        }
+        return true;
+    }
+    function strongestStackArea(rec,key,token,options){
+        options=options||{};var candidates=stackPeers(rec).filter(function(x){
+            if(!x.rules||!x.rules[key])return false;
+            if(options.inside!==false&&!stackContains(x,token))return false;
+            return stackCandidateAllowed(x,key,token);
+        });
+        if(!candidates.length)return null;
+        candidates.sort(function(a,b){
+            var d=compareStackPower(stackPhasePower(b,key),stackPhasePower(a,key));
+            if(d)return d;
+            // Stable tie: the older area owns an equal-strength overlap.
+            var ca=Number(a.created)||0,cb=Number(b.created)||0;if(ca!==cb)return ca-cb;
+            return String(a.id).localeCompare(String(b.id));
+        });
+        return candidates[0];
+    }
+    function triggerStackBoundary(rec,key,token,label,context){
+        var best=strongestStackArea(rec,key,token,{inside:key!=='exit'});
+        if(!best&&key==='exit')best=strongestStackArea(rec,key,token,{inside:false});
+        if(!best)return false;
+        context=context&&typeof context==='object'?context:{};context.stackResolved=true;context.stackKey=areaStackKey(best);
+        return triggerPersistent(best,best.rules[key],token,label,context);
+    }
+    function reconcileStackPassiveByKey(key,page,token){
+        if(!key||!token)return 0;
+        var peers=persistentAreas(page).filter(function(x){return areaStackKey(x)===key&&x.rules&&x.rules.passive;}),best=null;
+        peers.forEach(function(x){
+            x.stackPassive=x.stackPassive&&typeof x.stackPassive==='object'?x.stackPassive:{};
+            if(x.occupancy&&x.occupancy[token.id]===true&&stackCandidateAllowed(x,'passive',token)){
+                if(!best||compareStackPower(stackPhasePower(x,'passive'),stackPhasePower(best,'passive'))>0||
+                    (compareStackPower(stackPhasePower(x,'passive'),stackPhasePower(best,'passive'))===0&&(Number(x.created)||0)<(Number(best.created)||0)))best=x;
+            }
+        });
+        peers.forEach(function(x){
+            if(x===best)return;
+            if(x.stackPassive[token.id]){try{removePassive(x,token);}catch(ignore){}delete x.stackPassive[token.id];}
+        });
+        if(best&&!best.stackPassive[token.id]){var count=applyPassive(best,token);best.stackPassive[token.id]=true;return count;}
+        return 0;
+    }
+    function reconcileStackPassive(rec,token){return reconcileStackPassiveByKey(areaStackKey(rec),rec.page,token);}
+    function passiveText(rules){
+        var p=rules&&rules.passive&&rules.passive.direct;
+        return p&&Array.isArray(p.effects)?p.effects.join(', ').trim():'';
+    }
+    function passiveSourceContext(rec,token){
+        var snap=rec&&rec.snapshot||{};
+        return {
+            ownerPid:rec.owner||snap.owner||null,
+            actor:snap.actor||null,
+            actorName:snap.actorName||'',
+            sourceToken:snap.sourceToken||rec.source||null,
+            concentrationId:rec.concentrationId||snap.concentrationId||null,
+            // The concentration owner may receive only positive ПАСС combat
+            // buffs (+КД, +Атака, +Урон, +СТАТ) from its own aura.
+            concentrationAuraOwner:!!(token&&isConcentrationAuraOwner(rec,token))
+        };
+    }
+    function applyPassive(rec,token){
+        if(!rec||!rec.rules||!rec.rules.passive||!token)return 0;
+        var txt=passiveText(rec.rules);if(!txt)return 0;
+        if(typeof AD5Sides!=='undefined')txt=AD5Sides.passiveText(txt,rec.snapshot||{sourceToken:rec.source},token);
+        if(!txt){removePassive(rec,token);return 0;}
+        var plan=AD5EffectTurns.applyPassive(token,rec.id,txt,passiveSourceContext(rec,token));
+        rec.affected=rec.affected||{};rec.affected[token.id]=true;
+        return plan&&plan.applied?plan.applied.length:0;
+    }
+    function removePassive(rec,token){
+        if(!rec||!rec.rules||!rec.rules.passive||!token||typeof AD5EffectTurns==='undefined'||!AD5EffectTurns.removePassiveByScopeToken)return 0;
+        var r=AD5EffectTurns.removePassiveByScopeToken(token.id,rec.id);return Number(r&&r.effects)||0;
+    }
+    function purgeConcentrationAuraOwnerScopedEffects(rec,token){
+        if(!rec||!token||!isConcentrationAuraOwner(rec,token))return 0;
+        if(typeof AD5EffectTurns==='undefined'||!AD5EffectTurns||typeof AD5EffectTurns.removeNonPassiveByScopeToken!=='function')return 0;
+        var r=AD5EffectTurns.removeNonPassiveByScopeToken(token.id,rec.id);
+        return Number(r&&r.effects)||0;
+    }
+    function membershipKnown(rec,tokenId){return !!(rec&&rec.occupancy&&Object.prototype.hasOwnProperty.call(rec.occupancy,tokenId));}
+    function setMembership(rec,token,inside,force){
+        if(!rec||!token)return;
+        rec.occupancy=rec.occupancy&&typeof rec.occupancy==='object'?rec.occupancy:{};
+        var known=membershipKnown(rec,token.id),before=known?!!rec.occupancy[token.id]:false;
+        inside=!!inside;
+        if(inside&&isConcentrationAuraOwner(rec,token)){
+            try{purgeConcentrationAuraOwnerScopedEffects(rec,token);}
+            catch(e){tell(rec.owner,'<b>'+escape(rec.name)+'</b> · защита владельца ауры: '+escape(e.message||e));}
+        }
+        rec.occupancy[token.id]=inside;
+        // ПАСС of identical overlapping areas is a single logical layer. Reconcile
+        // after local occupancy is updated so moving between two copies does not
+        // temporarily stack or drop the effect.
+        if(rec.rules&&rec.rules.passive&&(force||!known||before!==inside)){
+            try{reconcileStackPassive(rec,token);}
+            catch(e){tell(rec.owner,'<b>'+escape(rec.name)+'</b> · ПАСС: '+escape(e.message||e));}
+        }
+        if(rec.terrain&&(force||!known||before!==inside)){
+            try{reconcileTerrainMarker(token);}
+            catch(e){tell(rec.owner,'<b>'+escape(rec.name)+'</b> · труднопроходимая местность: '+escape(e.message||e));}
+        }
+    }
+    function seedMembership(rec,path){
+        if(!rec||!path)return 0;
+        rec.occupancy={};var count=0;
+        findObjs({_type:'graphic',_subtype:'token',_pageid:rec.page,layer:'objects'}).filter(function(t){return combatToken(t,rec.page);}).forEach(function(t){
+            var inside=contains(rec,path,t);setMembership(rec,t,inside);if(inside)count++;
+        });
+        return count;
+    }
+    function boundaryAllowed(rec,moverId,targetId,kind,movementContext,signature){
+        rec.boundarySeen=rec.boundarySeen&&typeof rec.boundarySeen==='object'?rec.boundarySeen:{};
+        var txn=movementContext&&movementContext.movementTxn?String(movementContext.movementTxn):'',now=Date.now();
+        var key=(txn?'txn:'+txn:'move:'+String(signature||''))+'|'+String(moverId||'')+'|'+String(targetId||'')+'|'+String(kind||'');
+        if(rec.boundarySeen[key]&&now-rec.boundarySeen[key]<1500)return false;
+        rec.boundarySeen[key]=now;
+        var keys=Object.keys(rec.boundarySeen);
+        if(keys.length>400)keys.forEach(function(k){if(now-rec.boundarySeen[k]>5000)delete rec.boundarySeen[k];});
+        return true;
+    }
+    function processBoundaryEvents(rec,path,target,events,finalInside,mover,movementContext,signature){
+        if(!rec||!target)return;
+        rec.occupancy=rec.occupancy&&typeof rec.occupancy==='object'?rec.occupancy:{};
+        var known=membershipKnown(rec,target.id),state=known?!!rec.occupancy[target.id]:contains(rec,path,target);
+        function boundary(kind,suffix){
+            if(kind==='entry'){
+                if(state)return;
+                // Already inside another copy of the same effect => crossing this
+                // individual outline is NOT a new entry into the logical union.
+                var alreadyInUnion=stackOccupiedByOther(rec,target.id);
+                state=true;
+                if(!alreadyInUnion&&rec.rules.entry&&boundaryAllowed(rec,mover&&mover.id,target.id,kind,movementContext,signature+(suffix||'')))
+                    triggerStackBoundary(rec,'entry',target,'ВХОД',{boundaryEvent:true,movementTxn:movementContext?movementContext.movementTxn:null});
+            }else if(kind==='exit'){
+                if(!state)return;
+                state=false;
+                // If any identical copy still contains the token, the token has not
+                // exited the combined area. Only the last local exit fires ВЫХОД.
+                var remainsInUnion=stackOccupiedByOther(rec,target.id);
+                if(!remainsInUnion&&rec.rules.exit&&boundaryAllowed(rec,mover&&mover.id,target.id,kind,movementContext,signature+(suffix||'')))
+                    triggerStackBoundary(rec,'exit',target,'ВЫХОД',{boundaryEvent:true,movementTxn:movementContext?movementContext.movementTxn:null});
+            }
+        }
+        (events||[]).forEach(function(kind){boundary(kind,'');});
+        if(state!==!!finalInside)boundary(finalInside?'entry':'exit',':final');
+        setMembership(rec,target,!!finalInside);
+    }
+
+    function environmentType(rec){
+        var t=normalizeUserText(rec&&rec.environmentType||'').replace(/[\s_-]+/g,'');
+        if(t==='phys'||t==='физ'||t==='physical')return 'phys';
+        if(t==='zaslow'||t==='заслоу')return 'zaslow';
+        if(t==='zashigh'||t==='засхай')return 'zashigh';
+        if(t==='solid'||t==='солид')return 'solid';
+        return '';
+    }
+    function syncEnvironmentArea(rec,path){
+        if(!rec||rec.kind==='aura')return false;
+        var type=environmentType(rec);if(!type)return false;
+        path=path||getAreaPath(rec.id,rec);if(!path)return false;
+        try{
+            if(typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.registerExternalArea==='function'){
+                AD5Environment.registerExternalArea(path,Number(rec.zHeight)||5,type,{shape:rec.shape==='circle'?'circle':(rec.shape==='polygon'?'polygon':'square'),name:rec.name||'Область заклинания',source:'AD5 Areas',external:true});
+                return true;
+            }
+        }catch(ignoreEnvironment){}
+        return false;
+    }
+    function unsyncEnvironmentArea(rec){
+        if(!rec||rec.kind==='aura'||!environmentType(rec))return false;
+        try{if(typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.unregisterExternalArea==='function')return !!AD5Environment.unregisterExternalArea(rec.id);}catch(ignoreEnvironment){}
+        return false;
+    }
+    function stylePersistentPath(path){
+        if(!path)return;
+        path.set({layer:'objects',stroke:'#1e90ff',stroke_width:5,fill:'transparent',controlledby:''});
+        if(typeof toBack==='function')toBack(path);
+    }
+    function containsAt(a,path,left,top,elevation){
+        return containsGeometry(a,path,left,top,pathLeft(path),pathTop(path),a&&a.kind==='aura'?0:pathRotation(path))&&verticalContainsValue(a,elevation===undefined?0:elevation);
+    }
+    function persistentAreas(pageId){
+        var store=persistentDb(),out=[];
+        Object.keys(store).forEach(function(id){
+            var rec=store[id],controller=getAreaPath(id,rec);
+            if(!rec||!controller){delete store[id];return;}
+            if(rec.kind==='aura'){
+                rec.page=String(controller.get('_pageid')||rec.page||'');
+                syncAuraVisual(rec);
+            }
+            if(!pageId||rec.page===pageId)out.push(rec);
+        });
+        return out;
+    }
+    function castTargetsForArea(a,q,path){
+        var ids=collect(a,path,a.owner||q.owner||''),mode=(a&&a.targetMode)||spellTargetMode(q);
+        if(mode==='default')return ids;
+        return ids.filter(function(id){
+            var token=getObj('graphic',id);
+            return !!(token&&spellTargetAllowed(q,a,token,mode));
+        });
+    }
+    function triggerCastPhase(rec,a,q,path,ids){
+        if(!rec||!rec.rules||!rec.rules.cast)return 0;
+        ids=ids||castTargetsForArea(a,q,path);var count=0;
+        rec.castDispatched=rec.castDispatched||{};
+        ids.forEach(function(id){
+            var token=getObj('graphic',id);if(!token||rec.castDispatched[id])return;
+            rec.castDispatched[id]=true; // Claim before asynchronous saves/callbacks.
+            // Count only an effect that was really dispatched.  Older builds
+            // incremented the counter even when triggerPersistent skipped the
+            // target (for example the protected owner of a concentration aura)
+            // or rejected it, which hid failures behind a misleading KAST count.
+            if(triggerPersistent(rec,rec.rules.cast,token,'КАСТ'))count++;
+        });
+        return count;
+    }
+    function activatePersistent(a,q,path,pid,rules,duration){
+        var existing=persistentDb()[a.id];
+        if(existing)return existing; // A repeated Apply must not repeat КАСТ.
+        duration=Number(duration);
+        var indefinite=duration===-1;
+        if(!indefinite&&(!Number.isSafeInteger(duration)||duration<1||duration>999))throw new Error('Длительность области должна быть целым числом от 1 до 999 ходов.');
+        if(indefinite)duration=null;
+        if(a.source&&typeof api().setSource==='function')api().setSource(a.draft,pid,a.source);
+        if(a.reflectionSourceTokenId&&typeof api().setConditionSource==='function')api().setConditionSource(a.draft,pid,a.reflectionSourceTokenId);
+        var snapshot=areaApi().snapshot(a.draft,pid);
+        validatePersistentRules(snapshot,rules);
+        var damageDefense=parseAreaDamageDefense(q);
+        var rec={
+            id:a.id,pathType:a.pathType||pathObjectType(path),page:a.page,owner:pid,shape:a.shape,w:a.w,h:a.h,zHeight:Number(a.zHeight)||casterBaseHeightFeet(areaSourceToken(a)),autoHeight:!!a.autoHeight,heightSource:String(a.heightSource||''),volume:String(a.volume||''),environmentType:String(a.environmentType||(q.areaSpec&&q.areaSpec.environmentType)||''),ignoreCover:!!(a.ignoreCover||(q.areaSpec&&q.areaSpec.ignoreCover)),floorId:String(a.floorId||''),coveragePolygon:a.coveragePolygon?JSON.parse(JSON.stringify(a.coveragePolygon)):null,effectCenterOffset:a.effectCenterOffset?JSON.parse(JSON.stringify(a.effectCenterOffset)):null,effectOriginOffset:a.effectOriginOffset?JSON.parse(JSON.stringify(a.effectOriginOffset)):null,effectOriginElevation:Number.isFinite(Number(a.effectOriginElevation))?Number(a.effectOriginElevation):null,baseElevation:areaBaseElevation(a),coverageFrozen:!!a.coverageFrozen,source:a.source||null,
+            name:q.name||'Постоянная область',created:Date.now(),rules:rules,snapshot:snapshot,targetMode:spellTargetMode(q),
+            concentrationId:(snapshot&&snapshot.concentrationId)||q.concentrationId||null,
+            terrain:difficultTerrain(q),damageDefense:damageDefense,duration:duration,remaining:duration,moveProgress:{},affected:{},occupancy:{},boundarySeen:{}
+        };
+        if(rec.snapshot)rec.snapshot.targetMode=rec.targetMode;
+        persistentDb()[a.id]=rec;
+        stylePersistentPath(path);
+        syncEnvironmentArea(rec,path);
+        var passiveCount=seedMembership(rec,path);
+        delete db()[a.id];
+        try{api().cancel(a.draft,pid);}catch(ignore){}
+        var castIds=rules.cast?Object.keys(rec.occupancy).filter(function(id){return rec.occupancy[id];}):[],castCount=triggerCastPhase(rec,a,q,path,castIds);
+        var castNames=castIds.map(function(id){var t=getObj('graphic',id),c=t&&getObj('character',t.get('represents'));return String((t&&t.get('name'))||(c&&c.get('name'))||id);});
+        var modes=[];if(rules.cast)modes.push('каст');if(rules.entry)modes.push('ВХОД');if(rules.exit)modes.push('ВЫХОД');if(rules.passive)modes.push('ПАСС');if(rules.areaStart)modes.push('ОБЛН');if(rules.areaEnd)modes.push('ОБЛК');if(rules.turn)modes.push('НАЧТ');if(rules.move)modes.push('МУВ / каждые 5 фт');if(rec.terrain)modes.push('труднопроходимая местность');if(rec.damageDefense&&Object.keys(rec.damageDefense.resistances||{}).length)modes.push('СОПР');if(rec.damageDefense&&Object.keys(rec.damageDefense.immunities||{}).length)modes.push('ИММ');
+        var modeText=modes.length?modes.join(' + '):'без автоматического эффекта';
+        tell(pid,'<b>'+escape(rec.name)+'</b><br>Постоянная область активирована '+(indefinite?'бессрочно':'на <b>'+duration+'</b> ход(а/ов) заклинателя')+': <b>'+escape(modeText)+'</b>.'+
+            (rec.targetMode&&rec.targetMode!=='default'?'<br>Цели: <b>'+escape(spellTargetModeLabel(rec.targetMode))+'</b>.':'')+
+            (rules.cast?'<br>КАСТ: найдено существ внутри <b>'+castIds.length+'</b>, эффект запущен для <b>'+castCount+'</b>.'+(castNames.length?'<br>Цели КАСТ: '+escape(castNames.join(', '))+'.':''):'')+
+            (rules.passive?'<br>ПАСС активен у существ, находящихся внутри: <b>'+passiveCount+'</b>.':'')+
+            (rec.terrain?'<br>Труднопроходимая местность активна; токены внутри получают маркер <b>'+escape(DIFFICULT_TERRAIN_MARKER)+'</b>.':'')+
+            (rec.damageDefense&&(Object.keys(rec.damageDefense.resistances||{}).length||Object.keys(rec.damageDefense.immunities||{}).length)?'<br>Защита области: <b>'+escape(damageDefenseLabel(rec.damageDefense))+'</b>.':'')+
+            (environmentType(rec)?'<br>Окружение: <b>'+escape(environmentLabel(environmentType(rec)))+'</b> · высота <b>'+escape(rec.zHeight||5)+' фт</b>.':'')+
+            (indefinite?'<br>Область сохраняется до ручного удаления.':'<br>Счётчик уменьшается при каждом следующем ходе заклинателя в Turn Tracker.')+
+            (rec.concentrationId?'<br>При завершении концентрации область исчезнет.':'')+
+            (rules.entry?'<br>Уже находящиеся внутри токены не получают «ВХОД» до выхода и повторного входа.':'')+
+            '<br>Шаблон оставлен синим и перенесён под токены.');
+        return rec;
+    }
+    function activateAura(q,pid,targetId){
+        if(!q||!q.areaSpec||!q.areaSpec.aura)throw new Error('Способность не содержит ауру.');
+        var page=assertPartyPage(playerPageId(pid)),carrier=pageToken(targetId,page);
+        if(!combatToken(carrier,page))throw new Error('Носитель ауры должен быть боевым токеном персонажа или NPC с HP.');
+        var source=q.sourceToken?sourceToken(q,pid,q.sourceToken):sourceToken(q,pid,null);
+        if(!source)throw new Error('Не найден физический токен источника способности. Используйте способность заново и укажите токен источника.');
+        if(typeof api().setSource==='function')api().setSource(q.id,pid,source.id);
+        var radius=positive(q.areaSpec.size,'Радиус ауры'),pageObj=getObj('page',page);if(!pageObj)throw new Error('Карта ауры не найдена.');
+        var unit=positive(pageObj.get('scale_number')||5,'Масштаб страницы'),factor=70/unit,slot=chooseAuraSlot(carrier),previous=auraVisualSnapshot(carrier,slot);
+        var rules=parsePersistentRules(q.description),snapshot=areaApi().snapshot(q.id,pid);validatePersistentRules(snapshot,rules);
+        var damageDefense=parseAreaDamageDefense(q);
+        var duration=Number(q.areaSpec.duration),indefinite=duration===-1||!Number.isSafeInteger(duration)||duration<1;
+        if(indefinite)duration=null;else if(duration>999)throw new Error('Длительность ауры должна быть целым числом от 1 до 999 ходов.');
+        var rec={
+            id:'aura:'+Date.now().toString(36)+':'+(++resolutionSequence),kind:'aura',anchor:carrier.id,auraSlot:slot,auraPrevious:previous,radius:radius,
+            page:page,owner:pid,shape:auraShape(carrier,slot),w:2*radius*factor,h:2*radius*factor,zHeight:null,volume:'aura',source:source.id,
+            name:q.name||'Аура',created:Date.now(),rules:rules,snapshot:snapshot,targetMode:spellTargetMode(q),
+            concentrationId:(snapshot&&snapshot.concentrationId)||q.concentrationId||null,
+            terrain:difficultTerrain(q),damageDefense:damageDefense,duration:duration,remaining:duration,moveProgress:{},affected:{},occupancy:{},boundarySeen:{}
+        };
+        if(rec.snapshot)rec.snapshot.targetMode=rec.targetMode;
+        persistentDb()[rec.id]=rec;
+        syncAuraVisual(rec);
+        ensureAuraOffAbility(rec);
+        var passiveCount=seedMembership(rec,carrier);
+        try{api().cancel(q.id,pid);}catch(ignore){}
+        var castCount=triggerCastPhase(rec,rec,q,carrier),modes=[];
+        if(rules.cast)modes.push('КАСТ');if(rules.entry)modes.push('ВХОД');if(rules.exit)modes.push('ВЫХОД');if(rules.passive)modes.push('ПАСС');if(rules.areaStart)modes.push('ОБЛН');if(rules.areaEnd)modes.push('ОБЛК');if(rules.turn)modes.push('НАЧТ');if(rules.move)modes.push('МУВ / каждые 5 фт');if(rec.damageDefense&&Object.keys(rec.damageDefense.resistances||{}).length)modes.push('СОПР');if(rec.damageDefense&&Object.keys(rec.damageDefense.immunities||{}).length)modes.push('ИММ');
+        tell(pid,'<b>'+escape(rec.name)+'</b><br>Аура <b>'+escape(radius)+' фт</b> наложена на <b>'+escape(carrier.get('name')||carrier.id)+'</b> и привязана к токену.'+
+            '<br>Token Aura '+slot+': радиус выставлен скриптом; форма и цвет берутся из настроек токена.'+
+            '<br>Режимы: <b>'+escape(modes.length?modes.join(' + '):'без автоматического эффекта')+'</b>.'+
+            (rec.targetMode&&rec.targetMode!=='default'?'<br>Цели: <b>'+escape(spellTargetModeLabel(rec.targetMode))+'</b>.':'')+
+            (rules.cast?'<br>КАСТ: существ внутри ауры <b>'+castTargetsForArea(rec,q,carrier).length+'</b>, эффект запущен для <b>'+castCount+'</b>.':'')+
+            (rules.passive?'<br>ПАСС активен у существ внутри ауры: <b>'+passiveCount+'</b>.':'')+
+            (rec.damageDefense&&(Object.keys(rec.damageDefense.resistances||{}).length||Object.keys(rec.damageDefense.immunities||{}).length)?'<br>Защита ауры: <b>'+escape(damageDefenseLabel(rec.damageDefense))+'</b>.':'')+
+            (rec.concentrationId?('<br>Аура привязана к концентрации и исчезнет при её завершении'+(indefinite?'.':'; собственный предел ауры: <b>'+duration+'</b> ход(а/ов).')):(indefinite?'<br>Аура действует до ручного снятия.':'<br>Осталось ходов источника: <b>'+duration+'</b>.'))+
+            '<br>[Отключить ауру](!ad5-area cancel '+rec.id+')');
+        return rec;
+    }
+    function phaseBranches(phase){
+        if(!phase)return [];
+        if(phase.v2){
+            if(phase.branches)return [phase.branches.success,phase.branches.failure].filter(Boolean);
+            return phase.direct?[phase.direct]:[];
+        }
+        return [phase];
+    }
+    function concentrationOwnerTokenId(rec){
+        // Concentration ownership is token-scoped, not character-sheet scoped.
+        // This matters when several NPC tokens share one character sheet.
+        var id=String((rec&&rec.snapshot&&rec.snapshot.sourceToken)||(rec&&rec.source)||(rec&&rec.anchor)||'');
+        if(!id&&rec&&rec.concentrationId&&state.AD5Concentration&&state.AD5Concentration.active){
+            var c=state.AD5Concentration.active[String(rec.concentrationId)];
+            if(c&&c.sourceToken)id=String(c.sourceToken);
+        }
+        return id;
+    }
+    function isConcentrationAuraOwner(rec,token){
+        if(!rec||rec.kind!=='aura'||!rec.concentrationId||!token)return false;
+        if(typeof AD5Sides!=='undefined'&&AD5Sides.allow(rec.snapshot||{sourceToken:rec.source},token,'debuff'))return false;
+        var ownerId=concentrationOwnerTokenId(rec);
+        return !!ownerId&&String(token.id)===String(ownerId);
+    }
+    function ownerAllowedComponent(rec,indexOrComponent){
+        var comp=(typeof indexOrComponent==='object'&&indexOrComponent)?indexOrComponent:
+            (rec&&rec.snapshot&&rec.snapshot.components&&rec.snapshot.components[String(indexOrComponent)]);
+        var type=normalizeUserText(comp&&comp.type||'');
+        return type==='лечение'||type==='временное хп'||type==='временные хп'||type==='healing'||type==='temporary hp';
+    }
+    function uniqueOwnerBenefits(rec,branches){
+        var refs=[],extra=[],seenRefs={},seenExtra={};
+        (branches||[]).filter(Boolean).forEach(function(b){
+            (b.refs||[]).forEach(function(index){
+                var key=String(index);
+                if(ownerAllowedComponent(rec,index)&&!seenRefs[key]){seenRefs[key]=true;refs.push(index);}
+            });
+            (b.extra||[]).forEach(function(comp){
+                if(!ownerAllowedComponent(rec,comp))return;
+                var key=JSON.stringify(comp);
+                if(!seenExtra[key]){seenExtra[key]=true;extra.push(comp);}
+            });
+        });
+        return {refs:refs,extra:extra,effects:[],multiplier:1};
+    }
+    function concentrationAuraOwnerProtection(rec,phase,token){
+        if(!isConcentrationAuraOwner(rec,token))return {skip:false,phase:phase,protected:false};
+        // The concentrating carrier is outside all ordinary effects of its own
+        // concentration aura. The only direct aura effects it may receive are
+        // healing and temporary HP. Conditions, debuffs, saves and all damage
+        // are removed. ПАСС is handled separately as a positive buff layer.
+        if(!phase)return {skip:true,phase:phase,protected:true};
+        if(phase.v2){
+            var allowed=uniqueOwnerBenefits(rec,phase.branches?[phase.branches.success,phase.branches.failure]:[phase.direct]);
+            if(!allowed.refs.length&&!allowed.extra.length)return {skip:true,phase:phase,protected:true};
+            return {skip:false,phase:{v2:true,direct:allowed},protected:true};
+        }
+        var clone=JSON.parse(JSON.stringify(phase)),refs=(clone.refs||[]).filter(function(index){return ownerAllowedComponent(rec,index);});
+        clone.refs=refs;clone.description='';
+        if(!refs.length)return {skip:true,phase:phase,protected:true};
+        return {skip:false,phase:clone,protected:true};
+    }
+    function triggerPersistent(rec,phase,token,label,movementContext){
+        if(!rec||!phase||!token)return false;
+        if(rec.snapshot)rec.snapshot.areaEffect=true;
+        if(rec.page!==playerPageId()||token.get('_pageid')!==rec.page||!combatToken(token,rec.page))return false;
+        movementContext=movementContext&&typeof movementContext==='object'?movementContext:{};
+        // Direct KAST/turn/source-phase loops still iterate every physical area.
+        // Resolve the non-stacking winner here so only the strongest overlapping
+        // copy reaches AD5. Boundary events use triggerStackBoundary() and mark
+        // themselves stackResolved to preserve union entry/exit semantics.
+        var stackKeyPhase=stackPhaseKey(rec,phase,label);
+        if(!movementContext.stackResolved&&stackKeyPhase){
+            var stackBest=strongestStackArea(rec,stackKeyPhase,token,{inside:stackKeyPhase!=='exit'});
+            if(!stackBest&&stackKeyPhase==='exit')stackBest=strongestStackArea(rec,stackKeyPhase,token,{inside:false});
+            if(stackBest&&stackBest.id!==rec.id)return false;
+        }
+        if(isConcentrationAuraOwner(rec,token)){
+            try{purgeConcentrationAuraOwnerScopedEffects(rec,token);}catch(ignore){}
+        }
+        var protectedPhase=concentrationAuraOwnerProtection(rec,phase,token);
+        if(protectedPhase.skip)return false;
+        phase=protectedPhase.phase;
+        // Always expose the persistent scope to AD5.  For the concentrating
+        // aura carrier this also tells the AD5 bridge to suppress legacy saves.
+        movementContext.phaseScope=rec.id;
+        if(protectedPhase.protected)movementContext.auraOwnerProtected=true;
+        if(!movementContext.areaResolutionId)movementContext.areaResolutionId=nextResolutionId(rec.id+':'+String(label||'effect'));
+        if(!rec.ignoreCover&&rec.kind!=='aura'){
+            var exposure=areaExposureForToken(rec,getAreaPath(rec.id,rec),token);
+            // Persistent ОБЛ freezes its footprint at cast time. Later obstacle movement
+            // cannot erase already-created terrain, but surviving cover still grants DEX advantage.
+            if(!rec.coverageFrozen&&exposure&&exposure.blocked)return false;
+            if(exposure&&exposure.dexAdvantage){movementContext.areaCoverAdvantage=true;movementContext.areaCoverLabel=String(exposure.cover&&exposure.cover.label||exposure.reason||'укрытие');}
+        }
+        try{
+            if(rec.targetMode&&rec.targetMode!=='default'&&typeof AD5Sides!=='undefined'&&AD5Sides&&typeof AD5Sides.targetAllowed==='function'){
+                if(!AD5Sides.targetAllowed({
+                    actor:rec.snapshot&&rec.snapshot.actor||'',
+                    sourceToken:rec.source||rec.snapshot&&rec.snapshot.sourceToken||'',
+                    targetMode:rec.targetMode
+                },token,rec.targetMode))return false;
+            }
+            var dispatched;
+            if(phase.v2&&typeof AD5Phases!=='undefined'){
+                rec.affected=rec.affected||{};rec.affected[token.id]=true;
+                if(AD5Phases.enqueueBoundary){AD5Phases.enqueueBoundary(rec.snapshot,phase,token.id,label,rec.id,rec.rules,movementContext);dispatched=true;}
+                else dispatched=AD5Phases.run(rec.snapshot,phase,token.id,label,rec.id,rec.rules,movementContext);
+            }else dispatched=areaApi().trigger(rec.snapshot,phase,token.id,label,movementContext);
+            // phase.run() returns undefined only when a conditional phase such as
+            // «ЕСЛИ опутан» is intentionally not eligible. KAST/VHOD have no such
+            // condition in the thorn-growth grammar, so count only actual dispatch.
+            return dispatched!==false&&dispatched!==undefined;
+        }
+        catch(e){
+            tell(rec.owner,'<b>'+escape(rec.name)+'</b> · '+escape(label)+': '+escape(e.message||e));
+            sendChat('Области','/w gm <b>'+escape(rec.name)+'</b> · '+escape(label)+' · '+escape(token.get('name')||token.id)+': '+escape(e.message||e),null,{noarchive:true});
+            return false;
+        }
+    }
+    function routeBoundaryEvents(rec,path,points,token){
+        // Match the existing center-of-token containment test. Keep the first
+        // occurrence of each boundary event per drag, in traversal order.
+        if(!points||points.length<2)return [];
+        var elevation=token?tokenHeightFeet(token):0,inside=containsAt(rec,path,points[0].left,points[0].top,elevation),events=[],seen={};
+        for(var i=1;i<points.length;i++){
+            var a=points[i-1],b=points[i],dx=Number(b.left)-Number(a.left),dy=Number(b.top)-Number(a.top),len=Math.sqrt(dx*dx+dy*dy);
+            var steps=Math.max(1,Math.ceil(len/8));
+            for(var n=1;n<=steps;n++){
+                var f=n/steps,now=containsAt(rec,path,Number(a.left)+dx*f,Number(a.top)+dy*f,elevation);
+                if(now!==inside){
+                    var kind=now?'entry':'exit';
+                    if(!seen[kind]){events.push(kind);seen[kind]=true;}
+                }
+                inside=now;
+            }
+        }
+        return events;
+    }
+    function auraAnchorBoundaryEvents(rec,target,centerPoints){
+        if(!rec||rec.kind!=='aura'||!target||target.id===rec.anchor||!centerPoints||centerPoints.length<2)return [];
+        var carrier=getObj('graphic',rec.anchor);if(!carrier)return [];
+        var tx=Number(target.get('left')),ty=Number(target.get('top')),events=[],seen={};
+        function insideAt(c){return containsGeometry(rec,carrier,tx,ty,Number(c.left),Number(c.top),0);}
+        var inside=insideAt(centerPoints[0]);
+        for(var i=1;i<centerPoints.length;i++){
+            var a=centerPoints[i-1],b=centerPoints[i],dx=Number(b.left)-Number(a.left),dy=Number(b.top)-Number(a.top),len=Math.sqrt(dx*dx+dy*dy),steps=Math.max(1,Math.ceil(len/8));
+            for(var n=1;n<=steps;n++){
+                var f=n/steps,now=insideAt({left:Number(a.left)+dx*f,top:Number(a.top)+dy*f});
+                if(now!==inside){var kind=now?'entry':'exit';if(!seen[kind]){events.push(kind);seen[kind]=true;}}
+                inside=now;
+            }
+        }
+        return events;
+    }
+    function routeEntersArea(rec,path,points){return routeBoundaryEvents(rec,path,points).indexOf('entry')>=0;}
+    function routeExitsArea(rec,path,points){return routeBoundaryEvents(rec,path,points).indexOf('exit')>=0;}
+    function movementDistance(points,page){
+        if(!points||points.length<2||!page)return 0;
+        try{
+            if(typeof AD5Movement!=='undefined'&&AD5Movement&&typeof AD5Movement.distanceForPoints==='function')return Number(AD5Movement.distanceForPoints(points,page))||0;
+            if(typeof AD5Movement!=='undefined'&&AD5Movement&&AD5Movement._test&&typeof AD5Movement._test.routeDistance==='function')return Number(AD5Movement._test.routeDistance(points,page))||0;
+        }catch(ignore){}
+        var scale=Number(page.get('scale_number'))||5,total=0;
+        for(var i=1;i<points.length;i++){
+            var dx=Number(points[i].left)-Number(points[i-1].left),dy=Number(points[i].top)-Number(points[i-1].top);
+            total+=Math.sqrt(dx*dx+dy*dy)/70*scale;
+        }
+        return total;
+    }
+    function routeInsideDistance(rec,path,points,page,token){
+        if(!rec||!path||!points||points.length<2||!page)return 0;
+        var total=0,elevation=token?tokenHeightFeet(token):0;
+        for(var i=1;i<points.length;i++){
+            var a=points[i-1],b=points[i],dx=Number(b.left)-Number(a.left),dy=Number(b.top)-Number(a.top),pixels=Math.sqrt(dx*dx+dy*dy);
+            var steps=Math.max(1,Math.ceil(pixels/2));
+            for(var n=0;n<steps;n++){
+                var f0=n/steps,f1=(n+1)/steps,fm=(f0+f1)/2;
+                var p0={left:Number(a.left)+dx*f0,top:Number(a.top)+dy*f0};
+                var p1={left:Number(a.left)+dx*f1,top:Number(a.top)+dy*f1};
+                var midLeft=Number(a.left)+dx*fm,midTop=Number(a.top)+dy*fm;
+                if(containsAt(rec,path,midLeft,midTop,elevation))total+=movementDistance([p0,p1],page);
+            }
+        }
+        return Math.max(0,Math.round(total*1000)/1000);
+    }
+    function moveHistoryRoot(){var r=root();return {records:r.moveHistory,order:r.moveOrder};}
+    function recordMoveProgress(txn,areaId,tokenId,before,after){
+        txn=String(txn||'');if(!txn)return;
+        var h=moveHistoryRoot(),list=h.records[txn];if(!Array.isArray(list)){list=h.records[txn]=[];h.order.push(txn);}
+        list.push({areaId:String(areaId),tokenId:String(tokenId),before:Number(before)||0,after:Number(after)||0});
+        while(h.order.length>150){var old=h.order.shift();delete h.records[old];}
+    }
+    function movementProgressChange(txn,redo){
+        txn=String(txn||'');var h=moveHistoryRoot(),list=h.records[txn];if(!Array.isArray(list)||!list.length)return 0;
+        var count=0,ordered=redo?list:list.slice().reverse();
+        ordered.forEach(function(x){
+            var rec=persistentDb()[x.areaId];if(!rec)return;
+            rec.moveProgress=rec.moveProgress&&typeof rec.moveProgress==='object'?rec.moveProgress:{};
+            var value=redo?x.after:x.before;
+            if(value>0.0001)rec.moveProgress[x.tokenId]=value;else delete rec.moveProgress[x.tokenId];
+            count++;
+        });
+        return count;
+    }
+    function triggerMovementRule(rec,path,token,points,movementContext,pageObj){
+        if(!rec||!rec.rules||!rec.rules.move||!path||!token)return 0;
+        // МУВ is always damaging in the current syntax.  The physical token
+        // holding a concentration aura is completely immune to its own aura
+        // damage, including movement damage.
+        if(isConcentrationAuraOwner(rec,token))return 0;
+        // In an overlap, only the strongest identical МУВ profile owns the tick.
+        // This prevents the same 5-ft movement segment from being charged by two
+        // copies of the same area. Outside an overlap each physical area keeps its
+        // own movement progress as before.
+        var stackBestMove=strongestStackArea(rec,'move',token,{inside:true});
+        if(stackBestMove&&stackBestMove.id!==rec.id)return 0;
+        var inside=routeInsideDistance(rec,path,points,pageObj,token);if(inside<=0)return 0;
+        rec.moveProgress=rec.moveProgress&&typeof rec.moveProgress==='object'?rec.moveProgress:{};
+        var before=Number(rec.moveProgress[token.id])||0,total=before+inside,triggers=Math.floor((total+1e-7)/5),after=total-triggers*5;
+        if(after<0.0001)after=0;
+        if(after>0)rec.moveProgress[token.id]=after;else delete rec.moveProgress[token.id];
+        if(movementContext&&movementContext.movementTxn)recordMoveProgress(movementContext.movementTxn,rec.id,token.id,before,after);
+        if(triggers>0){
+            var totalFeet=triggers*5;
+            try{movementAreaApi().triggerMovement(rec.snapshot,rec.rules.move,token.id,'МУВ · '+String(totalFeet)+' фт',{movementTxn:(movementContext&&movementContext.movementTxn)?movementContext.movementTxn:null,moveRepeats:triggers});}
+            catch(e){tell(rec.owner,'<b>'+escape(rec.name)+'</b> · МУВ: '+escape(e.message||e));sendChat('Области','/w gm <b>'+escape(rec.name)+'</b> · МУВ · '+escape(token.get('name')||token.id)+': '+escape(e.message||e),null,{noarchive:true});}
+        }
+        return triggers;
+    }
+    function movementChanged(token,prev){
+        var page=playerPageId();
+        if(!page||!combatToken(token,page)||token.get('_pageid')!==page)return;
+        var floorTeleport=false;try{floorTeleport=!!(typeof AD5Floors!=='undefined'&&AD5Floors&&typeof AD5Floors.isTeleporting==='function'&&AD5Floors.isTeleporting(token.id));}catch(ignoreFloorTeleport){}
+        if(floorTeleport||(typeof AD5Movement!=='undefined'&&AD5Movement&&typeof AD5Movement.isSuppressed==='function'&&AD5Movement.isSuppressed(token.id))){
+            // Undo/redo changes geometry without causing a new entry/exit. Keep
+            // membership current so the next real entry is not silently skipped.
+            persistentAreas(page).forEach(function(rec){
+                var path=getAreaPath(rec.id,rec);if(!path)return;
+                if(rec.kind==='aura'&&rec.anchor===token.id){seedMembership(rec,path);rec.boundarySeen={};}
+                else{
+                    setMembership(rec,token,contains(rec,path,token));
+                    Object.keys(rec.boundarySeen||{}).forEach(function(key){if(key.indexOf('|'+token.id+'|')>=0)delete rec.boundarySeen[key];});
+                }
+            });
+            return;
+        }
+        var oldLeft=prev&&prev.left!==undefined?prev.left:token.get('left'),oldTop=prev&&prev.top!==undefined?prev.top:token.get('top');
+        if(Number(oldLeft)===Number(token.get('left'))&&Number(oldTop)===Number(token.get('top')))return;
+        var movementContext=null;
+        try{
+            if(typeof AD5Movement!=='undefined'&&AD5Movement&&typeof AD5Movement.beginGraphicMove==='function')movementContext=AD5Movement.beginGraphicMove(token,prev)||null;
+            var points=movementContext&&movementContext.points&&movementContext.points.length?movementContext.points:[{left:Number(oldLeft),top:Number(oldTop)},{left:Number(token.get('left')),top:Number(token.get('top'))}],pageObj=getObj('page',page);
+            var moveSignature=String(oldLeft)+','+String(oldTop)+'>'+String(token.get('left'))+','+String(token.get('top'));
+            // 2.23.6: if several moving auras are anchored to the same token, the old
+            // code queried every combat token once PER aura. Build that page list only
+            // when needed and reuse it for the whole movement transaction.
+            var pageCombatTokens=null;
+            persistentAreas(page).forEach(function(rec){
+                if(!rec.rules)return;
+                var path=getAreaPath(rec.id,rec);if(!path)return;
+                // When the aura carrier moves, the AREA moves through otherwise
+                // stationary creatures. ПАСС is reconciled from the final geometry
+                // and ВХОД/ВЫХОД are deduplicated per movement transaction.
+                if(rec.kind==='aura'&&rec.anchor===token.id){
+                    if(rec.rules.entry||rec.rules.exit||rec.rules.passive||rec.terrain){
+                        if(!pageCombatTokens)pageCombatTokens=findObjs({_type:'graphic',_subtype:'token',_pageid:page,layer:'objects'}).filter(function(t){return combatToken(t,page);});
+                        pageCombatTokens.forEach(function(t){
+                            var events=t.id===rec.anchor?[]:auraAnchorBoundaryEvents(rec,t,points),finalInside=contains(rec,path,t);
+                            processBoundaryEvents(rec,path,t,events,finalInside,token,movementContext,moveSignature);
+                        });
+                    }
+                    return;
+                }
+                if(rec.rules.entry||rec.rules.exit||rec.rules.passive||rec.terrain){
+                    var events=routeBoundaryEvents(rec,path,points,token),finalInside=contains(rec,path,token);
+                    processBoundaryEvents(rec,path,token,events,finalInside,token,movementContext,moveSignature);
+                }
+                if(rec.rules.move)triggerMovementRule(rec,path,token,points,movementContext,pageObj);
+            });
+        }finally{
+            try{if(movementContext&&typeof AD5Movement!=='undefined'&&AD5Movement&&typeof AD5Movement.endGraphicMove==='function')AD5Movement.endGraphicMove(movementContext);}catch(ignore){}
+        }
+    }
+    function heightChanged(token,prev){
+        var page=playerPageId();
+        if(!page||!combatToken(token,page)||token.get('_pageid')!==page)return;
+        var before=Number(String(prev&&prev.bar3_value!==undefined?prev.bar3_value:0).replace(',','.'));if(!Number.isFinite(before)||before<0)before=0;
+        var after=tokenHeightFeet(token);if(Math.abs(before-after)<1e-9)return;
+        persistentAreas(page).forEach(function(rec){
+            if(rec.kind==='aura'&&areaHeightFeet(rec)===null)return;
+            var path=getAreaPath(rec.id,rec);if(!path)return;
+            var horizontal=containsGeometry(rec,path,Number(token.get('left')),Number(token.get('top')),pathLeft(path),pathTop(path),rec.kind==='aura'?0:pathRotation(path));
+            var wasInside=horizontal&&verticalContainsValue(rec,before),nowInside=horizontal&&verticalContainsValue(rec,after);
+            if(wasInside===nowInside){setMembership(rec,token,nowInside);return;}
+            processBoundaryEvents(rec,path,token,[nowInside?'entry':'exit'],nowInside,token,null,'height:'+before+'>'+after);
+        });
+    }
+
+    function heightChangedFromGraphic(token,prev){
+        if(!token||!token.get)return;
+        var before=String(prev&&prev.bar3_value!==undefined?prev.bar3_value:'');
+        var after=String(token.get('bar3_value')==null?'':token.get('bar3_value'));
+        if(before===after)return;
+        heightChanged(token,prev);
+    }
+
+    function npcGroupName(token){
+        if(typeof NPCGroupInitiative!=='undefined'&&NPCGroupInitiative&&typeof NPCGroupInitiative.groupKey==='function'){
+            var key=String(NPCGroupInitiative.groupKey(token)||'');
+            return key.indexOf('npc:')===0?key:'';
+        }
+        var cid=token&&token.get('represents');
+        if(!cid||!characterIsNPC(cid))return '';
+        var c=getObj('character',cid),name=(c&&c.get('name'))||token.get('name')||token.id;
+        return normalizeUserText(name).replace(/\s*(?:[x×]\s*\d+|\(\s*\d+\s*\)|\[\s*\d+\s*\])\s*$/,'').trim();
+    }
+    function turnTargets(token,pageId){
+        var group=npcGroupName(token);
+        if(!group)return [token];
+        return findObjs({_type:'graphic',_subtype:'token',_pageid:pageId,layer:'objects'}).filter(function(t){
+            return combatToken(t,pageId)&&npcGroupName(t)===group;
+        });
+    }
+    function parseTurnOrder(raw){try{return JSON.parse(raw||'[]')||[];}catch(e){return [];}}
+    function turnRowKey(row){return row?(String(row.id||'')+'|'+String(row.custom||'')):'';}
+    function activeTurnGroupKey(row,page){
+        if(!row)return '';
+        var token=getObj('graphic',row.id);if(!token||token.get('_pageid')!==page)return turnRowKey(row);
+        try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.groupKey==='function')return String(AD5EffectTurns.groupKey(token)||token.id);}catch(ignore){}
+        return String(token.id);
+    }
+    function casterTurnMatches(rec,token){
+        if(!rec||!token)return false;
+        var source=rec.source&&getObj('graphic',rec.source);
+        if(source){
+            var sourceGroup=npcGroupName(source);
+            if(sourceGroup)return npcGroupName(token)===sourceGroup;
+            return token.id===source.id;
+        }
+        var actor=rec.snapshot&&rec.snapshot.actor;
+        return !!actor && token.get('represents')===actor;
+    }
+    function endPersistent(rec,path,alreadyRemoved){
+        if(!rec||!persistentDb()[rec.id])return;
+        if(rec.snapshot)rec.snapshot.areaEffect=true;
+        var endedStackKey=areaStackKey(rec);
+        var terrainIds=[];
+        if(rec.terrain){
+            terrainIds=Object.keys(rec.occupancy||{});
+            if(path)collect(rec,path,rec.owner).forEach(function(id){if(terrainIds.indexOf(id)<0)terrainIds.push(id);});
+        }
+        delete persistentDb()[rec.id]; // delete first: destroy hooks must not execute ОКОН twice
+        unsyncEnvironmentArea(rec);
+        if(rec.terrain){
+            terrainIds.forEach(function(id){
+                var t=getObj('graphic',id);if(t){try{reconcileTerrainMarker(t);}catch(ignoreTerrainMarker){}}
+            });
+        }
+        // ПАСС is membership-scoped, not a timed effect. Always remove this
+        // area's own passive layer when the area/aura expires, is cancelled,
+        // its carrier disappears, or its concentration ends.
+        if(rec.rules&&rec.rules.passive&&typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.removePassiveByScopeToken==='function'){
+            var passiveIds=Object.keys(rec.occupancy||{});
+            Object.keys(rec.affected||{}).forEach(function(id){if(passiveIds.indexOf(id)<0)passiveIds.push(id);});
+            if(path)collect(rec,path,rec.owner).forEach(function(id){if(passiveIds.indexOf(id)<0)passiveIds.push(id);});
+            passiveIds.forEach(function(id){
+                try{AD5EffectTurns.removePassiveByScopeToken(id,rec.id);}catch(ignorePassive){}
+                var t=getObj('graphic',id);if(t){try{reconcileStackPassiveByKey(endedStackKey,rec.page,t);}catch(ignoreReconcile){}}
+            });
+        }
+        if(rec.rules&&rec.rules.phased&&typeof AD5Phases!=='undefined'){
+            var ids=Object.keys(rec.affected||{});
+            if(path)collect(rec,path,rec.owner).forEach(function(id){if(ids.indexOf(id)<0)ids.push(id);});
+            AD5Phases.endingPhase(rec.id,rec.snapshot,rec.rules,ids);
+        }
+        if(rec.kind==='aura'){removeAuraOffAbility(rec);restoreAuraVisual(rec);return;}
+        if(path&&!alreadyRemoved)path.remove();
+    }
+    function expirePersistent(rec){
+        if(!rec)return;
+        endPersistent(rec,getAreaPath(rec.id,rec));
+        if(rec.owner)tell(rec.owner,'<b>'+escape(rec.name||(rec.kind==='aura'?'Аура':'Постоянная область'))+'</b>: длительность закончилась, '+(rec.kind==='aura'?'аура снята.':'область удалена.'));
+    }
+    function tickCasterDurations(page,turnToken){
+        persistentAreas(page).slice().forEach(function(rec){
+            if(rec.remaining===null||rec.remaining===undefined)return; // indefinite area: never decrement
+            if(!casterTurnMatches(rec,turnToken))return;
+            rec.remaining=Math.max(0,Number(rec.remaining)-1);
+            if(rec.remaining<=0)expirePersistent(rec);
+        });
+    }
+    function persistentTurnChanged(campaign,prev){
+        var page=playerPageId(),after=parseTurnOrder(Campaign().get('turnorder')),before=parseTurnOrder(prev&&prev.turnorder);
+        if(!page||!after.length||!before.length||turnRowKey(before[0])===turnRowKey(after[0]))return;
+        var afterGroup=activeTurnGroupKey(after[0],page),beforeGroup=activeTurnGroupKey(before[0],page);
+        if(afterGroup&&beforeGroup&&afterGroup===beforeGroup)return;
+        var token=getObj('graphic',after[0].id),previous=getObj('graphic',before[0].id);
+
+        // IMPORTANT: remember only the areas that already existed at the exact
+        // moment of this Turn Tracker transition. The actual dispatch is delayed
+        // below so Effect Turns can finish its bookkeeping. Without this snapshot,
+        // an area created during that delay is picked up retroactively and its
+        // ОБЛН/ОБЛК phase fires together with the initial КАСТ. A freshly created
+        // area must resolve only КАСТ; occupancy phases begin with later turns.
+        var turnAreaIds=persistentAreas(page).map(function(rec){return rec.id;});
+        var phaseEventId=nextResolutionId('turn');
+
+        // Defer until Effect Turns has completed its timer bookkeeping.
+        setTimeout(function(){
+            if(playerPageId()!==page)return;
+            function dispatch(turnToken,targetKey,sourceKey,labelTarget,labelSource){
+                if(!turnToken||!combatToken(turnToken,page))return;
+
+
+                var candidates=turnTargets(turnToken,page);
+                turnAreaIds.forEach(function(areaId){
+                    var rec=persistentDb()[areaId];
+                    if(!rec||rec.page!==page)return; // removed/expired during delay
+                    var path=getAreaPath(rec.id,rec);if(!path||!rec.rules)return;
+                    var isSource=casterTurnMatches(rec,turnToken);
+                    // 2.22.1: turn phases are driven by the token(s) whose turn
+                    // actually started/ended.  Do not pre-filter them through collect(),
+                    // because collect() also owns cast-time line-of-effect logic.  A
+                    // persistent area's geometry has already been frozen; at this point
+                    // we only need to know whether each active token is inside it.
+                    candidates.forEach(function(t){
+                        if(!t||!combatToken(t,page))return;
+                        var inside=contains(rec,path,t);
+                        setMembership(rec,t,inside,true);
+                        if(!inside)return;
+                        if(rec.rules[targetKey])triggerPersistent(rec,rec.rules[targetKey],t,labelTarget,{phaseEventId:phaseEventId});
+                        var occupancyKey=targetKey==='turn'?'areaStart':'areaEnd';
+                        if(rec.rules[occupancyKey])triggerPersistent(rec,rec.rules[occupancyKey],t,occupancyKey==='areaStart'?'ОБЛН':'ОБЛК',{phaseEventId:phaseEventId});
+                    });
+                    // Source-start/end phases still target every creature inside the
+                    // persistent area when the source's turn changes.  Keep that
+                    // behavior separate from the target-turn fast path above.
+                    if(isSource&&rec.rules[sourceKey]){
+                        collect(rec,path,rec.owner).forEach(function(id){var t=getObj('graphic',id);if(t)triggerPersistent(rec,rec.rules[sourceKey],t,labelSource,{phaseEventId:phaseEventId});});
+                    }
+                });
+            }
+            if(previous&&token&&typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns.groupKey(previous)===AD5EffectTurns.groupKey(token))return;
+            dispatch(previous,'targetEnd','sourceEnd','КНЦТ','КНЦИ');
+            dispatch(token,'turn','sourceStart','НАЧТ','НАЧК');
+            if(token)tickCasterDurations(page,token);
+        },50);
+    }
+
+    function keepAsTerrain(a,path,pid){
+        if(!path)return;
+        // After application difficult terrain becomes a permanent visual zone.
+        // Keep it on Objects so it remains above map artwork, but send the path
+        // behind tokens. Then explicitly restore every combat token to the front.
+        path.set({layer:'objects',stroke:'#1e90ff',stroke_width:5,fill:'transparent',controlledby:''});
+        if(typeof toBack==='function')toBack(path);
+        var raised=bringCombatTokensFront(a.page);
+        delete db()[a.id];
+        tell(pid,'Область <b>труднопроходимой местности</b> оставлена на поле синим контуром и перенесена назад. Боевые токены перенесены вперёд: '+raised+'.');
+    }
+    function cancelCounteredArea(a,q,path,pid,result){
+        // Counterspell is resolved before any target save, damage, phase or HP write.
+        // Remove the placement template and close the still-open AD5 draft. If the
+        // spell had already claimed concentration while the player positioned the
+        // template, release that concentration as part of the cancelled cast.
+        try{api().cancel(a.draft,pid);}catch(ignoreCancel){}
+        if(path){try{path.remove();}catch(ignorePath){}}
+        delete db()[a.id];
+        if(q&&q.concentrationId&&typeof AD5Concentration!=='undefined'&&AD5Concentration&&typeof AD5Concentration.end==='function'){
+            try{AD5Concentration.end(q.concentrationId,'заклинание отменено Контрзаклинанием',true);}catch(ignoreConcentration){}
+        }
+        tell(pid,'<b>'+escape(q&&q.name||'Заклинание')+'</b> отменено реакцией <b>'+escape(result&&result.reactionName||'Контрзаклинание')+'</b>. Эффект области не применён.');
+    }
+    function areaBatchLabel(q){
+        var spec=q&&q.areaSpec||{},total=Math.max(1,Number(spec.batchTotal||spec.count)||1),index=Math.max(1,Number(spec.batchIndex)||1);
+        return total>1?(' · область <b>'+index+'/'+total+'</b>'):'';
+    }
+    function prepareNextAreaDraft(a,q,pid){
+        var remaining=Math.max(1,Number(q&&q.areaSpec&&q.areaSpec.count)||1);
+        if(remaining<=1)return null;
+        var apiObj=api();
+        if(typeof apiObj.cloneArea!=='function')throw new Error('Для нескольких областей нужен AD5 4.3.71 или новее.');
+        return apiObj.cloneArea(a.draft,pid,remaining-1);
+    }
+    function launchNextAreaDraft(nextDraft,pid){
+        if(!nextDraft)return;
+        setTimeout(function(){
+            try{begin(nextDraft,pid);}
+            catch(e){tell(pid,'Следующая область не создана: '+escape(e&&e.message?e.message:e));gmPrompt('<b>Ошибка очереди областей:</b> '+escape(e&&e.message?e.message:e));}
+        },50);
+    }
+    function apply(id,pid,options){
+        options=options&&typeof options==='object'?options:{};
+        var a=activeOwned(id,pid),q=api().get(a.draft,pid),path=getAreaPath(a.id,a);
         if(!path)throw new Error('Шаблон удалён. Повторите способность.');
         validateTemplate(a,path);
-        var ids=collect(a,path,pid);
-        // If the card has an explicit target limit together with an area,
-        // keep only the first N creatures. No limit means every creature in area.
-        if(!q.allArea&&q.max&&ids.length>q.max)ids=ids.slice(0,q.max);
-        if(!ids.length)throw new Error('В области не найдено ни одной цели.');
-        api().setTargets(a.draft,pid,ids,true);
-        tell(pid,'Найдено <b>'+ids.length+'</b> целей. Выполняю способность…');
-        api().apply(a.draft,pid);
-        var p=getObj('path',a.id);if(p)p.remove();delete db()[a.id];
+        // Freeze vertical placement from the live terrain at the moment Apply is pressed.
+        // A 5-ft-high area on PHYS +20 therefore occupies world elevations 20..25.
+        refreshAreaBaseElevation(a,path);
+
+        // 2.19.2 / AD5 4.3.40: an area spell is counterable at the exact moment
+        // the player presses «Применить», not while the template is being placed.
+        // The original application is paused until Counterspell is either accepted
+        // or manually cancelled by a player's counter-Counterspell.
+        var spellIdentity=sheetSpellIdentity(q);
+        var counterableSpellArea=!!(a.isSpell||spellIdentity.isSpell);
+        // 2.19.5: every non-aura Apply reaches the Reaction Engine once. This is
+        // deliberate: even an unmarked area is reported as `not-spell`, so a GM
+        // can distinguish "hook never ran" from "ability was not recognized".
+        if(!options.reactionResolved && !a.reflected && q.areaSpec && !q.areaSpec.aura){
+            var reactionsReady=typeof AD5Reactions!=='undefined'&&AD5Reactions&&typeof AD5Reactions.beforeAreaApply==='function';
+            if(counterableSpellArea&&!reactionsReady){
+                throw new Error('Площадное заклинание распознано, но AD5 Reactions недоступен. Включите AD5_Reactions_1.2.4_NPC_Only.js и отключите старые копии.');
+            }
+            if(reactionsReady){
+                var sourceId=String(a.source||q.sourceToken||'');
+                var sourceTokenObj=sourceId&&getObj('graphic',sourceId);
+                if(counterableSpellArea&&(!sourceTokenObj||sourceTokenObj.get('_pageid')!==a.page||sourceTokenObj.get('represents')!==q.actor)){
+                    // Defensive recovery for drafts created by older buttons.
+                    var possible=findObjs({_type:'graphic',_subtype:'token',_pageid:a.page,layer:'objects'}).filter(function(t){return t.get('represents')===q.actor&&combatToken(t,a.page);});
+                    if(possible.length===1){sourceTokenObj=possible[0];sourceId=sourceTokenObj.id;a.source=sourceId;}
+                }
+                if(counterableSpellArea&&!sourceId){throw new Error('Для Контрзаклинания не определён физический токен заклинателя области. Повторите способность с токеном заклинателя на активной карте.');}
+                var persistedMeta=a.spellMeta||q.spellMeta||null;
+                var selectedTokenIds=(q.selected||[]).filter(function(x){return x&&x._type==='graphic';}).map(function(x){return x._id;});
+                var detectedSource=String(a.spellSource||q.spellSource||spellIdentity.source||((persistedMeta&&persistedMeta.prefix)?'spellbook':(persistedMeta&&persistedMeta.npc?'npc-spell':(hasSpellTag(q.description||'')?'tag-ZАКЛ':''))));
+                var opened=AD5Reactions.beforeAreaApply({
+                    playerId:pid,
+                    actorId:q.actor,
+                    sourceTokenId:sourceId,
+                    sourceSide:String(a.sourceSide||''),
+                    selectedTokenIds:selectedTokenIds,
+                    actionName:(persistedMeta&&persistedMeta.name)||q.name||(counterableSpellArea?'Заклинание':'Область'),
+                    spellName:(persistedMeta&&persistedMeta.name)||q.name||'',
+                    spellLevel:persistedMeta&&(persistedMeta.castLevel!==undefined?persistedMeta.castLevel:persistedMeta.spellLevel),
+                    spellCastLevel:persistedMeta&&(persistedMeta.castLevel!==undefined?persistedMeta.castLevel:persistedMeta.spellLevel),
+                    spellBaseLevel:persistedMeta&&persistedMeta.baseSpellLevel,
+                    castLevelSource:persistedMeta&&persistedMeta.castLevelSource||'',
+                    castingTime:(persistedMeta&&persistedMeta.castingTime)||'',
+                    range:(persistedMeta&&persistedMeta.range)||(q.areaSpec&&q.areaSpec.raw)||'',
+                    isSpell:counterableSpellArea,
+                    spellSource:detectedSource,
+                    areaDraftId:q.id,
+                    areaTemplateId:a.id
+                },function(result){
+                    try{
+                        if(result&&result.reflected){reflectAreaToCaster(a,q,getAreaPath(a.id,a),pid,result);return;}
+                        if(result&&result.cancelled){cancelCounteredArea(a,q,getAreaPath(a.id,a),pid,result);return;}
+                        apply(id,pid,{reactionResolved:true});
+                    }catch(e){tell(pid,'Ошибка продолжения после магической реакции: '+escape(e&&e.message?e.message:e));gmPrompt('<b>Ошибка реакции:</b> '+escape(e&&e.message?e.message:e));}
+                });
+                if(opened)return;
+            }
+            // No eligible Counterspell, or the area is not a spell. Do not let
+            // per-target AD5 processing open a second reaction window.
+            options.reactionResolved=true;
+        }
+        if(a.reflected&&a.reflectionSourceTokenId&&typeof api().setConditionSource==='function')api().setConditionSource(a.draft,pid,a.reflectionSourceTokenId);
+        var persistentRules=parsePersistentRules(q.description);
+        var areaDuration=Number(q.areaSpec&&q.areaSpec.duration);
+        var explicitPersistent=areaDuration===-1||(Number.isSafeInteger(areaDuration)&&areaDuration>0);
+        // A concentration-bound area that contains persistent lifecycle phases is
+        // persistent by definition.  Requiring an additional `обл` keyword made
+        // spells such as thorn growth create a template + concentration but never
+        // start ВХОД/ОБЛН/ОСВОБ.  Concentration itself is the lifetime owner.
+        var concentrationPersistent=!!(q.concentrationId&&persistentRules.phased&&persistentRules.persistent);
+        var terrainPersistent=difficultTerrain(q);
+        var defensePersistent=hasAreaDamageDefense(q);
+        if(explicitPersistent||concentrationPersistent||terrainPersistent||defensePersistent){
+            if(Number(q.areaSpec&&q.areaSpec.count)>1)throw new Error('Несколько последовательных постоянных областей пока не поддерживаются.');
+            if(!a.ignoreCover){var clipped=replaceDraftWithCoverage(a,path);a=clipped.a;path=clipped.path;}
+            // Terrain/defense with concentration lasts until concentration ends.
+            // Explicit ОБЛ N follows that counter. Without either, keep the footprint
+            // until the GM/player removes it manually.
+            activatePersistent(a,q,path,pid,persistentRules,explicitPersistent?areaDuration:-1);
+            return;
+        }
+        if(persistentRules.phased&&persistentRules.persistent)throw new Error('Для ВХОД/ВЫХОД/ОБЛН/ОБЛК/ПАСС и других постоянных фаз укажите в Дистанции «обл» / «обл N» либо используйте концентрацию «кон N».');
+        if(persistentRules.move)throw new Error('МУВ работает только у постоянной области. Добавьте к дистанции «обл» или «обл N», например «20 фт круг, обл 3».');
+        var collected=collectDetailed(a,path,pid),ids=collected.ids;
+        // A phased KAST is an area-membership event and therefore affects every
+        // combat token physically inside the template.  Keep the normal target
+        // limit only for legacy/non-phased one-shot area actions.
+        if(!persistentRules.cast&&!q.allArea&&q.max&&ids.length>q.max)ids=ids.slice(0,q.max);
+        // Full cover / SOLID removes creatures from the effect, but never cancels
+        // the cast itself.  An AoE is also allowed to resolve on an empty point.
+        // Close the AD5 draft as APPLIED with zero targets and remove the one-shot
+        // template normally.  No save, damage, conditions or target-side reactions
+        // are created because there are no reachable targets.
+        if(!ids.length){
+            if(typeof api().setTargetMeta==='function')api().setTargetMeta(a.draft,pid,{});
+            api().setTargets(a.draft,pid,[],true);
+            if(a.source&&typeof api().setSource==='function')api().setSource(a.draft,pid,a.source);
+            // Keep syntax validation for phased KAST cards even when nobody can be hit.
+            if(persistentRules.cast){
+                var emptySnapshot=areaApi().snapshot(a.draft,pid);
+                validatePersistentRules(emptySnapshot,persistentRules);
+            }
+            var emptyReason=collected.blocked.length
+                ?'все существа защищены полным укрытием или СОЛИД'
+                :'в области нет доступных целей';
+            tell(pid,'<b>'+escape(q.name||'Область')+'</b>: способность применена. '+
+                (collected.blocked.length
+                    ?'Все существа защищены полным укрытием или СОЛИД — <b>0 целей затронуто</b>.'
+                    :'В области нет доступных целей — <b>0 целей затронуто</b>.'));
+            var nextEmptyDraft=prepareNextAreaDraft(a,q,pid);
+            api().apply(a.draft,pid,{
+                areaResolutionId:nextResolutionId(a.id+':apply-empty'),
+                reactionResolved:!!options.reactionResolved||!!a.reflected,
+                conditionSourceTokenId:a.reflectionSourceTokenId||null,
+                allowEmptyTargets:true,
+                emptyReason:emptyReason
+            });
+            var emptyPath=getAreaPath(a.id,a);if(emptyPath)emptyPath.remove();delete db()[a.id];
+            launchNextAreaDraft(nextEmptyDraft,pid);
+            return;
+        }
+        if(typeof api().setTargetMeta==='function'){
+            var selectedMeta={};ids.forEach(function(tid){if(collected.meta[tid])selectedMeta[tid]=collected.meta[tid];});api().setTargetMeta(a.draft,pid,selectedMeta);
+        }
+        if(persistentRules.cast){
+            if(a.source&&typeof api().setSource==='function')api().setSource(a.draft,pid,a.source);
+            var snapshot=areaApi().snapshot(a.draft,pid);
+            validatePersistentRules(snapshot,persistentRules);
+            var tempRec={id:null,page:a.page,owner:pid,source:a.source||null,name:q.name||'Область',rules:persistentRules,snapshot:snapshot,ignoreCover:!!a.ignoreCover};
+            var castCount=0;
+            ids.forEach(function(id){var token=getObj('graphic',id),ctx={};if(collected.meta[id]&&collected.meta[id].dexAdvantage){ctx.areaCoverAdvantage=true;ctx.areaCoverLabel=String(collected.meta[id].coverLabel||'укрытие');}if(token&&triggerPersistent(tempRec,persistentRules.cast,token,'КАСТ',ctx))castCount++;});
+            tell(pid,'«Каст» применён к целям внутри области: <b>'+castCount+'</b>.');
+            var nextCastDraft=prepareNextAreaDraft(a,q,pid);
+            try{api().cancel(a.draft,pid);}catch(ignore){}
+            launchNextAreaDraft(nextCastDraft,pid);
+        }else{
+            api().setTargets(a.draft,pid,ids,true);
+            if(a.source && typeof api().setSource==='function')api().setSource(a.draft,pid,a.source);
+            var foundNames=ids.map(function(tid){var tt=getObj('graphic',tid),cc=tt&&getObj('character',tt.get('represents'));return escape(String(tt&&(tt.get('name')||(cc&&cc.get('name')))||tid));});
+            tell(pid,'Найдено <b>'+ids.length+'</b> целей'+(foundNames.length?': <b>'+foundNames.join(', ')+'</b>':'')+'. Выполняю способность…');
+            var nextDraft=prepareNextAreaDraft(a,q,pid);
+            api().apply(a.draft,pid,{areaResolutionId:nextResolutionId(a.id+':apply'),reactionResolved:!!options.reactionResolved||!!a.reflected,conditionSourceTokenId:a.reflectionSourceTokenId||null});
+            launchNextAreaDraft(nextDraft,pid);
+        }
+        // Range without "обл" / "обл N" is a one-shot area.
+        var p=getAreaPath(a.id,a);if(p)p.remove();delete db()[a.id];
+    }
+    function cancelReflected(id,pid){
+        var a=activeOwned(id,pid);
+        if(!a.reflected)throw new Error('Эта область не является отражённым заклинанием.');
+        if(!playerIsGM(pid))throw new Error('Отражённое площадное заклинание может отменить только Мастер.');
+        var q=null;
+        try{q=api().get(a.draft,pid);}catch(ignoreGet){}
+        try{api().cancel(a.draft,pid);}catch(ignoreCancel){}
+        var path=getAreaPath(a.id,a);if(path){try{path.remove();}catch(ignorePath){}}
+        delete db()[a.id];
+        if(q&&q.concentrationId&&typeof AD5Concentration!=='undefined'&&AD5Concentration&&typeof AD5Concentration.end==='function'){
+            try{AD5Concentration.end(q.concentrationId,'отражённое заклинание отменено Мастером',true);}catch(ignoreConcentration){}
+        }
+        gmPrompt('<b>' + escape(q&&q.name||'Отражённое заклинание') + '</b>: отражённая область отменена. Эффект не применён.');
     }
     function cancel(id,pid){
+        var permanent=persistentDb()[id];
+        if(permanent){
+            if(permanent.owner!==pid&&!playerIsGM(pid))throw new Error('Эта постоянная область принадлежит другому игроку.');
+            endPersistent(permanent,getAreaPath(id,permanent));
+            tell(pid,permanent.kind==='aura'?'Аура снята.':'Постоянная область удалена.');return;
+        }
         var a=db()[id];
-        if(a){owned(id,pid);var p=getObj('path',a.id);if(p)p.remove();delete db()[id];tell(pid,'Применение отменено. Эффект не применён.');return;}
+        if(a){owned(id,pid);var p=getAreaPath(a.id,a);if(p)p.remove();delete db()[id];tell(pid,'Применение отменено. Эффект не применён.');return;}
         api().cancel(id,pid);
         tell(pid,'Применение отменено. Шаблон ещё не создан, эффект не применён.');
     }
@@ -159,41 +2262,208 @@ var AD5Areas=(function(){
         var npc=characterIsNPC(q.actor), playerNpc=characterIsPlayerControlled(q.actor);
         if(!npc)throw new Error('Указание токена требуется только для NPC.');
         if(!playerNpc && !playerIsGM(pid))throw new Error('Токен этого NPC выбирает Мастер.');
-        var path=createTemplate(q,pid,sourceId);
-        var token=getObj('graphic',sourceId),count=q.allArea?'все существа':('до '+q.max+' существ');
-        tell(pid,'<b>'+escape(q.name)+'</b><br>Шаблон создан на месте токена <b>'+escape(token.get('name')||sourceId)+'</b>: '+escape(q.areaSpec.raw||q.areaSpec.shape)+' · '+escape(count)+'.<br><b>Переместите и поверните шаблон на поле.</b><br>[Применить](!ad5-area apply '+path.id+') [Отмена](!ad5-area cancel '+path.id+')');
+        var token=sourceToken(q,pid,sourceId);if(typeof api().setSource==='function')api().setSource(q.id,pid,token.id);
+        if(q.areaSpec&&q.areaSpec.aura){auraPrompt(q,pid,token.id);return q.id;}
+        var path=createTemplate(q,pid,sourceId),created=db()[path.id],count=q.allArea?'все существа':('до '+q.max+' существ');
+        var envLabel2=environmentLabel(areaEnvironmentType(q,q.areaSpec));
+        tell(pid,'<b>'+escape(q.name)+'</b><br>Шаблон создан на месте токена <b>'+escape(token.get('name')||sourceId)+'</b>: '+escape(q.areaSpec.raw||q.areaSpec.shape)+' · высота <b>'+escape(created&&created.zHeight||6)+' фт</b>'+(created&&created.autoHeight?' <i>(рост заклинателя)</i>':'')+(envLabel2?' · окружение <b>'+escape(envLabel2)+'</b>':'')+(q.areaSpec.ignoreCover?' · <b>ПОКР</b>':'')+' · '+escape(count)+areaBatchLabel(q)+'.<br><b>Переместите и поверните шаблон на поле.</b><br>[Применить](!ad5-area apply '+path.id+') [Отмена](!ad5-area cancel '+path.id+')');
         return path.id;
     }
+    function auraTarget(id,pid,targetId){
+        var q=api().get(id,pid);if(!q.areaSpec||!q.areaSpec.aura)throw new Error('Эта способность не является аурой.');
+        return activateAura(q,pid,targetId);
+    }
     function findLegacy(msg,args){
-        var a=owned(args[2],msg.playerid),q=api().get(a.draft,msg.playerid),path=getObj('path',a.id);if(!path)throw new Error('Шаблон удалён.');
+        var a=activeOwned(args[2],msg.playerid),q=api().get(a.draft,msg.playerid),path=getAreaPath(a.id,a);if(!path)throw new Error('Шаблон удалён.');
         validateTemplate(a,path);
-        var ids=collect(a,path,msg.playerid);if(!q.allArea&&q.max&&ids.length>q.max)ids=ids.slice(0,q.max);
+        var details=collectDetailed(a,path,msg.playerid),ids=details.ids;if(!q.allArea&&q.max&&ids.length>q.max)ids=ids.slice(0,q.max);
+        if(typeof api().setTargetMeta==='function'){var meta={};ids.forEach(function(tid){if(details.meta[tid])meta[tid]=details.meta[tid];});api().setTargetMeta(a.draft,msg.playerid,meta);}
         api().setTargets(a.draft,msg.playerid,ids,false);
         tell(msg.playerid,'Найдено '+ids.length+' целей. Для применения используйте «Применить» у способности.');
     }
     function createLegacy(msg,args){
         var q=api().get(args[2],msg.playerid),spec=q.areaSpec;
         if(!spec&&args[3]){
-            var legacyShape=args[3],legacySize=Number(args[4]);
+            var legacyShape=normalizeUserText(args[3]),legacySize=Number(args[4]);
             if(['circle','square','cone','line'].indexOf(legacyShape)>=0&&Number.isFinite(legacySize)&&legacySize>0)
                 spec={shape:legacyShape,size:legacySize,width:legacyShape==='line'?(Number(args[5])||5):legacySize,length:legacySize,raw:legacyShape+' '+legacySize};
         }
         if(!spec)throw new Error('В карточке не определена площадь.');
         begin(q.id,msg.playerid,spec);
     }
+    function reconcileSides(ids){
+        var page=playerPageId(),areas=persistentAreas(page),allTokens=null,wanted={};
+        if(ids)ids.forEach(function(id){wanted[id]=true;});
+        areas.forEach(function(rec){
+            if(rec.snapshot)rec.snapshot.areaEffect=true;
+            if(!rec.rules||!rec.rules.passive)return;
+            var path=getAreaPath(rec.id,rec);if(!path)return;
+            var sourceChanged=!ids||wanted[rec.source]||wanted[rec.snapshot&&rec.snapshot.sourceToken];
+            var tokens;
+            if(sourceChanged){
+                if(!allTokens)allTokens=findObjs({_type:'graphic',_subtype:'token',_pageid:page,layer:'objects'}).filter(function(t){return combatToken(t,page);});
+                tokens=allTokens;
+            }else tokens=ids.map(function(id){return getObj('graphic',id);}).filter(function(t){return t&&combatToken(t,page);});
+            tokens.forEach(function(t){setMembership(rec,t,contains(rec,path,t),true);});
+        });
+    }
+    function diagnose(pid){
+        var labels={cast:'КАСТ',entry:'ВХОД',exit:'ВЫХОД',turn:'НАЧТ',targetEnd:'КОНТ',sourceStart:'НАЧИ',sourceEnd:'КОНИ',areaStart:'ОБЛН',areaEnd:'ОБЛК',end:'ОКОН',passive:'ПАСС',move:'МУВ',recovery:'ОСВОБ'};
+        var page=playerPageId(),lines=['AD5 '+(typeof AD5==='undefined'?'нет':AD5.version)+' · Areas '+VERSION+' · Phases '+(typeof AD5Phases==='undefined'?'нет':AD5Phases.version)];
+        function report(rec,rules,snapshot,pending){
+            if(rec.owner!==pid&&!playerIsGM(pid))return;
+            var path=getAreaPath(rec.id,rec),ids=path?collect(rec,path,pid):[];
+            var phases=Object.keys(labels).filter(function(k){return !!rules[k];}).map(function(k){return labels[k];});
+            lines.push('<b>'+escape(rec.name||'Область')+'</b>: '+(pending?'ОЖИДАЕТ ПРИМЕНЕНИЯ':'АКТИВНА')+'; внутри '+ids.length+'; фазы: '+escape(phases.join(', ')||'НЕ РАСПОЗНАНЫ'));
+            if(ids.length)lines.push('Цели: '+ids.map(function(id){var t=getObj('graphic',id);return escape(t.get('name')||id);}).join(', '));
+            if(snapshot){lines.push('Урон: '+escape(Object.keys(snapshot.components||{}).map(function(k){var x=snapshot.components[k];return 'Урон'+k+'='+x.expression+' '+x.type;}).join('; ')||'нет'));lines.push('Спасбросок: '+escape(snapshot.save?snapshot.save.ability+' СЛ '+snapshot.save.dc:'нет'));}
+            lines.push('Описание: '+escape(String(rules.source||'').slice(0,700)||'(пусто)'));
+        }
+        Object.keys(db()).forEach(function(id){var rec=db()[id];if(rec.page!==page||(rec.owner!==pid&&!playerIsGM(pid)))return;try{var q=api().get(rec.draft,pid);report(rec,parsePersistentRules(q.description),null,true);var ident=sheetSpellIdentity(q);lines.push('Counterspell: '+(ident.isSpell?'<b>ЗАКЛИНАНИЕ</b>':'не заклинание')+'; источник распознавания: '+escape(rec.spellSource||q.spellSource||ident.source||'нет')+'; токен источника: '+escape(rec.source||q.sourceToken||'нет')+'.');}catch(e){lines.push(escape(e.message));}});
+        persistentAreas(page).forEach(function(rec){report(rec,rec.rules||{},rec.snapshot,false);});
+        if(lines.length===1)lines.push('На активной карте доступных областей нет.');
+        tell(pid,lines.join('<br>'));
+    }
     on('chat:message',function(msg){
-        if(msg.type!=='api'||msg.playerid==='API'||!getObj('player',msg.playerid)||!/^!ad5-area(?:\s|$)/.test(msg.content))return;
+        if(msg.type!=='api'||msg.playerid==='API'||!getObj('player',msg.playerid)||!/^!ad5-area(?:\s|$)/i.test(msg.content))return;
         try{
-            var args=msg.content.trim().split(/\s+/),sub=args[1];
-            if(sub==='create')createLegacy(msg,args);
+            var args=msg.content.trim().split(/\s+/),sub=normalizeUserText(args[1]);
+            if(sub==='check')diagnose(msg.playerid);
+            else if(sub==='create')createLegacy(msg,args);
             else if(sub==='source')source(args[2],msg.playerid,args[3]);
+            else if(sub==='aura')auraTarget(args[2],msg.playerid,args[3]);
             else if(sub==='apply')apply(args[2],msg.playerid);
+            else if(sub==='cancel-reflection')cancelReflected(args[2],msg.playerid);
             else if(sub==='cancel'||sub==='remove')cancel(args[2],msg.playerid);
             else if(sub==='find')findLegacy(msg,args);
             else if(sub==='all')findLegacy(msg,['!ad5-area','find',args[2]]);
-            else tell(msg.playerid,'AD5 Areas '+VERSION+': площадное заклинание создаёт шаблон автоматически. Переместите/поверните его и нажмите «Применить».');
+            else if(sub==='diagnose'){return;}
+            else if(sub==='status'){
+                var activePage=playerPageId(),list=persistentAreas(activePage);
+                tell(msg.playerid,'<b>Постоянные области и ауры:</b> '+(list.length?list.map(function(x){var left=(x.remaining===null||x.remaining===undefined)?'∞':x.remaining;return (x.kind==='aura'?'АУРА · ':'')+escape(x.name)+' — осталось '+escape(left)+' ['+x.id+']'+(x.kind==='aura'?' [Отключить](!ad5-area cancel '+x.id+')':'');}).join('<br>'):'нет на активной карте.'));
+            }
+            else tell(msg.playerid,'AD5 Areas '+VERSION+': площадь задаётся в Дистанции, например «20 фт круг». Высота: «круг 20/30», «куб 20 фт», «линия 5/30/20». Окружение: «ФИЗ» = укрытие/поверхность, «ЗАСЛОУ» = помеха атакам через область, «ЗАСХАЙ» = высокая заслонённость, «СОЛИД» = абсолютная непроходимая высота. Для постоянной зоны добавьте «обл» / «обл N» или концентрацию; «обл ПОКР» игнорирует полное укрытие и СОЛИД. Параметр «труднопроходимая местность» автоматически оставляет шаблон постоянной зоны и даёт токенам внутри маркер 106-move-impaired; если нет ОБЛ N и концентрации, зона остаётся до ручного удаления. Защита области: «СОПР: огонь 50%, холод 25%» и «ИММ: яд»; такие директивы также делают обычную область постоянной до ОБЛ/концентрации/ручного удаления. Конус начинается в вершине со стороны заклинателя; линия — от ближайшей к заклинателю торцевой грани. Аура: «аура 20 фт». Правила: «КАСТ», «ВХОД», «ВЫХОД», «ОБЛН», «ОБЛК», «НАЧТ», «НАЧК», «МУВ» и «ПАСС».');
         }catch(e){tell(msg.playerid,escape(e.message));}
     });
-    on('ready',function(){db();});
-    return {version:VERSION,begin:begin,_test:{contains:contains,shapePoints:shapePoints,sourceToken:sourceToken,characterIsNPC:characterIsNPC,characterIsPlayerControlled:characterIsPlayerControlled}};
+    // GM-only, read-only diagnosis: no recast, saving throw or HP writes.
+    on('chat:message',function(msg){
+        if(msg.type!=='api'||!/^!ad5-area\s+diagnose(?:\s|$)/i.test(msg.content)||!playerIsGM(msg.playerid))return;
+        var page=playerPageId(),selected={};(msg.selected||[]).forEach(function(x){selected[x._id]=true;});
+        var list=Object.keys(persistentDb()).map(function(id){return persistentDb()[id];}).filter(function(rec){return rec&&rec.page===page&&(!Object.keys(selected).length||selected[rec.anchor]||selected[rec.source]);});
+        var versions=['AD5 '+(typeof AD5!=='undefined'?AD5.version:'нет'),'Areas '+VERSION,'Concentration '+(typeof AD5Concentration!=='undefined'?AD5Concentration.version:'нет'),'Transform '+(typeof AD5Transform!=='undefined'?AD5Transform.version:'нет'),'Sides '+(typeof AD5Sides!=='undefined'?AD5Sides.version:'нет')];
+        tell(msg.playerid,versions.join(' · '));
+        if(!list.length){tell(msg.playerid,'Не найдены активные области выбранного источника на странице под лентой игроков. Выполните !ad5-area check.');return;}
+        var tokens=findObjs({_type:'graphic',_subtype:'token',_pageid:page});
+        list.forEach(function(rec){
+            var path=getAreaPath(rec.id,rec);if(!path){tell(msg.playerid,escape(rec.name)+': носитель/шаблон удалён.');return;}
+            var lines=['<b>'+escape(rec.name)+'</b> · '+escape(rec.id)+' · радиус '+escape(rec.radius||'—')+' фт'];
+            tokens.forEach(function(t){
+                var valid=targetableCombatToken(t,page),inside=contains(rec,path,t),cid=t.get('represents'),sheet=cid&&getObj('character',cid),why=!sheet?'нет связанного листа':t.get('layer')!=='objects'?'слой '+t.get('layer'):t.get('isdrawing')?'рисунок':!inside?'вне области':'внутри';
+                var npc=characterIsNPC(cid),pc=characterIsPlayerControlled(cid),save=rec.snapshot&&rec.snapshot.save;
+                var info=valid&&inside&&save?(npc&&!pc?'NPC: автоматический спасбросок':'цель под управлением игрока: ожидается ручной спасбросок'):'',bonus='';
+                if(valid&&inside&&save&&!npc){var a=findObjs({_type:'attribute',_characterid:cid,name:save.ability+'_save_bonus'})[0],value=a&&a.get('current');bonus='; бонус '+save.ability+'='+escape(value==null?'НЕ ЗАПОЛНЕН':value);}
+                lines.push(escape(t.get('name')||t.id)+' ['+escape(t.id)+']: '+escape(why)+(info?'; '+info:'')+bonus);
+            });
+            tell(msg.playerid,lines.join('<br>'));
+        });
+        tell(msg.playerid,'Незавершённые спасброски: !ad5 saves. Диагностика не применяет урон. Пришлите этот отчёт и сообщение !ad5-area check для проверки.');
+    });
+    on('change:graphic',movementChanged);
+    on('change:graphic',heightChangedFromGraphic);
+    on('change:campaign:turnorder',persistentTurnChanged);
+    function areaPathChanged(path){
+        var rec=persistentDb()[path.id];if(!rec)return;
+        rec.pathType=pathObjectType(path);rec.page=pathPage(path)||rec.page;
+        var dims=pathDimensions(path,rec),w=Number(dims.w),h=Number(dims.h);
+        if(Number.isFinite(w)&&w>0)rec.w=w;if(Number.isFinite(h)&&h>0)rec.h=h;
+        if(rec.terrain){
+            findObjs({_type:'graphic',_subtype:'token',_pageid:rec.page,layer:'objects'}).filter(function(t){return combatToken(t,rec.page);}).forEach(function(t){
+                try{setMembership(rec,t,contains(rec,path,t),true);}catch(ignoreTerrainMove){}
+            });
+        }
+    }
+    on('change:path',areaPathChanged);
+    on('change:pathv2',areaPathChanged);
+    function removeByConcentration(concentrationId){
+        concentrationId=String(concentrationId||'').trim();if(!concentrationId)return {drafts:0,persistent:0};
+        var draftsRemoved=0,persistentRemoved=0,store=db(),persistent=persistentDb();
+        Object.keys(store).forEach(function(id){
+            var rec=store[id];if(!rec||String(rec.concentrationId||'')!==concentrationId)return;
+            var path=getAreaPath(id,rec);if(path)path.remove();delete store[id];draftsRemoved++;
+        });
+        Object.keys(persistent).forEach(function(id){
+            var rec=persistent[id],cid=rec&&String(rec.concentrationId||(rec.snapshot&&rec.snapshot.concentrationId)||'');
+            if(cid!==concentrationId)return;
+            endPersistent(rec,getAreaPath(id,rec));persistentRemoved++;
+        });
+        return {drafts:draftsRemoved,persistent:persistentRemoved};
+    }
+    function areaPathDestroyed(path){delete db()[path.id];var rec=persistentDb()[path.id];if(rec)endPersistent(rec,path,true);}
+    on('destroy:path',areaPathDestroyed);
+    on('destroy:pathv2',areaPathDestroyed);
+    on('destroy:graphic',function(token){
+        // A native aura is anchored to a creature token. Removing that token ends
+        // the aura and its ОКОН phase, but never attempts to remove another token.
+        var store=persistentDb();Object.keys(store).slice().forEach(function(id){var rec=store[id];if(rec&&rec.kind==='aura'&&rec.anchor===token.id)endPersistent(rec,null,true);});
+        if(root().terrainMarkers)delete root().terrainMarkers[token.id];
+    });
+    on('change:campaign:playerpageid',function(){
+        var active=playerPageId(),store=db();
+        // Draft templates from the old battle map are cancelled. Permanent zones
+        // remain stored on their own pages and simply become inactive until the
+        // Party Ribbon returns to that page.
+        Object.keys(store).forEach(function(id){
+            var rec=store[id];
+            if(rec&&rec.page!==active){var p=getAreaPath(rec.id,rec);if(p)p.remove();delete store[id];}
+        });
+        persistentAreas(active).forEach(function(rec){var p=getAreaPath(rec.id,rec);if(!p)return;if(rec.kind==='aura')syncAuraVisual(rec);else stylePersistentPath(p);});
+        try{reconcileTerrainPage(active);}catch(ignoreTerrainPage){}
+        try{bringCombatTokensFront(active);}catch(ignore){}
+    });
+    function migratePersistentToNativeJumpgate(rec,path){
+        if(!isJumpgate()||!rec||rec.kind==='aura'||!path||pathObjectType(path)==='pathv2')return path;
+        var oldId=rec.id,left=pathLeft(path),top=pathTop(path),rotation=pathRotation(path),store=persistentDb();
+        var replacement=createAreaPath(rec.page,rec.shape,rec.w,rec.h,left,top,rotation,'','#1e90ff',5);
+        if(!replacement)return path;
+        rec.id=replacement.id;rec.pathType='pathv2';
+        delete store[oldId];store[rec.id]=rec;
+        if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns.remapScope)AD5EffectTurns.remapScope(oldId,rec.id);
+        try{path.remove();}catch(ignore){}
+        stylePersistentPath(replacement);
+        syncEnvironmentArea(rec,replacement);
+        return replacement;
+    }
+    function setAreaHeight(id,height){
+        height=Number(height);if(!Number.isFinite(height)||height<=0)return false;
+        var rec=db()[id]||persistentDb()[id];if(!rec)return false;
+        rec.zHeight=height;
+        if(rec.kind!=='aura'&&persistentDb()[id])syncEnvironmentArea(rec,getAreaPath(id,rec));
+        return true;
+    }
+    on('ready',function(){
+        root();
+        var drafts=db();
+        // A draft made before a Jumpgate restart still points at a Legacy Path and
+        // its old chat buttons contain that object id. Cancel it rather than keep
+        // a visually desynchronised controller on the table.
+        if(isJumpgate())Object.keys(drafts).forEach(function(id){var rec=drafts[id],p=getAreaPath(id,rec);if(p&&pathObjectType(p)!=='pathv2'){try{p.remove();}catch(ignore){}delete drafts[id];}});
+        var store=persistentDb();
+        Object.keys(store).slice().forEach(function(id){
+            var rec=store[id],path=getAreaPath(id,rec);
+            if(!rec||!path){if(rec&&rec.kind==='aura')removeAuraOffAbility(rec);delete store[id];return;}
+            if(rec.kind==='aura'){syncAuraVisual(rec);ensureAuraOffAbility(rec);return;}
+            if(isJumpgate()&&pathObjectType(path)!=='pathv2')path=migratePersistentToNativeJumpgate(rec,path);
+            rec.pathType=pathObjectType(path);if(!Number.isFinite(Number(rec.baseElevation)))refreshAreaBaseElevation(rec,path);stylePersistentPath(path);syncEnvironmentArea(rec,path);
+            if(rec.terrain){
+                try{seedMembership(rec,path);}catch(ignoreTerrainSeed){}
+            }
+        });
+        var active=playerPageId();if(active){
+            try{reconcileTerrainPage(active);}catch(ignoreTerrainReady){}
+            try{bringCombatTokensFront(active);}catch(ignore){}
+        }
+    });
+    return {version:VERSION,reconcileSides:reconcileSides,ownsPath:function(id){return !!(db()[id]||persistentDb()[id]);},begin:begin,resolveFixed:resolveFixed,removeByConcentration:removeByConcentration,setAreaHeight:setAreaHeight,damageDefenseForToken:damageDefenseForToken,defense:{forToken:damageDefenseForToken,parse:parseAreaDamageDefense,label:damageDefenseLabel},environment:{sync:syncEnvironmentArea,unsync:unsyncEnvironmentArea,type:environmentType},movement:{undo:function(txn){return movementProgressChange(txn,false);},redo:function(txn){return movementProgressChange(txn,true);}},height:{tokenHeightFeet:tokenHeightFeet,areaHeightFeet:areaHeightFeet,verticalContains:verticalContains},_test:{turnTargets:turnTargets,persistentTurnChanged:persistentTurnChanged,setTerrainMarker:setTerrainMarker,casterBaseHeightFeet:casterBaseHeightFeet,resolvedAreaHeight:resolvedAreaHeight,contains:contains,containsAt:containsAt,shapePoints:shapePoints,collectDetailed:collectDetailed,areaExposureForToken:areaExposureForToken,areaEffectOrigin:areaEffectOrigin,lineSourceSign:lineSourceSign,localToWorld:localToWorld,worldToLocal:worldToLocal,coveragePolygon:coveragePolygon,coneCoveragePolygon:coneCoveragePolygon,lineCoveragePolygon:lineCoveragePolygon,replaceDraftWithCoverage:replaceDraftWithCoverage,isJumpgate:isJumpgate,pathV2Points:pathV2Points,pathDimensions:pathDimensions,pathLeft:pathLeft,pathTop:pathTop,sourceToken:sourceToken,characterIsNPC:characterIsNPC,characterIsPlayerControlled:characterIsPlayerControlled,difficultTerrain:difficultTerrain,parseAreaDamageDefense:parseAreaDamageDefense,stripAreaDamageDefenseDirectives:stripAreaDamageDefenseDirectives,damageDefenseForToken:damageDefenseForToken,parsePersistentRules:parsePersistentRules,movementRule:movementRule,combatToken:combatToken,bringCombatTokensFront:bringCombatTokensFront,npcGroupName:npcGroupName,casterTurnMatches:casterTurnMatches,routeEntersArea:routeEntersArea,routeExitsArea:routeExitsArea,routeBoundaryEvents:routeBoundaryEvents,routeInsideDistance:routeInsideDistance,auraAnchorBoundaryEvents:auraAnchorBoundaryEvents,auraShape:auraShape,chooseAuraSlot:chooseAuraSlot,activateAura:activateAura,ensureAuraOffAbility:ensureAuraOffAbility,removeAuraOffAbility:removeAuraOffAbility,getAreaPath:getAreaPath,processBoundaryEvents:processBoundaryEvents,boundaryAllowed:boundaryAllowed,setMembership:setMembership,seedMembership:seedMembership,isConcentrationAuraOwner:isConcentrationAuraOwner,concentrationAuraOwnerProtection:concentrationAuraOwnerProtection,ownerAllowedComponent:ownerAllowedComponent,areaStackKey:areaStackKey,sameAreaStack:sameAreaStack,stackPhasePower:stackPhasePower,compareStackPower:compareStackPower,stackSemanticText:stackSemanticText,stackPhaseSignature:stackPhaseSignature,strongestStackArea:strongestStackArea,stackOccupiedByOther:stackOccupiedByOther,triggerPersistent:triggerPersistent,reconcileTerrainMarker:reconcileTerrainMarker,reconcileTerrainPage:reconcileTerrainPage,terrainMarkerTag:terrainMarkerTag,hasTerrainMarker:hasTerrainMarker}};
 }());
+
+}
