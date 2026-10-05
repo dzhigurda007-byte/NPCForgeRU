@@ -1,0 +1,577 @@
+/* Installation guard: disable old unguarded versions before installing. */
+if(typeof AD5Transform!=='undefined'&&AD5Transform) {
+    log('AD5Transform: duplicate module skipped; keep one installed copy.');
+} else {
+/* AD5 Transform 1.2.9
+ * Wild Shape / Polymorph support for the AD5 Roll20 automation stack.
+ *
+ * Ability-description directives:
+ *   ДИКАЯ ФОРМА: Волк
+ *   ПОЛИМОРФ: Гигантская обезьяна
+ *
+ * Direct commands (can be used as Roll20 Abilities / Token Actions):
+ *   !ad5-transform wild --token|@{selected|token_id} --form|Волк
+ *   !ad5-transform polymorph --source|@{selected|token_id} --target|@{target|Цель|token_id} --form|Гигантская обезьяна
+ *   !ad5-transform end --token|@{selected|token_id}
+ *
+ * House-rule model requested for this campaign:
+ * - form supplies physical/game statistics, HP and actions;
+ * - original alignment/personality and INT/WIS/CHA are retained;
+ * - original skill/save proficiencies are retained in addition to form proficiencies;
+ * - when both are proficient, the higher resulting bonus is used;
+ * - legendary actions and lair actions are unavailable;
+ * - Wild Shape damage does not trigger concentration checks;
+ * - Polymorph damage can trigger concentration checks, including self-polymorph;
+ * - damage beyond form HP carries over to original HP.
+ */
+var AD5Transform=(function(){
+    'use strict';
+    var VERSION='1.2.10', SCRIPT='AD5 Transform', SEQ=0;
+    var ABILITIES=['strength','dexterity','constitution','intelligence','wisdom','charisma'];
+    var MENTAL={intelligence:true,wisdom:true,charisma:true};
+    var SAVE_SHORT={strength:'str',dexterity:'dex',constitution:'con',intelligence:'int',wisdom:'wis',charisma:'cha'};
+    var SKILLS={
+        acrobatics:'dexterity',animal_handling:'wisdom',arcana:'intelligence',athletics:'strength',deception:'charisma',history:'intelligence',
+        insight:'wisdom',intimidation:'charisma',investigation:'intelligence',medicine:'wisdom',nature:'intelligence',perception:'wisdom',
+        performance:'charisma',persuasion:'charisma',religion:'intelligence',sleight_of_hand:'dexterity',stealth:'dexterity',survival:'wisdom'
+    };
+    var PERSONALITY=['alignment','npc_alignment','personality_traits','ideals','bonds','flaws','npc_flaws'];
+    var TOKEN_FIELDS=['represents','name','imgsrc','width','height','bar1_link','bar1_value','bar1_max','showname','showplayers_name','showplayers_bar1','bar1_num_permission','playersedit_bar1',
+        'bar2_link','bar2_value','bar2_max','showplayers_bar2','bar2_num_permission','playersedit_bar2',
+        'aura1_radius','aura1_color','aura1_square','aura1_players','aura2_radius','aura2_color','aura2_square','aura2_players',
+        'has_bright_light_vision','has_night_vision','night_vision_distance','night_vision_tint','night_vision_effect','vision','light_radius','light_dimradius','light_otherplayers',
+        'emits_bright_light','bright_light_distance','emits_low_light','low_light_distance','limit_field_of_vision_total','limit_field_of_night_vision_total'];
+
+    function root(){
+        if(!state.AD5Transform||typeof state.AD5Transform!=='object')state.AD5Transform={};
+        var r=state.AD5Transform;
+        if(!r.active||typeof r.active!=='object')r.active={};
+        if(!r.pending||typeof r.pending!=='object')r.pending={};
+        if(!r.recent||typeof r.recent!=='object')r.recent={};
+        r.version=VERSION;return r;
+    }
+    function norm(s){return String(s||'').toLowerCase().replace(/ё/g,'е').replace(/<br\s*\/?>/gi,'\n').replace(/&nbsp;/gi,' ').replace(/\s+/g,' ').trim();}
+    function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+    function gm(s){sendChat(SCRIPT,'/w gm '+s,null,{noarchive:true});}
+    function whisper(pid,s){var p=getObj('player',pid),n=p&&(p.get('_displayname')||p.get('displayname'));sendChat(SCRIPT,'/w "'+String(n||'gm').replace(/"/g,'')+'" '+s,null,{noarchive:true});}
+    function notify(s){sendChat('Шепот звезд',s,null,{noarchive:true});}
+    function numeric(v){return v!==null&&v!==undefined&&String(v).trim()!==''&&isFinite(Number(v))?Number(v):null;}
+    function mod(v){return Math.floor((Number(v)-10)/2);}
+    function truthy(v){return !/^(?:|0|false|off|no|нет)$/i.test(String(v==null?'':v).trim());}
+    function attr(cid,name,optional){var a=findObjs({_type:'attribute',_characterid:cid,name:name});if(a.length)return a[0];if(optional)return null;throw new Error('В листе «'+(getObj('character',cid)&&getObj('character',cid).get('name')||cid)+'» отсутствует '+name+'.');}
+    function attrValue(cid,name,def){var a=attr(cid,name,true);return a?String(a.get('current')==null?'':a.get('current')):(def===undefined?'':def);}
+    function setAttr(cid,name,current,max){var a=attr(cid,name,true);if(!a)a=createObj('attribute',{characterid:cid,name:name,current:current==null?'':current,max:max==null?'':max});else{var x={current:current==null?'':current};if(max!==undefined)x.max=max==null?'':max;a.set(x);}return a;}
+    function characterIsNpc(cid){return attrValue(cid,'npc','0')==='1';}
+    function partyPageId(){return Campaign().get('playerpageid');}
+    function tokenById(id){var t=getObj('graphic',String(id||''));return t&&(!t.get('_subtype')||t.get('_subtype')==='token')?t:null;}
+    function playerControlled(cid){var c=getObj('character',cid);return !!(c&&String(c.get('controlledby')||'').split(',').some(function(x){x=x.trim();return x==='all'||(x&&getObj('player',x)&&!playerIsGM(x));}));}
+    function canControl(token,pid){if(playerIsGM(pid))return true;if(!token)return false;var ids={},c=getObj('character',token.get('represents'));[token.get('controlledby'),c&&c.get('controlledby')].forEach(function(raw){String(raw||'').split(',').forEach(function(x){x=x.trim();if(x)ids[x]=true;});});return !!(ids.all||ids[pid]);}
+    function controllerSetFromRaw(raw,out){out=out||{all:false,ids:{}};String(raw||'').split(',').forEach(function(x){x=x.trim();if(!x)return;if(x==='all'){out.all=true;return;}var p=getObj('player',x);if(p&&!playerIsGM(x))out.ids[x]=true;});return out;}
+    function tokenPlayerControllers(token){var out={all:false,ids:{}},c=token&&getObj('character',token.get('represents'));if(token)controllerSetFromRaw(token.get('controlledby'),out);if(c)controllerSetFromRaw(c.get('controlledby'),out);return out;}
+    function tokenIsPlayerControlled(token){var x=tokenPlayerControllers(token);return !!(x.all||Object.keys(x.ids).length);}
+    function formControllerMap(){
+        var map={};findObjs({_type:'graphic',_subtype:'token'}).forEach(function(t){var cid=t.get('represents');if(!cid)return;var x=map[cid]||(map[cid]={all:false,ids:{}});controllerSetFromRaw(t.get('controlledby'),x);});return map;
+    }
+    function formAllowedForPlayer(form,pid,sourceControllers,tokenMap){
+        var x={all:false,ids:{}},tm=tokenMap&&tokenMap[form.id];controllerSetFromRaw(form.get('controlledby'),x);if(tm){if(tm.all)x.all=true;Object.keys(tm.ids||{}).forEach(function(id){x.ids[id]=true;});}
+        if(!playerIsGM(pid))return !!(x.all||x.ids[pid]);
+        // A GM using a player-controlled caster sees the forms granted to that
+        // caster's player owners, not every monster in the campaign.
+        if(sourceControllers&&sourceControllers.all){if(x.all)return true;return Object.keys(x.ids).length>0;}
+        var owners=sourceControllers&&sourceControllers.ids||{};return x.all||Object.keys(owners).some(function(id){return !!x.ids[id];});
+    }
+    function availableForms(pid,sourceToken){
+        var sourceControllers=tokenPlayerControllers(sourceToken),tokenMap=formControllerMap();
+        var list=findObjs({_type:'character'}).filter(function(c){
+            if(tempCharacter(c.id)||characterIsNpc(c.id)===false)return false;
+            if(c.get('archived'))return false;
+            if(!formAllowedForPlayer(c,pid,sourceControllers,tokenMap))return false;
+            try{return formHp(c.id)>0;}catch(ignore){return false;}
+        });
+        list.sort(function(a,b){var an=norm(a.get('name')),bn=norm(b.get('name'));return an<bn?-1:(an>bn?1:0);});return list;
+    }
+    function queryEscape(s){return String(s||'').replace(/&/g,'&amp;').replace(/\|/g,'&#124;').replace(/,/g,'&#44;').replace(/}/g,'&#125;').replace(/\r?\n/g,' ');}
+    function formQuery(forms){return '?{Выберите форму|'+forms.map(function(c){return queryEscape(c.get('name'))+','+c.id;}).join('|')+'}';}
+    function newPending(data){var id='x'+Date.now().toString(36)+'-'+(++SEQ),p=data||{};p.id=id;p.created=Date.now();root().pending[id]=p;setTimeout(function(){var cur=root().pending[id];if(cur&&cur===p&&Date.now()-Number(cur.created||0)>=120000){cancelPendingConcentration(cur,'истёк выбор формы');delete root().pending[id];}},120500);return p;}
+    function cancelPendingConcentration(p,reason){try{if(p&&p.concentrationId&&typeof AD5Concentration!=='undefined'&&AD5Concentration&&typeof AD5Concentration.end==='function')AD5Concentration.end(p.concentrationId,reason||'выбор формы отменён');}catch(ignore){}}
+    function promptPlayerForm(pid,source,modeName,meta){
+        meta=meta||{};if(!source)throw new Error('Не найден физический токен владельца способности.');if(!canControl(source,pid))throw new Error('Нет управления токеном владельца способности.');
+        var forms=availableForms(pid,source);if(!forms.length)throw new Error('Для этого персонажа нет доступных форм. Выдайте игроку управление NPC-листом зверя или его токеном через Controlled By.');
+        if(modeName==='polymorph'&&!meta.targetTokenId)throw new Error('Полиморф: сначала выберите цель способности.');
+        var p=newPending({mode:modeName,ownerPid:pid,sourceTokenId:source.id,targetTokenId:meta.targetTokenId||null,actorId:meta.actorId||originalActorId(source),name:meta.name|| (modeName==='wildshape'?'Дикая форма':'Полиморф'),range:meta.range||'',duration:meta.duration||'',concentrationId:meta.concentrationId||null,allowedFormIds:forms.map(function(c){return c.id;})});
+        var cmd='!ad5-transform choose --id|'+p.id+' --formid|'+formQuery(forms);
+        whisper(pid,'<b>'+(modeName==='wildshape'?'Дикая форма':'Полиморф')+'</b><br>Доступно форм: <b>'+forms.length+'</b>.<br>[Выбрать форму]('+cmd+')');
+        return {pending:true,pendingId:p.id,mode:modeName};
+    }
+    function fields(content){var f=Object.create(null),re=/{{\s*([\w]+)\s*=((?:@\{[^{}]*\}|\^\{[^{}]*\}|(?!}})[\s\S])*?)}}/gi,m;while((m=re.exec(String(content||''))))f[String(m[1]||'').toLowerCase()]=String(m[2]||'').trim();return f;}
+    function descriptionText(s){return String(s||'').replace(/<br\s*\/?>/gi,'\n').replace(/<[^>]+>/g,' ').replace(/&nbsp;/gi,' ').replace(/&#13;?/g,'\n').replace(/\r/g,'\n');}
+    function directive(text){
+        text=descriptionText(text);var lines=text.split(/\n/),out=[];
+        lines.forEach(function(line){
+            var m=/^\s*(ДИКАЯ\s+ФОРМА|ДИКИЙ\s+ОБЛИК|ПОЛИМОРФ)(?:\s*[:：—–-]\s*(.*?))?\s*[.;]?\s*$/i.exec(line);
+            if(!m)return;
+            var form=String(m[2]||'').replace(/[.]+\s*$/,'').trim();
+            if(/^(?:выбор|список|menu|choose)$/i.test(form))form='';
+            out.push({mode:/ДИКАЯ/i.test(m[1])?'wildshape':'polymorph',form:form,raw:String(line||'').trim(),menu:!form});
+        });
+        if(out.length>1)throw new Error('В одной способности допускается только одна строка ДИКАЯ ФОРМА или ПОЛИМОРФ.');
+        return out[0]||null;
+    }
+    function directiveFromFields(f){
+        f=f||{};
+        var d=directive(f.description!==undefined?f.description:(f.desc||''));
+        if(d)return d;
+        var mode=norm(f.ad5transform||'');
+        if(mode==='wildshape'||mode==='wild'||mode==='дикая форма'||mode==='дикий облик')return {mode:'wildshape',form:'',raw:'',menu:true,metadata:true};
+        if(mode==='polymorph'||mode==='poly'||mode==='полиморф')return {mode:'polymorph',form:'',raw:'',menu:true,metadata:true};
+        return null;
+    }
+    function stripDirective(text){
+        return descriptionText(text).split(/\n/).filter(function(line){return !/^\s*(?:ДИКАЯ\s+ФОРМА|ДИКИЙ\s+ОБЛИК|ПОЛИМОРФ)(?:\s*[:：—–-]\s*.*?)?\s*[.;]?\s*$/i.test(line);}).join('\n').trim();
+    }
+    function parseArgs(content){
+        var out={},re=/--([a-zа-яё0-9_-]+)\|([\s\S]*?)(?=\s+--[a-zа-яё0-9_-]+\||$)/ig,m;while((m=re.exec(String(content||''))))out[norm(m[1])]=String(m[2]||'').trim();return out;
+    }
+    function cleanImg(src){src=String(src||'');return src.replace(/\/(?:max|med|original)\.(png|jpe?g|gif)(\?.*)?$/i,'/thumb.$1$2');}
+    function tempCharacter(cid){return attrValue(cid,'ad5_transform_temp','0')==='1';}
+    function findForm(name){
+        var n=norm(name),list=findObjs({_type:'character',name:String(name||'').trim()}).filter(function(c){return !tempCharacter(c.id);});
+        if(!list.length)list=findObjs({_type:'character'}).filter(function(c){return !tempCharacter(c.id)&&norm(c.get('name'))===n;});
+        if(!list.length)throw new Error('Не найден лист формы «'+name+'». Создайте NPC-зверя с таким точным именем.');
+        if(list.length>1)throw new Error('Найдено несколько листов с именем «'+name+'». Имена форм должны быть уникальны.');
+        if(!characterIsNpc(list[0].id))throw new Error('Лист формы «'+name+'» должен быть NPC-статблоком.');
+        return list[0];
+    }
+    function originalRecord(tokenOrId){var id=typeof tokenOrId==='string'?tokenOrId:(tokenOrId&&tokenOrId.id);return id&&root().active[id]||null;}
+    function originalActorId(tokenOrId){var rec=originalRecord(tokenOrId);if(rec)return rec.originalCharId;var t=typeof tokenOrId==='string'?tokenById(tokenOrId):tokenOrId;return t?t.get('represents'):null;}
+    function mode(tokenOrId){var rec=originalRecord(tokenOrId);return rec?rec.mode:null;}
+    function originalHpValue(tokenOrId){var rec=originalRecord(tokenOrId);if(!rec)return null;return currentOriginalHp(rec).value;}
+    function snapshotToken(token){var o={};TOKEN_FIELDS.forEach(function(k){try{o[k]=token.get(k);}catch(ignore){}});return o;}
+    function setToken(token,changes){var diff={};Object.keys(changes||{}).forEach(function(k){if(changes[k]!==undefined&&String(token.get(k))!==String(changes[k]))diff[k]=changes[k];});if(Object.keys(diff).length)token.set(diff);}
+    function hpAttrs(cid){return findObjs({_type:'attribute',_characterid:cid}).filter(function(a){return norm(a.get('name'))==='hp';});}
+    function chooseHpAttr(cid,token){
+        var list=hpAttrs(cid);if(!list.length)return null;if(list.length===1)return list[0];var link=token&&token.get('bar1_link'),direct=list.filter(function(a){return a.id===link;});if(direct.length===1)return direct[0];
+        var meaningful=list.filter(function(a){return String(a.get('current')||'').trim()!==''||String(a.get('max')||'').trim()!=='';});return meaningful.length===1?meaningful[0]:list[0];
+    }
+    function captureOriginalHp(token,cid){
+        if(characterIsNpc(cid))return {npc:true,value:Math.max(0,numeric(token.get('bar1_value'))||0),max:numeric(token.get('bar1_max')),link:String(token.get('bar1_link')||''),startValue:Math.max(0,numeric(token.get('bar1_value'))||0)};
+        var hp=chooseHpAttr(cid,token);if(!hp)throw new Error('У исходного персонажа отсутствует атрибут hp.');var val=numeric(hp.get('current')),mx=numeric(hp.get('max'));if(val===null)throw new Error('У исходного персонажа некорректное HP.');return {npc:false,value:Math.max(0,val),max:mx,hpAttrId:hp.id,startValue:Math.max(0,val)};
+    }
+    function currentOriginalHp(rec){
+        if(rec.originalHp.npc)return {value:Number(rec.originalHp.value)||0,max:rec.originalHp.max};
+        var hp=getObj('attribute',rec.originalHp.hpAttrId)||chooseHpAttr(rec.originalCharId,null),v=hp&&numeric(hp.get('current')),m=hp&&numeric(hp.get('max'));if(v===null)v=Number(rec.originalHp.value)||0;return {value:Math.max(0,v),max:m===null?rec.originalHp.max:m,hp:hp};
+    }
+    function writeOriginalHp(rec,value){
+        value=Math.max(0,Math.floor(Number(value)||0));rec.originalHp.value=value;
+        if(rec.originalHp.npc)return value;
+        var hp=getObj('attribute',rec.originalHp.hpAttrId)||chooseHpAttr(rec.originalCharId,null);if(hp){hp.set('current',value);rec.originalHp.hpAttrId=hp.id;}
+        findObjs({_type:'graphic',_subtype:'token',represents:rec.originalCharId}).forEach(function(t){if(t.id===rec.tokenId)return;var link=t.get('bar1_link');if(!link||link==='hp'||(hp&&link===hp.id))t.set({bar1_link:hp?hp.id:'',bar1_value:value,bar1_max:hp?hp.get('max'):rec.originalHp.max});});
+        return value;
+    }
+    function originalAbility(cid,a){var v=numeric(attrValue(cid,a,''));return v===null?10:v;}
+    function proficiencyFlag(cid,key){var a=attr(cid,key,true);return !!(a&&truthy(a.get('current')));}
+    function bonusValue(cid,names){for(var i=0;i<names.length;i++){var a=attr(cid,names[i],true),n=a&&numeric(a.get('current'));if(n!==null)return n;}return null;}
+    function sourceSaveInfo(cid,ability){
+        var isNpc=characterIsNpc(cid),short=SAVE_SHORT[ability],score=originalAbility(cid,ability),amod=mod(score),prof=false,bonus=null;
+        if(isNpc){prof=proficiencyFlag(cid,'npc_'+short+'_save_flag');bonus=bonusValue(cid,['npc_'+short+'_save']);}
+        else{prof=proficiencyFlag(cid,ability+'_save_prof');bonus=bonusValue(cid,[ability+'_save_bonus',ability+'_save']);}
+        return {prof:prof,bonus:bonus===null?amod:bonus,mod:amod,score:score};
+    }
+    function sourceSkillInfo(cid,skill,ability){
+        var isNpc=characterIsNpc(cid),score=originalAbility(cid,ability),amod=mod(score),prof=false,bonus=null;
+        if(isNpc){prof=proficiencyFlag(cid,'npc_'+skill+'_flag');bonus=bonusValue(cid,['npc_'+skill]);}
+        else{prof=proficiencyFlag(cid,skill+'_prof');bonus=bonusValue(cid,[skill+'_bonus',skill]);}
+        return {prof:prof,bonus:bonus===null?amod:bonus,mod:amod,score:score};
+    }
+    function forbiddenActionRows(formCid){
+        var bad=Object.create(null),attrs=findObjs({_type:'attribute',_characterid:formCid});
+        attrs.forEach(function(a){var n=String(a.get('name')||''),m=/^(repeating_npcaction-l_[^_]+_)/i.exec(n);if(m)bad[m[1]]=true;});
+        attrs.forEach(function(a){var n=String(a.get('name')||''),m=/^(repeating_[^_]+_[^_]+_)(?:name|atkname)$/i.exec(n);if(!m)return;var title=String(a.get('current')||'');if(/(?:легендарн(?:ые|ое)\s+действ|legendary\s+actions?|действи[яе]\s+в\s+логов|lair\s+actions?)/i.test(title))bad[m[1]]=true;});
+        return bad;
+    }
+    function cloneFormAttributes(formCid,tempCid,originalCid){
+        var bad=forbiddenActionRows(formCid),formAttrs=findObjs({_type:'attribute',_characterid:formCid}),values=Object.create(null);
+        formAttrs.forEach(function(a){values[a.get('name')]={current:a.get('current'),max:a.get('max')};});
+        formAttrs.forEach(function(a){
+            var name=String(a.get('name')||''),skip=false;if(/^repeating_npcaction-l_/i.test(name)||/^npc_legendary_actions$/i.test(name))skip=true;
+            Object.keys(bad).some(function(p){if(name.indexOf(p)===0){skip=true;return true;}return false;});if(skip)return;
+            var cur=a.get('current'),mx=a.get('max');
+            if(/_rollbase(?:_[a-z]+)?$/i.test(name)){cur=String(cur||'').replace(/\s*{{\s*ad5source\s*=[\s\S]*?}}/gi,'').replace(/\s*{{\s*ad5sourcetoken\s*=[\s\S]*?}}/gi,'')+' {{ad5source='+tempCid+'}}';}
+            createObj('attribute',{characterid:tempCid,name:name,current:cur==null?'':cur,max:mx==null?'':mx});
+        });
+        setAttr(tempCid,'npc','1');setAttr(tempCid,'npc_toggle','1');setAttr(tempCid,'npc_legendary_actions','0');setAttr(tempCid,'ad5_transform_temp','1');setAttr(tempCid,'ad5_transform_original',originalCid);
+        return values;
+    }
+    function mergeMentalAndProficiencies(tempCid,formCid,originalCid,formValues){
+        var mergedScores={},formScores={};
+        ABILITIES.forEach(function(a){var fv=numeric(formValues[a]&&formValues[a].current);if(fv===null)fv=10;formScores[a]=fv;mergedScores[a]=MENTAL[a]?originalAbility(originalCid,a):fv;setAttr(tempCid,a,mergedScores[a]);setAttr(tempCid,a+'_mod',mod(mergedScores[a]));});
+        ABILITIES.forEach(function(a){
+            var short=SAVE_SHORT[a],o=sourceSaveInfo(originalCid,a),b=sourceSaveInfo(formCid,a),newMod=mod(mergedScores[a]),origCandidate=o.prof?(newMod+(o.bonus-o.mod)):null,beastCandidate=b.prof?(newMod+(b.bonus-b.mod)):null,final=null;
+            if(origCandidate!==null&&beastCandidate!==null)final=Math.max(origCandidate,beastCandidate);else final=origCandidate!==null?origCandidate:beastCandidate;
+            if(final!==null){setAttr(tempCid,'npc_'+short+'_save',final);setAttr(tempCid,'npc_'+short+'_save_flag','on');}else{setAttr(tempCid,'npc_'+short+'_save_flag','0');var existing=attr(tempCid,'npc_'+short+'_save',true);if(existing)existing.remove();}
+        });
+        Object.keys(SKILLS).forEach(function(skill){
+            var ability=SKILLS[skill],o=sourceSkillInfo(originalCid,skill,ability),b=sourceSkillInfo(formCid,skill,ability),newMod=mod(mergedScores[ability]),origCandidate=o.prof?(newMod+(o.bonus-o.mod)):null,beastCandidate=b.prof?(newMod+(b.bonus-b.mod)):null,final=null;
+            if(origCandidate!==null&&beastCandidate!==null)final=Math.max(origCandidate,beastCandidate);else final=origCandidate!==null?origCandidate:beastCandidate;
+            if(final!==null){setAttr(tempCid,'npc_'+skill,final);setAttr(tempCid,'npc_'+skill+'_flag','on');}else{setAttr(tempCid,'npc_'+skill+'_flag','0');var existing=attr(tempCid,'npc_'+skill,true);if(existing)existing.remove();}
+        });
+        var align=attrValue(originalCid,'alignment','')||attrValue(originalCid,'npc_alignment','');if(align)setAttr(tempCid,'npc_alignment',align);
+        PERSONALITY.forEach(function(n){var v=attrValue(originalCid,n,'');if(v&&n!=='alignment'&&n!=='npc_alignment')setAttr(tempCid,n,v);});
+        return {scores:mergedScores};
+    }
+    function cloneAbilities(formCid,tempCid){
+        findObjs({_type:'ability',_characterid:formCid}).forEach(function(a){
+            var name=String(a.get('name')||''),action=String(a.get('action')||'');
+            if(/(?:легендарн(?:ые|ое)\s+действ|legendary\s+actions?|действи[яе]\s+в\s+логов|lair\s+actions?|npcaction-l)/i.test(name+' '+action))return;
+            // Control actions belong to the transformation instance, not to the
+            // beast stat block.  Never inherit stale buttons from a form sheet.
+            if(/^!ad5-transform\s+(?:end|return|конец)(?:\s|$)/i.test(action)||/^!ad5conc\s+endselected(?:\s|$)/i.test(action))return;
+            action=action.replace(/{{\s*ad5source\s*=[^{}]*}}/gi,'{{ad5source='+tempCid+'}}');
+            createObj('ability',{characterid:tempCid,name:a.get('istokenaction')?Array(21).join('\u200b')+name.replace(/^\u200b+/,''):name,action:action,istokenaction:!!a.get('istokenaction')});
+        });
+    }
+    function ensureTokenAction(cid,name,action){
+        name=Array(21).join('\u200b')+String(name||'').replace(/^\u200b+/,'');
+        var list=findObjs({_type:'ability',_characterid:cid}).filter(function(a){return String(a.get('action')||'').trim()===action;});
+        if(!list.length)return createObj('ability',{characterid:cid,name:name,action:action,istokenaction:true});
+        var patch={};if(String(list[0].get('name')||'')!==name)patch.name=name;if(!list[0].get('istokenaction'))patch.istokenaction=true;if(Object.keys(patch).length)list[0].set(patch);list.slice(1).forEach(function(a){a.remove();});return list[0];
+    }
+    function syncControlActions(rec){
+        if(!rec||!rec.tempCharId||!rec.tokenId)return;
+        // Each transformed token owns a unique temporary character, so embed the
+        // physical token/concentration id directly.  Do not rely on
+        // @{selected|token_id}: Roll20 does not always refresh/resolve selected
+        // references after Represents is changed by the API.
+        if(rec.mode==='wildshape')
+            ensureTokenAction(rec.tempCharId,'Прервать дикий облик','!ad5-transform end --token|'+rec.tokenId);
+        // Only a creature that polymorphed itself owns this concentration. A
+        // target polymorphed by somebody else must never receive a button that
+        // can terminate the caster's concentration.
+        if(rec.mode==='polymorph'&&rec.concentrationId&&String(rec.sourceTokenId||'')===String(rec.tokenId||''))
+            ensureTokenAction(rec.tempCharId,'Прервать концентрацию','!ad5conc end '+rec.concentrationId);
+    }
+    function controlledByFor(originalChar,token){var seen={},out=[];[originalChar&&originalChar.get('controlledby'),token&&token.get('controlledby')].forEach(function(raw){String(raw||'').split(',').forEach(function(x){x=x.trim();if(x&&!seen[x]){seen[x]=true;out.push(x);}});});return out.join(',');}
+    function formHp(formCid){var hp=chooseHpAttr(formCid,null),v=hp&&numeric(hp.get('max')),cur=hp&&numeric(hp.get('current'));if(v===null)v=numeric(attrValue(formCid,'npc_hpbase',''));if(v===null)v=cur;if(v===null||v<=0)throw new Error('У формы отсутствует корректный максимум HP.');return Math.floor(v);}
+    function appearanceFromTokenLike(obj){if(!obj)return null;var out={};['imgsrc','width','height','has_bright_light_vision','has_night_vision','night_vision_distance','night_vision_tint','night_vision_effect','vision','light_radius','light_dimradius','light_otherplayers','emits_bright_light','bright_light_distance','emits_low_light','low_light_distance','limit_field_of_vision_total','limit_field_of_night_vision_total'].forEach(function(k){var v=typeof obj.get==='function'?obj.get(k):obj[k];if(v!==undefined&&v!==null&&v!=='')out[k]=v;});if(out.imgsrc)out.imgsrc=cleanImg(out.imgsrc);if(!out.imgsrc)delete out.imgsrc;return out;}
+    function sizePixels(formCid,pageId){var s=norm(attrValue(formCid,'npc_size','medium')),squares=1;if(/tiny|крошеч/.test(s))squares=0.5;else if(/large|больш/.test(s))squares=2;else if(/huge|огромн/.test(s))squares=3;else if(/gargantuan|исполин|громадн/.test(s))squares=4;var p=getObj('page',pageId),snap=Number(p&&p.get('snapping_increment'))||1;return Math.max(35,70*snap*squares);}
+    function resolveAppearance(formChar,pageId,done){
+        // A saved default token is authoritative. An image-less imported token
+        // must not hide a valid default-token image or character avatar.
+        var tokens=findObjs({_type:'graphic',_subtype:'token',represents:formChar.id}),fallback=function(){
+            tokens.sort(function(a,b){return Number(b.get('_pageid')===pageId)-Number(a.get('_pageid')===pageId);});
+            for(var i=0;i<tokens.length;i++){var appearance=appearanceFromTokenLike(tokens[i]);if(appearance&&appearance.imgsrc){done(appearance);return;}}
+            var av=cleanImg(formChar.get('avatar')||'');done(av?{imgsrc:av}:{});
+        };
+        try{formChar.get('defaulttoken',function(raw){try{var x=raw&&JSON.parse(raw),appearance=x&&appearanceFromTokenLike(x);if(appearance&&appearance.imgsrc){done(appearance);return;}}catch(ignore){}fallback();});}catch(e){fallback();}
+    }
+    function cleanupRecent(){var r=root(),now=Date.now();Object.keys(r.recent).forEach(function(id){if(now-Number(r.recent[id].endedAt||0)>15000)delete r.recent[id];});Object.keys(r.pending).forEach(function(id){if(now-Number(r.pending[id].created||0)>120000){cancelPendingConcentration(r.pending[id],'истёк выбор формы');delete r.pending[id];}});}
+    function makeTemp(token,formChar,modeName,originalCid){
+        var original=getObj('character',originalCid);if(!original)throw new Error('Не найден исходный лист персонажа.');
+        var controlled=controlledByFor(original,token),journals=String(original.get('inplayerjournals')||''),name='[AD5 форма] '+String(original.get('name')||token.get('name')||'Персонаж')+' → '+String(formChar.get('name')||'Форма');
+        var temp=createObj('character',{name:name,archived:false,controlledby:controlled,inplayerjournals:journals});
+        if(!temp)throw new Error('Roll20 не создал временный лист формы.');
+        temp.set('bio','Временный гибридный лист AD5 Transform. Удаляется автоматически при завершении формы.');
+        temp.set('gmnotes','AD5_TRANSFORM_TEMP token='+token.id+' original='+originalCid+' form='+formChar.id);
+        var vals=cloneFormAttributes(formChar.id,temp.id,originalCid);mergeMentalAndProficiencies(temp.id,formChar.id,originalCid,vals);cloneAbilities(formChar.id,temp.id);return temp;
+    }
+    function formTempHp(token,originalCid){
+        var raw=token.get('bar2_value'),value=numeric(raw),max=token.get('bar2_max'),link=String(token.get('bar2_link')||'');
+        if(link){
+            var a=getObj('attribute',link);
+            // A player hp_temp link is valid before transformation, but becomes a
+            // foreign-character link as soon as Represents changes to the temporary
+            // NPC sheet. Carry only its value into an unlinked NPC Bar 2.
+            if(!a||String(a.get('_characterid')||'')!==String(originalCid)||norm(a.get('name'))!=='hp_temp')return {value:0,max:''};
+            var av=numeric(a.get('current'));if(av!==null)value=av;if(String(a.get('max')||'').trim()!=='')max=a.get('max');
+        }
+        return {value:Math.max(0,value===null?0:value),max:String(max==null?'':max)};
+    }
+    function restoreTempHp(rec,token,changes){
+        var o=rec.originalToken||{},current=numeric(token.get('bar2_value'));if(current===null)current=0;current=Math.max(0,current);
+        var originalLink=String(o.bar2_link||'');
+        if(originalLink){
+            var a=getObj('attribute',originalLink);
+            if(a&&String(a.get('_characterid')||'')===String(rec.originalCharId)&&norm(a.get('name'))==='hp_temp'){
+                a.set('current',current);changes.bar2_link=a.id;changes.bar2_value=current;changes.bar2_max=String(a.get('max')||o.bar2_max||'');return;
+            }
+            // Bar 2 was a non-AD5 resource before the form. Restore it exactly;
+            // do not write temporary HP into an unrelated resource.
+            changes.bar2_link=originalLink;changes.bar2_value=o.bar2_value;changes.bar2_max=o.bar2_max;return;
+        }
+        changes.bar2_link='';changes.bar2_value=current;changes.bar2_max=String(token.get('bar2_max')==null?'':token.get('bar2_max'));
+    }
+    function refreshTransformUi(token){
+        try{if(typeof AD5Concentration!=='undefined'&&AD5Concentration&&typeof AD5Concentration.refreshToken==='function')AD5Concentration.refreshToken(token);}catch(ignoreConcentration){}
+        try{if(typeof AD5Wounds!=='undefined'&&AD5Wounds&&typeof AD5Wounds.sync==='function')AD5Wounds.sync(token);}catch(ignoreTooltip){}
+    }
+    function originalWounds(token){try{return typeof AD5Wounds!=='undefined'&&AD5Wounds&&AD5Wounds.counts?AD5Wounds.counts(token.id):null;}catch(ignore){return null;}}
+    function restoreWounds(rec,token){try{if(typeof AD5Wounds==='undefined'||!AD5Wounds||!rec.originalWounds)return;AD5Wounds.set(token,rec.originalWounds);var cur=currentOriginalHp(rec),start=Number(rec.originalHp.startValue)||cur.value;if(cur.value<start&&AD5Wounds.plan){var p=AD5Wounds.plan(token,start,cur.value,false,rec.originalWounds);AD5Wounds.set(token,p.after);if(AD5Wounds.announce)AD5Wounds.announce(token,p);}else if(AD5Wounds.sync)AD5Wounds.sync(token);}catch(e){gm('Восстановление ран после формы: '+esc(e.message||e));}}
+    // 1.2.5: never delete other tokens merely because they use the same form.
+    // Duplicate/similar beast tokens are legal battlefield objects. Temporary
+    // hybrid sheets are scoped to the transformed token, but Roll20 graphics are
+    // never removed by the transformation engine.
+    function removeDuplicateTempTokens(rec){return 0;}
+    function applyTransformation(token,formChar,modeName,opts,done){
+        opts=opts||{};cleanupRecent();var r=root(),old=r.active[token.id];if(old)endRecord(old,'применена новая форма',{keepConcentration:false,silent:true});
+        var originalCid=token.get('represents'),original=getObj('character',originalCid);if(!original)throw new Error('У токена отсутствует исходный лист.');
+        var hp=captureOriginalHp(token,originalCid),snap=snapshotToken(token),shapeTempHp=formTempHp(token,originalCid),wounds=originalWounds(token),temp=makeTemp(token,formChar,modeName,originalCid),maxHp=formHp(formChar.id),id='t'+Date.now().toString(36)+'-'+(++SEQ);
+        var rec={id:id,tokenId:token.id,mode:modeName,originalCharId:originalCid,tempCharId:temp.id,formCharId:formChar.id,formName:String(formChar.get('name')||''),sourceTokenId:opts.sourceTokenId||token.id,casterCharId:opts.casterCharId||originalCid,ownerPid:opts.ownerPid||null,concentrationId:opts.concentrationId||null,originalToken:snap,originalHp:hp,originalWounds:wounds,overflowTotal:0,started:Date.now()};
+        r.active[token.id]=rec;setAttr(temp.id,'hp',maxHp,maxHp);setAttr(temp.id,'npc_hpbase',maxHp);setAttr(temp.id,'npc_hpformula',String(maxHp));
+        resolveAppearance(formChar,token.get('_pageid'),function(appearance){
+            if(!root().active[token.id]||root().active[token.id].id!==id)return;
+            var px=sizePixels(formChar.id,token.get('_pageid')),changes={represents:temp.id,name:String(formChar.get('name')||token.get('name')||'Форма'),bar1_link:'',bar1_value:maxHp,bar1_max:maxHp,bar2_link:'',bar2_value:shapeTempHp.value,bar2_max:shapeTempHp.max,width:px,height:px};
+            Object.keys(appearance||{}).forEach(function(k){changes[k]=appearance[k];});if(!changes.width)changes.width=px;if(!changes.height)changes.height=px;setToken(token,changes);
+            // The transformation reuses this exact physical token. A temporary
+            // hybrid CHARACTER is required, but other beast/similar tokens on the
+            // battlefield are explicitly allowed and are never deleted.
+            // Create control Token Actions only AFTER the physical token already
+            // Represents the temporary form.  This forces Roll20 clients to see
+            // the ability on the currently represented sheet. A delayed pass
+            // covers clients/sheet workers that refresh Represents asynchronously.
+            syncControlActions(rec);
+            setTimeout(function(){var active=root().active[token.id];if(active&&active.id===rec.id)syncControlActions(active);},150);
+            setTimeout(function(){var active=root().active[token.id];if(active&&active.id===rec.id)syncControlActions(active);},500);
+            try{if(typeof AD5HealthView!=='undefined'&&AD5HealthView&&AD5HealthView.update)AD5HealthView.update(token);}catch(ignore){}refreshTransformUi(token);
+            var controlButton=modeName==='wildshape'?' [Прервать дикий облик](!ad5-transform end --token|'+token.id+')':((rec.concentrationId&&String(rec.sourceTokenId||'')===String(rec.tokenId||''))?' [Прервать концентрацию](!ad5conc end '+rec.concentrationId+')':'');
+            notify('<b>'+esc(original.get('name')||'Персонаж')+'</b> принимает форму <b>'+esc(formChar.get('name'))+'</b> ('+(modeName==='wildshape'?'Дикая форма':'Полиморф')+').'+controlButton);
+            gm('Трансформация: физический token ID <b>'+esc(token.id)+'</b> сохранён; '+esc(original.get('name')||'Персонаж')+' → '+esc(formChar.get('name'))+'. HP формы: '+maxHp+'. Другие токены на поле не изменялись.'+(!appearance||!appearance.imgsrc?' <b>У формы нет изображения:</b> характеристики и размер изменены, картинка осталась прежней. Задайте Default Token или Avatar у листа формы и повторите превращение.':''));
+            if(typeof done==='function')done(rec);
+        });
+        return rec;
+    }
+    function restoreToken(rec,reason){
+        var token=tokenById(rec.tokenId);if(!token)return false;var cur=currentOriginalHp(rec),o=rec.originalToken||{},changes={represents:rec.originalCharId,name:o.name,imgsrc:o.imgsrc,width:o.width,height:o.height,bar1_value:cur.value,bar1_max:cur.max==null?o.bar1_max:cur.max};
+        if(rec.originalHp.npc)changes.bar1_link=rec.originalHp.link||'';else{var hp=getObj('attribute',rec.originalHp.hpAttrId)||chooseHpAttr(rec.originalCharId,token);changes.bar1_link=hp?hp.id:(o.bar1_link||'');changes.bar1_max=hp?hp.get('max'):changes.bar1_max;}
+        restoreTempHp(rec,token,changes);
+        TOKEN_FIELDS.forEach(function(k){if(['represents','name','imgsrc','width','height','bar1_link','bar1_value','bar1_max','bar2_link','bar2_value','bar2_max'].indexOf(k)<0&&o[k]!==undefined)changes[k]=o[k];});
+        setToken(token,changes);restoreWounds(rec,token);try{if(typeof AD5HealthView!=='undefined'&&AD5HealthView&&AD5HealthView.update)AD5HealthView.update(token);}catch(ignore){}refreshTransformUi(token);
+        notify('<b>'+esc(token.get('name')||'Персонаж')+'</b> возвращается в исходную форму.'+(rec.overflowTotal?(' Перенесено урона в исходное HP: <b>'+rec.overflowTotal+'</b>.'):''));
+        gm('Форма '+esc(rec.formName)+' завершена'+(reason?': '+esc(reason):'')+'. Исходные HP: '+cur.value+(rec.overflowTotal?' (перенос '+rec.overflowTotal+')':'')+'.');return true;
+    }
+    function endRecord(rec,reason,opts){
+        opts=opts||{};if(!rec)return false;var r=root();if(r.active[rec.tokenId]&&r.active[rec.tokenId].id===rec.id)delete r.active[rec.tokenId];rec.endedAt=Date.now();r.recent[rec.id]=rec;
+        restoreToken(rec,reason);
+        // If someone intentionally duplicated the transformed token, keep that
+        // battlefield token alive. Rebind copies to the base beast statblock before
+        // removing the private hybrid sheet of the original transformed token.
+        findObjs({_type:'graphic',_subtype:'token',represents:rec.tempCharId}).forEach(function(t){if(String(t.id)!==String(rec.tokenId))try{t.set('represents',rec.formCharId||'');}catch(ignoreCopy){}});
+        var temp=getObj('character',rec.tempCharId);if(temp)temp.remove();
+        if(rec.mode==='polymorph'&&rec.concentrationId&&!opts.fromConcentration&&!opts.keepConcentration){try{if(typeof AD5Concentration!=='undefined'&&AD5Concentration&&AD5Concentration.end)AD5Concentration.end(rec.concentrationId,reason||'полиморф завершён');}catch(ignore){}}
+        return true;
+    }
+    function endToken(tokenOrId,reason,opts){var rec=originalRecord(tokenOrId);return rec?endRecord(rec,reason,opts):false;}
+    function endByConcentration(id){var ended=0;Object.keys(root().active).forEach(function(tid){var rec=root().active[tid];if(rec&&String(rec.concentrationId||'')===String(id||'')){if(endRecord(rec,'завершена концентрация',{fromConcentration:true}))ended++;}});return ended;}
+    function prepareDamage(token,incomingAfterTemp,currentFormHp){var rec=originalRecord(token);if(!rec)return null;var incoming=Math.max(0,Number(incomingAfterTemp)||0),hp=Math.max(0,Number(currentFormHp)||0),overflow=Math.max(0,incoming-hp),breaks=incoming>=hp&&incoming>0;return {id:rec.id,tokenId:rec.tokenId,mode:rec.mode,incoming:incoming,formHp:Math.max(0,hp-incoming),overflow:overflow,breaks:breaks,concentrationId:rec.concentrationId||null};}
+    function recordForDamage(plan){if(!plan)return null;var rec=root().active[plan.tokenId];if(rec&&rec.id===plan.id)return rec;rec=root().recent[plan.id];return rec||null;}
+    function applyOverflow(plan){if(!plan||!plan.overflow)return 0;var rec=recordForDamage(plan);if(!rec)return 0;var cur=currentOriginalHp(rec),after=Math.max(0,cur.value-plan.overflow),actual=cur.value-after;if(actual>0){writeOriginalHp(rec,after);rec.overflowTotal=(Number(rec.overflowTotal)||0)+actual;}return actual;}
+    function finishDamage(plan){if(!plan||!plan.breaks)return {reverted:false,overflow:plan?plan.overflow:0};var rec=recordForDamage(plan);if(!rec)return {reverted:false,overflow:plan.overflow};var active=root().active[plan.tokenId];if(active&&active.id===plan.id){endRecord(active,'HP формы опустились до 0',{keepConcentration:true});if(rec.mode==='polymorph'&&rec.concentrationId){try{if(typeof AD5Concentration!=='undefined'&&AD5Concentration&&AD5Concentration.end)AD5Concentration.end(rec.concentrationId,'полиморф завершён при 0 HP формы');}catch(ignore){}}return {reverted:true,overflow:plan.overflow};}return {reverted:true,overflow:plan.overflow};}
+    function skipConcentrationDamage(token,context){var m=context&&context.transformMode||mode(token);return m==='wildshape';}
+    function resolveSourceFromCard(msg,f){
+        var t=(f.ad5sourcetoken||f.ad5source_token)&&tokenById(f.ad5sourcetoken||f.ad5source_token);if(t)return t;
+        if(msg.selected&&msg.selected.length){t=tokenById(msg.selected[0]._id);if(t)return t;}
+        var cid=f.ad5source||f.charid||f.characterid||'',c=cid&&getObj('character',cid);
+        // Exact repeating row metadata can recover the character even when a
+        // Roll20 sheet worker rebuilt rollbase and dropped ad5source.
+        if(!c&&f.ad5row){
+            var row=String(f.ad5row||''),ids=[];[row+'name',row+'atkname',row+'rollbase'].forEach(function(n){findObjs({_type:'attribute',name:n}).forEach(function(a){var id=a.get('_characterid');if(id&&ids.indexOf(id)<0)ids.push(id);});});
+            if(ids.length===1){cid=ids[0];c=getObj('character',cid);}
+        }
+        if(!c&&f.ad5spellprefix){
+            var sp=String(f.ad5spellprefix||''),sids=[];[sp+'spellname',sp+'spellname_base',sp+'spelloutput'].forEach(function(n){findObjs({_type:'attribute',name:n}).forEach(function(a){var id=a.get('_characterid');if(id&&sids.indexOf(id)<0)sids.push(id);});});
+            if(sids.length===1){cid=sids[0];c=getObj('character',cid);}
+        }
+        if(!c){var name=String(f.charname||msg.who||'').replace(/\s+\(GM\)$/,'').trim(),cs=findObjs({_type:'character'}).filter(function(x){return norm(x.get('name'))===norm(name);});if(cs.length===1){c=cs[0];cid=c.id;}}
+        if(!cid)return null;
+        // AD5 4.3.24 persists the last real physical token context because sheet
+        // rolls do not reliably expose msg.selected. Reuse that memory before
+        // falling back to ambiguous character-copy discovery.
+        try{
+            var mem=state.AD5SourceMemory||{},key=String(msg.playerid||'')+'|'+String(cid),mr=mem.byPlayerActor&&mem.byPlayerActor[key];
+            var mt=mr&&tokenById(mr.tokenId);
+            if(mt&&mt.get('_pageid')===partyPageId()&&originalActorId(mt)===String(cid))return mt;
+            var ar=mem.byActor&&mem.byActor[String(cid)],at=ar&&tokenById(ar.tokenId);
+            if(at&&at.get('_pageid')===partyPageId()&&originalActorId(at)===String(cid))return at;
+        }catch(ignoreMemory){}
+        var page=partyPageId(),tokens=findObjs({_type:'graphic',_subtype:'token',_pageid:page,layer:'objects'}).filter(function(x){return originalActorId(x)===cid||x.get('represents')===cid;});
+        if(tokens.length===1)return tokens[0];
+        var controlled=tokens.filter(function(x){return canControl(x,msg.playerid);});
+        if(controlled.length===1)return controlled[0];
+        // In combat the active Turn Tracker token is the strongest physical
+        // identity when a player character has several copies on the map.
+        if(controlled.length>1){
+            try{
+                var raw=Campaign().get('turnorder'),turns=raw?JSON.parse(raw):[],ids={};turns.forEach(function(x){if(x&&x.id)ids[String(x.id)]=true;});
+                var tracked=controlled.filter(function(x){return !!ids[x.id];});
+                if(tracked.length===1)return tracked[0];
+                var active=turns&&turns[0]&&tokenById(turns[0].id);
+                if(active&&controlled.some(function(x){return x.id===active.id;}))return active;
+            }catch(ignore){}
+            // Never guess between several physical copies of one character.
+            // Transforming the wrong copy looks like a newly spawned beast while
+            // the player's real token remains unchanged.  AD5 must pass the exact
+            // source token, or combat must identify it through the active turn.
+        }
+        return null;
+    }
+    function beginPolymorph(source,target,form,pid,meta){
+        if(!source||!target)throw new Error('Не найден токен источника или цели Полиморфа.');if(!canControl(source,pid))throw new Error('Нет управления токеном заклинателя.');
+        var sourceActor=originalActorId(source),concentrationId=null;try{if(typeof AD5Concentration==='undefined'||!AD5Concentration||typeof AD5Concentration.claimAction!=='function')throw new Error('не найден AD5 Concentration.');concentrationId=AD5Concentration.claimAction({actorId:sourceActor,sourceTokenId:source.id,ownerPid:pid,spellName:meta.name||'Полиморф',range:meta.range||'',duration:meta.duration||'',concentrationFlag:'1'});}catch(e){throw new Error('Не удалось начать концентрацию Полиморфа: '+(e.message||e));}
+        try{return applyTransformation(target,form,'polymorph',{sourceTokenId:source.id,casterCharId:sourceActor,ownerPid:pid,concentrationId:concentrationId});}catch(e2){try{if(concentrationId&&AD5Concentration&&AD5Concentration.end)AD5Concentration.end(concentrationId,'ошибка применения Полиморфа');}catch(ignore){}throw e2;}
+    }
+    function applyFromAd5(opts){
+        opts=opts||{};var d=opts.directive||directive(opts.description||'')||directiveFromFields(opts.fields||{});if(!d)return null;var target=tokenById(opts.targetTokenId),source=tokenById(opts.sourceTokenId),pid=opts.ownerPid||'';
+        if(!source&&opts.actorId){var ts=findObjs({_type:'graphic',_subtype:'token',_pageid:partyPageId(),layer:'objects'}).filter(function(t){return originalActorId(t)===String(opts.actorId);});if(ts.length===1)source=ts[0];}
+        // Wild Shape uses the explicitly selected target as the physical token to
+        // transform, but that target MUST be the owner of this ability.  If AD5/NPC
+        // Forge knows the exact source token, require the exact same graphic.  For a
+        // normal player-sheet roll, require the same original character sheet.
+        if(d.mode==='wildshape'){
+            if(!target)throw new Error('Дикий облик: выберите токен владельца способности.');
+            if(opts.actorId&&String(originalActorId(target))!==String(opts.actorId))throw new Error('Дикий облик можно применить только к токену владельца способности.');
+            source=target;
+            if(!canControl(source,pid))throw new Error('Нет управления токеном владельца Дикой формы.');
+            if(tokenIsPlayerControlled(source))return promptPlayerForm(pid,source,'wildshape',{actorId:opts.actorId||originalActorId(source),name:opts.name||'Дикая форма'});
+            if(!d.form)throw new Error('Для NPC Дикая форма указывается в старом формате: «ДИКАЯ ФОРМА: Имя формы».');
+            return applyTransformation(source,findForm(d.form),'wildshape',{sourceTokenId:source.id,casterCharId:opts.actorId||originalActorId(source),ownerPid:pid});
+        }
+        if(opts.saveSuccess){if(opts.concentrationId&&typeof AD5Concentration!=='undefined'&&AD5Concentration&&AD5Concentration.end)AD5Concentration.end(opts.concentrationId,'цель успешно спаслась от Полиморфа');return {saved:true};}
+        if(!target)throw new Error('AD5 Transform: не найдена цель Полиморфа.');
+        if(!source)throw new Error('AD5 Transform: не найден физический токен заклинателя Полиморфа.');
+        if(tokenIsPlayerControlled(source))return promptPlayerForm(pid,source,'polymorph',{targetTokenId:target.id,actorId:opts.actorId||originalActorId(source),name:opts.name||'Полиморф',range:opts.range||'',duration:opts.duration||'',concentrationId:opts.concentrationId||null});
+        if(!d.form)throw new Error('Для NPC Полиморф указывается в старом формате: «ПОЛИМОРФ: Имя формы».');
+        var form=findForm(d.form);
+        if(opts.concentrationId)return applyTransformation(target,form,'polymorph',{sourceTokenId:source.id,casterCharId:opts.actorId||originalActorId(source),ownerPid:pid,concentrationId:opts.concentrationId});
+        return beginPolymorph(source,target,form,pid,{name:opts.name||'Полиморф',range:opts.range||'',duration:opts.duration||''});
+    }
+    function card(msg,preparsed,forcedSource){
+        if(!msg||msg.type==='api'||msg.playerid==='API')return false;var f=preparsed&&typeof preparsed==='object'?preparsed:fields(msg.content),d=directiveFromFields(f);if(!d)return false;
+        var source=(forcedSource&&tokenById(forcedSource.id||forcedSource))||resolveSourceFromCard(msg,f);
+        try{
+            // Wild Shape no longer needs source-token guessing. The player selects
+            // the physical owner token explicitly; we then validate ownership.
+            if(d.mode==='wildshape'){
+                var wildTarget=f.ad5target&&tokenById(f.ad5target),actorId=String(f.ad5source||f.charid||'');
+                if(!wildTarget)throw new Error('Дикий облик: выберите токен владельца способности.');
+                // NPC Forge may provide an exact physical source token. Only that
+                // explicit card field is authoritative; heuristic source recovery is
+                // intentionally ignored because the user just selected the token.
+                var exactSourceId=String(f.ad5sourcetoken||f.ad5source_token||'').trim();
+                if(exactSourceId&&!/^@\{selected\|token_id\}$/i.test(exactSourceId)&&String(wildTarget.id)!==exactSourceId)throw new Error('Дикий облик можно применить только к физическому токену владельца способности.');
+                if(actorId&&String(originalActorId(wildTarget))!==actorId)throw new Error('Дикий облик можно применить только к токену владельца способности.');
+                if(!canControl(wildTarget,msg.playerid))throw new Error('Нет управления токеном владельца Дикой формы.');
+                if(tokenIsPlayerControlled(wildTarget))return !!promptPlayerForm(msg.playerid,wildTarget,'wildshape',{actorId:actorId||originalActorId(wildTarget),name:f.rname||f.name||'Дикая форма'});
+                if(!d.form)throw new Error('Для NPC используйте старый формат: «ДИКАЯ ФОРМА: Имя формы».');
+                applyTransformation(wildTarget,findForm(d.form),'wildshape',{sourceTokenId:wildTarget.id,casterCharId:actorId||originalActorId(wildTarget),ownerPid:msg.playerid});return true;
+            }
+            if(!source){whisper(msg.playerid,'<b>AD5 Transform:</b> не удалось определить физический токен владельца способности.');return true;}
+            // Polymorph cards with saves must be resolved by AD5 first.  On a
+            // failed save applyFromAd5 will open the player's form list or apply
+            // the NPC's legacy fixed form.
+            if(d.mode==='polymorph'&&(truthy(f.save)||String(f.saveattr||'').trim()||String(f.savedc||'').trim()))return false;
+            var direct=f.ad5target&&tokenById(f.ad5target);
+            if(tokenIsPlayerControlled(source)){
+                promptPlayerForm(msg.playerid,source,'polymorph',{targetTokenId:direct&&direct.id||null,actorId:originalActorId(source),name:f.rname||f.name||'Полиморф',range:f.range||f.distance||'',duration:f.duration||f.spellduration||''});return true;
+            }
+            if(!d.form)throw new Error('Для NPC используйте старый формат: «ПОЛИМОРФ: Имя формы».');
+            var form=findForm(d.form);if(direct){beginPolymorph(source,direct,form,msg.playerid,{name:f.rname||f.name||'Полиморф',range:f.range||f.distance||'',duration:f.duration||f.spellduration||''});return true;}
+            throw new Error('Полиморф: цель должна быть выбрана до отправки карточки. AD5 обновит старую кнопку автоматически; повторите способность.');
+        }catch(e){whisper(msg.playerid,'<b>AD5 Transform:</b> '+esc(e.message||e));return true;}
+    }
+    function command(msg){
+        if(msg.type!=='api'||!/^!ad5-transform(?:\s|$)/i.test(msg.content))return false;cleanupRecent();var a=msg.content.trim().split(/\s+/),sub=norm(a[1]||'help'),args=parseArgs(msg.content);
+        try{
+            if(sub==='wild'||sub==='wildshape'||sub==='дикая'){
+                var token=tokenById(args.token||(msg.selected&&msg.selected[0]&&msg.selected[0]._id));if(!token)throw new Error('Выделите токен или укажите --token|ID.');if(!canControl(token,msg.playerid))throw new Error('Нет управления токеном.');
+                if(args.form){applyTransformation(token,findForm(args.form),'wildshape',{sourceTokenId:token.id,casterCharId:originalActorId(token),ownerPid:msg.playerid});return true;}
+                if(!tokenIsPlayerControlled(token))throw new Error('Для NPC укажите --form|Имя или используйте «ДИКАЯ ФОРМА: Имя» в способности.');
+                promptPlayerForm(msg.playerid,token,'wildshape',{actorId:originalActorId(token),name:'Дикая форма'});return true;
+            }
+            if(sub==='polymorph'||sub==='poly'||sub==='полиморф'){
+                var source=tokenById(args.source||(msg.selected&&msg.selected[0]&&msg.selected[0]._id)),target=tokenById(args.target);if(!source)throw new Error('Укажите --source|ID или выделите токен заклинателя.');if(!target)throw new Error('Укажите --target|ID.');
+                if(args.form){beginPolymorph(source,target,findForm(args.form),msg.playerid,{name:args.name||'Полиморф',range:args.range||'',duration:args.duration||''});return true;}
+                if(!tokenIsPlayerControlled(source))throw new Error('Для NPC укажите --form|Имя или используйте «ПОЛИМОРФ: Имя» в способности.');
+                promptPlayerForm(msg.playerid,source,'polymorph',{targetTokenId:target.id,actorId:originalActorId(source),name:args.name||'Полиморф',range:args.range||'',duration:args.duration||''});return true;
+            }
+            if(sub==='choose'||sub==='apply'){
+                var p=root().pending[args.id];if(!p||p.ownerPid!==msg.playerid)throw new Error('Запрос трансформации устарел или принадлежит другому игроку.');
+                var source2=tokenById(p.sourceTokenId);if(!source2)throw new Error('Источник способности больше не доступен.');
+                var formId=String(args.formid||p.formId||'');var form=formId&&getObj('character',formId);if(!form||tempCharacter(form.id)||!characterIsNpc(form.id))throw new Error('Выбранная форма больше не доступна.');
+                if(p.allowedFormIds&&p.allowedFormIds.indexOf(form.id)<0)throw new Error('Эта форма не доступна данному персонажу.');if(p.allowedFormIds&&!availableForms(msg.playerid,source2).some(function(c){return c.id===form.id;}))throw new Error('Доступ к этой форме был отозван. Откройте список форм заново.');
+                if(p.mode==='wildshape'){
+                    if(!canControl(source2,msg.playerid))throw new Error('Нет управления владельцем Дикой формы.');delete root().pending[p.id];applyTransformation(source2,form,'wildshape',{sourceTokenId:source2.id,casterCharId:p.actorId||originalActorId(source2),ownerPid:msg.playerid});return true;
+                }
+                var target2=tokenById(p.targetTokenId||args.target);if(!target2)throw new Error('Цель Полиморфа не найдена.');delete root().pending[p.id];
+                if(p.concentrationId){try{applyTransformation(target2,form,'polymorph',{sourceTokenId:source2.id,casterCharId:p.actorId||originalActorId(source2),ownerPid:msg.playerid,concentrationId:p.concentrationId});}catch(polyApplyError){cancelPendingConcentration(p,'ошибка применения выбранной формы');throw polyApplyError;}return true;}
+                beginPolymorph(source2,target2,form,msg.playerid,p);return true;
+            }
+            if(sub==='end'||sub==='return'||sub==='конец'){var token2=tokenById(args.token||(msg.selected&&msg.selected[0]&&msg.selected[0]._id));if(!token2)throw new Error('Выделите трансформированный токен.');var rec=originalRecord(token2);if(!rec)throw new Error('На токене нет активной формы.');if(!playerIsGM(msg.playerid)&&rec.ownerPid!==msg.playerid&&!canControl(token2,msg.playerid))throw new Error('Нет прав завершить эту форму.');endRecord(rec,'форма завершена вручную',{});return true;}
+            if(sub==='forms'||sub==='формы'){
+                var source3=tokenById(args.token||(msg.selected&&msg.selected[0]&&msg.selected[0]._id));if(!source3)throw new Error('Выделите токен персонажа.');var forms=availableForms(msg.playerid,source3);whisper(msg.playerid,'<b>Доступные формы: '+forms.length+'</b><br>'+(forms.length?forms.map(function(c){return esc(c.get('name'));}).join('<br>'):'Нет доступных NPC-форм.'));return true;
+            }
+            if(sub==='status'){var rows=Object.keys(root().active).map(function(tid){var r=root().active[tid],t=tokenById(tid);return esc((t&&t.get('name'))||tid)+' — '+esc(r.mode)+' → '+esc(r.formName)+'; исходный лист '+esc((getObj('character',r.originalCharId)&&getObj('character',r.originalCharId).get('name'))||r.originalCharId);});gm(rows.length?rows.join('<br>'):'Активных трансформаций нет.');return true;}
+            gm('<b>AD5 Transform '+VERSION+'</b><br><code>!ad5-transform forms --token|@{selected|token_id}</code> — доступные игроку формы.<br><code>!ad5-transform wild --token|@{selected|token_id}</code> — открыть список форм.<br><code>!ad5-transform polymorph --source|@{selected|token_id} --target|@{target|Цель|token_id}</code> — выбрать форму.<br><code>!ad5-transform end --token|@{selected|token_id}</code><br>Игровые токены под контролем игрока получают меню форм. NPC без игрока сохраняют старый формат <code>ДИКАЯ ФОРМА: Волк</code> / <code>ПОЛИМОРФ: Волк</code>.');return true;
+        }catch(e){whisper(msg.playerid,'<b>AD5 Transform:</b> '+esc(e.message||e));return true;}
+    }
+    function rollFormulaForOriginal(raw,cid){
+        var text=String(raw==null?'':raw).trim();if(!text)return null;
+        if(/^\[\[[\s\S]*\]\]$/.test(text))text=text.slice(2,-2);
+        text=text.replace(/@\{([^}]+)\}/g,function(_,ref){
+            var bits=String(ref||'').split('|'),name=bits[bits.length-1].trim(),v=attrValue(cid,name,'');
+            if((v===null||v===undefined||String(v).trim()==='')&&/_mod$/i.test(name)){
+                var base=name.replace(/_mod$/i,''),score=numeric(attrValue(cid,base,''));if(score!==null)v=mod(score);
+            }
+            var n=numeric(v);return n===null?'0':String(n);
+        });
+        // Roll20 labels like 1d4[Bless] are display-only and not understood by
+        // AD5's local dice parser. They can be safely removed here.
+        text=text.replace(/\[[^\]]*\]/g,'').replace(/\s+/g,' ').trim();
+        if(!text||!/^[0-9dDдД+*\/().\s-]+$/.test(text))return null;
+        return text.replace(/[дД]/g,'d');
+    }
+    function originalGlobalDamageModifiers(rec){
+        if(!rec||rec.mode!=='wildshape'||!rec.originalCharId)return [];
+        var attrs=findObjs({_type:'attribute',_characterid:rec.originalCharId}),rows=Object.create(null);
+        attrs.forEach(function(a){
+            var n=String(a.get('name')||''),m=/^(repeating_damagemod_[^_]+_)global_damage_(active_flag|damage|name|type|critical_damage)$/i.exec(n);
+            if(!m)return;var row=rows[m[1]]||(rows[m[1]]={});row[m[2].toLowerCase()]=String(a.get('current')==null?'':a.get('current'));
+        });
+        var activeKeys=Object.keys(rows).filter(function(k){return truthy(rows[k].active_flag);});
+        var legacyType=activeKeys.length===1?String(attrValue(rec.originalCharId,'global_damage_mod_type','')||'').trim():'';
+        var out=[];activeKeys.forEach(function(k){
+            var r=rows[k],formula=rollFormulaForOriginal(r.damage,rec.originalCharId);if(!formula)return;
+            var crit=rollFormulaForOriginal(r.critical_damage,rec.originalCharId);
+            out.push({formula:formula,critFormula:crit||'',type:String(r.type||legacyType||'').trim(),label:String(r.name||'Общий модификатор урона').trim()||'Общий модификатор урона',source:'original-global-damage'});
+        });
+        return out;
+    }
+    function combatModifiers(tokenOrId){
+        var rec=originalRecord(tokenOrId),out={attack:0,damage:[]};if(!rec||rec.mode!=='wildshape')return out;
+        var wis=originalAbility(rec.originalCharId,'wisdom'),wisMod=mod(wis);
+        out.attack=wisMod;
+        if(wisMod!==0)out.damage.push({formula:String(Math.abs(wisMod)),sign:wisMod<0?-1:1,label:'Мудрость Дикой формы',source:'wildshape-wisdom'});
+        out.damage=out.damage.concat(originalGlobalDamageModifiers(rec));
+        return out;
+    }
+    function tooltipLines(tokenId){
+        var rec=originalRecord(String(tokenId||''));if(!rec)return [];
+        if(rec.mode==='wildshape'){var w=mod(originalAbility(rec.originalCharId,'wisdom'));return ['Дикая форма: '+rec.formName+' · МДР к атаке/урону '+(w>=0?'+':'')+w];}
+        if(rec.mode==='polymorph')return ['Полиморф: '+rec.formName+(rec.concentrationId?' · концентрация активна':'')];
+        return [];
+    }
+    function validateActive(){
+        var r=root();Object.keys(r.active).forEach(function(tid){var rec=r.active[tid],token=tokenById(tid),temp=getObj('character',rec.tempCharId),orig=getObj('character',rec.originalCharId);if(!token||!temp||!orig){if(temp)temp.remove();delete r.active[tid];return;}if(token.get('represents')!==rec.tempCharId){temp.remove();delete r.active[tid];return;}syncControlActions(rec);});
+        // Remove orphan temporary sheets from interrupted/old transformations.
+        var activeTemps={};Object.keys(r.active).forEach(function(tid){activeTemps[r.active[tid].tempCharId]=true;});
+        var markedTemps={};findObjs({_type:'attribute',name:'ad5_transform_temp'}).forEach(function(a){if(String(a.get('current'))==='1')markedTemps[a.get('_characterid')]=true;});
+        Object.keys(markedTemps).forEach(function(cid){if(!activeTemps[cid]){var c=getObj('character',cid);if(c)c.remove();}});cleanupRecent();
+    }
+    on('chat:message',function(msg){try{if(msg.type==='api')command(msg);}catch(e){gm('Ошибка: '+esc(e.message||e));}});
+    on('change:graphic:represents',function(t){try{var rec=originalRecord(t);if(rec&&String(t.get('represents')||'')===String(rec.tempCharId||''))syncControlActions(rec);}catch(ignore){}});
+    // Other beast/similar tokens are legal. Transform never removes graphics that
+    // were created or duplicated by the GM/player.
+    on('destroy:graphic',function(t){var rec=originalRecord(t);if(rec){delete root().active[t.id];var temp=getObj('character',rec.tempCharId);if(temp)temp.remove();}});
+    on('ready',function(){validateActive();gm('<b>'+SCRIPT+' '+VERSION+'</b> запущен. Дикая форма/Полиморф используют временный гибридный NPC-лист; легендарные и логовные действия исключаются.');});
+    return {version:VERSION,directive:directive,directiveFromFields:directiveFromFields,stripDirective:stripDirective,card:card,applyFromAd5:applyFromAd5,originalActorId:originalActorId,mode:mode,originalHpValue:originalHpValue,combatModifiers:combatModifiers,skipConcentrationDamage:skipConcentrationDamage,prepareDamage:prepareDamage,applyOverflow:applyOverflow,finishDamage:finishDamage,endByConcentration:endByConcentration,endToken:endToken,tooltipLines:tooltipLines,
+        _test:{directive:directive,directiveFromFields:directiveFromFields,stripDirective:stripDirective,parseArgs:parseArgs,mod:mod,sourceSaveInfo:sourceSaveInfo,sourceSkillInfo:sourceSkillInfo,forbiddenActionRows:forbiddenActionRows,tokenIsPlayerControlled:tokenIsPlayerControlled,availableForms:availableForms,formQuery:formQuery,rollFormulaForOriginal:rollFormulaForOriginal,originalGlobalDamageModifiers:originalGlobalDamageModifiers,combatModifiers:combatModifiers}};
+}());
+}
