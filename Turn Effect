@@ -1,0 +1,2288 @@
+/* Installation guard: disable old unguarded versions before installing. */
+if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
+    log('AD5EffectTurns: duplicate module skipped; keep one installed copy.');
+} else {
+/*
+AD5 Effect Turns 1.5.3
+Companion module for AD5 4.3.9+. Adds scoped ПАСС modifiers and concentration-aura owner filtering for Areas 2.17.2+.
+1.3.0: lifecycle conditions: Prone and Grappled are never turn-counted; Grappler Pin Restrained is indefinite until its parent grapple ends. Existing active records are migrated on ready.
+1.2.9: source-scoped relationship conditions (grapple/pin) may coexist by relationshipKey; public applyCondition/removeCondition helpers added for Condition Engine contests.
+1.2.7: sourceContext.durationBonus increases only the NEW timed save-outcome duration before non-stacking max-duration merge; used by AD5 natural-1 saves.
+1.2.8: Condition Engine drives recovery ability-check/save disadvantage; recovery saves obey natural 1/20.
+1.3.4: exposes recognizesDirect() so AD5 can identify pure modifier/condition actions before opening a transaction.
+1.4.0: Conditional Effect Engine: ПОКА / СНЯТЬ / РАСХ / ДО / УСЛЭФ are stored inside ordinary Effect Turns entries and react to AD5 События.
+1.4.1: reverse concentration lifecycle: a root conditional effect that ends by СНЯТЬ / ДО / a local ПОКА condition also ends its owning concentration. РАСХ alone does not.
+1.4.2: Conditional turn boundaries are driven directly by Effect Turns Turn Tracker lifecycle instead of AD5 События, fixing source-end distance conditions such as Compelled Duel.
+1.5.1: Weapon-hit Payload concentration handoff: one-shot KEEP payloads transfer concentration ownership to persistent child effects; concentration ends when the final child effect disappears.
+1.5.3: Reaction Lock only: «Реакции 0» / «Без реакций» — управляемый временный Effect Turns-эффект с маркером. Экспериментальный «Действия 0» удалён; действия и перемещение этой механикой не блокируются.
+1.5.0: Weapon-hit Payload: declarative one-shot/persistent hit payloads are stored inside Conditional Effect profiles and queried/consumed by AD5 at a confirmed hit.
+Outcome syntax in ability description:
+  ПРВ: оглушение 2 хода, отравление 3 хода, полный урон, УСП: замедление 1 ход, половина урона
+Rules:
+- comma separates outcome items;
+- ПРВ = failed save, УСП = successful save;
+- missing УСП => successful save deals no damage and applies no effects, EXCEPT explicit «ПРВ: полный урон», which makes damage full on either save result;
+- timed effect duration may be written as "3 хода" or as a bare final number "3";
+- Description keywords/effect identity are case-insensitive and tolerant to punctuation;
+- difficult terrain aliases include "труднопроходимая местность" and "трд мст";
+- condition immunities supplied by AD5 prevent the condition marker, tooltip entry and timer from being created;
+- same effect does not stack duration; larger remaining duration wins;
+- NPC duration ticks once when initiative enters that NPC name-group;
+- PC duration ticks once when initiative enters that token's turn.
+- periodic syntax: «Отравлен 2д8 3», «Горение 1д6 2», «Обморожение 2д4 4», «Осквернение 3д8 3», «Разлом 1д4 3»; damage is dealt at turn start before duration decreases.
+- amplifier effects may omit damage formula: «Осквернение 3» / «Разлом 3» only apply the x2 vulnerability for the duration.
+- while «Осквернение» is active, incoming necrotic damage is multiplied by x2.
+- while «Разлом» is active, incoming slashing, bludgeoning and piercing damage is multiplied by x2.
+- recovery save syntax: «Отравлен 2д8 ТЕЛ19 3»; ТЕЛ19 is a save DC used to remove the effect. NPC roll automatically at turn start; PCs get token-action buttons.
+- recovery-save periodic damage resolves at END of that token/group turn if the effect was not removed; duration then decreases by 1.
+- slow syntax: «Замедление 10 2» = -10 ft speed for 2 turns; «Замедление 2» = half speed for 2 turns. Marker: purple with lost-feet digits.
+- Оглушение / Опутывание / Окаменение делают эффективную скорость 0 до снятия состояния.
+- Все ключевые слова/модификаторы разбираются без учёта регистра.
+- combat modifiers are case-insensitive: «Атака 2», «Атака +1д6», «Урон 1д4», «КД 2», «+2 МДР», «Спас МДР +1д4», «Проверка МДР +1д4», «ПРЕМ МДР», «ПОМ МДР». Positive modifiers of the same slot replace the previous positive modifier; negative modifiers stack.
+- 1.3.3: Атака / Спас / Проверка поддерживают динамические формулы кубов. Формула бросается заново для каждого соответствующего d20-броска; маркеры баффа/дебаффа остаются общими Effect Turns.
+- aggregate custom markers: any active buff shows «420-Effect-Buff»; any active debuff shows «419-Effect-Debuff».
+- sanctuary syntax: «Убежище 19 2» = Wisdom save DC 19 required to damage or apply an AD5 debuff to the protected token for 2 turns; marker angel-outfit shows remaining turns.
+*/
+var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5EffectTurns && AD5EffectTurns.version) ? String(AD5EffectTurns.version) : '';
+// 1.0.11: force the newest module to replace an older global instance. Older
+// builds used `AD5EffectTurns || ...`, so an enabled stale script tab could
+// silently shadow every newer fix.
+var AD5EffectTurns = (function () {
+    'use strict';
+    var VERSION='1.6.1', SCRIPT='AD5 Effect Turns';
+    var runtimeLastGroup=Object.create(null);
+    var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
+    var markerCacheRaw=null, markerCacheByName=Object.create(null);
+
+    function campaignMarkerMap(){
+        var raw='';
+        try{raw=String(Campaign().get('token_markers')||'');}catch(ignore){raw='';}
+        if(raw===markerCacheRaw)return markerCacheByName;
+        markerCacheRaw=raw;markerCacheByName=Object.create(null);
+        try{
+            var list=JSON.parse(raw||'[]');
+            if(Array.isArray(list))list.forEach(function(m){
+                if(!m||!m.name||!m.tag)return;
+                var key=String(m.name).trim().toLocaleLowerCase('ru-RU').replace(/ё/g,'е');
+                if(!markerCacheByName[key])markerCacheByName[key]=String(m.tag);
+            });
+        }catch(ignoreParse){}
+        return markerCacheByName;
+    }
+    function customMarkerTag(name){
+        var key=String(name||'').trim().toLocaleLowerCase('ru-RU').replace(/ё/g,'е');
+        return campaignMarkerMap()[key]||null;
+    }
+    function summaryMarkerTags(){return {buff:customMarkerTag(BUFF_MARKER_NAME),debuff:customMarkerTag(DEBUFF_MARKER_NAME)};}
+
+    var CONDITIONS={
+        blinded:{marker:'bleeding-eye',label:'Ослепление',aliases:['ослеплен','ослеплён','ослепление','слепота','blinded']},
+        charmed:{marker:'chained-heart',label:'Очарование',aliases:['очарован','очарование','charmed']},
+        deafened:{marker:'half-haze',label:'Глухота',aliases:['оглох','оглохший','глухота','deafened']},
+        frightened:{marker:'screaming',label:'Испуг',aliases:['испуган','испуг','страх','frightened']},
+        grappled:{marker:'grab',label:'Захват',aliases:['схвачен','захвачен','захват','grappled']},
+        incapacitated:{marker:'broken-shield',label:'Недееспособность',aliases:['недееспособен','недееспособность','incapacitated']},
+        possessed:{marker:'broken-heart',label:'Одержим',aliases:['одержимость','одержим','одержимый','possessed','possession']},
+        no_reactions:{marker:'interdiction',label:'Без реакций',aliases:['без реакций','реакции 0','реакция 0','не может совершать реакции','не может совершать реакцию','cannot take reactions','no reactions']},
+        invisible:{marker:'ninja-mask',label:'Невидимость',aliases:['невидим','невидимость','invisible']},
+        paralyzed:{marker:'padlock',label:'Паралич',aliases:['парализован','паралич','paralyzed']},
+        petrified:{marker:'white-tower',label:'Окаменение',aliases:['окаменел','окаменение','petrified']},
+        poisoned:{marker:'chemical-bolt',label:'Отравление',aliases:['отравлен','отравлена','отравлено','отравление','poisoned']},
+        burning:{marker:'rolling-bomb',label:'Горение',aliases:['горит','горение','в огне','burning','on fire']},
+        frostbite:{marker:'frozen-orb',label:'Обморожение',aliases:['обморожен','обморожена','обморожение','frostbite','frostbitten']},
+        defilement:{marker:'broken-skull',label:'Осквернение',aliases:['осквернен','осквернён','осквернена','осквернено','осквернение','defiled','defilement']},
+        fracture:{marker:'edge-crack',label:'Разлом',aliases:['разлом','расколот','расколота','расколото','трещина','fracture','fractured']},
+        prone:{marker:'pummeled',label:'Сбит с ног',aliases:['сбит с ног','ничком','лежит','prone']},
+        restrained:{marker:'fishing-net',label:'Опутывание',aliases:['опутан','опутывание','опутанность','restrained']},
+        stunned:{marker:'lightning-helix',label:'Оглушение',aliases:['оглушен','оглушён','оглушение','ошеломлен','ошеломлён','ошеломление','stunned']},
+        unconscious:{marker:'sleepy',label:'Без сознания',aliases:['без сознания','бессознателен','бессознательное состояние','unconscious']},
+        exhaustion:{marker:'back-pain',label:'Истощение',aliases:['истощен','истощён','истощение','exhaustion']},
+        slowed:{marker:'purple',label:'Замедление',aliases:['замедлен','замедление','slowed']},
+        silenced:{marker:'interdiction',label:'Безмолвие',aliases:['немота','безмолвие','silenced']},
+        haste:{marker:'overdrive',label:'Ускорение',aliases:['ускорен','ускорение','haste']},
+        flying:{marker:'fluffy-wing',label:'Полёт',aliases:['полет','полёт','летит','flying']},
+        difficult:{marker:'tread',label:'Труднопроходимая местность',aliases:['труднопроходимая местность','труднопроходимой местности','труднопроходимую местность','трд мст','трд. мст.','difficult terrain','difficult']},
+        concentration:{marker:'aura',label:'Концентрация',aliases:['концентрация','concentration']},
+        shielded:{marker:'bolt-shield',label:'Защита щитом',aliases:['защищен щитом','защищён щитом','защита щитом','щит','shielded']},
+        blessed:{marker:'angel-outfit',label:'Благословение',aliases:['благословлен','благословлён','благословение','blessed']},
+        sanctuary:{marker:'angel-outfit',label:'Убежище',aliases:['убежище','sanctuary']},
+        targeted:{marker:'archery-target',label:'Метка',aliases:['помечен','помечена','метка','targeted']},
+        cursed:{marker:'broken-heart',label:'Проклятие',aliases:['проклят','проклятие','cursed']},
+        bleeding:{marker:'arrowed',label:'Кровотечение',aliases:['кровотечение','кровоточит','bleeding']}
+    };
+    var ALIAS={};
+
+    function norm(s){
+        var value=String(s==null?'':s).replace(/<[^>]*>/g,' ').replace(/[_]+/g,' ');
+        try{if(typeof AD5Syntax!=='undefined'&&AD5Syntax&&typeof AD5Syntax.normalize==='function')return AD5Syntax.normalize(value);}catch(ignoreSyntax){}
+        return value
+            .replace(/&nbsp;|&#160;/gi,' ')
+            .replace(/[‐‑‒–—―]/g,'-')
+            .replace(/\s+/g,' ')
+            .trim().toLocaleLowerCase('ru-RU').replace(/ё/g,'е');
+    }
+    // For names/keywords in the Description field be deliberately tolerant:
+    // case, ё/е, punctuation, dots in abbreviations and extra spaces do not matter.
+    function matchNorm(s){
+        try{if(typeof AD5Syntax!=='undefined'&&AD5Syntax&&typeof AD5Syntax.loose==='function')return AD5Syntax.loose(String(s==null?'':s).replace(/<[^>]*>/g,' ').replace(/[_]+/g,' '));}catch(ignoreSyntax){}
+        return norm(s)
+            .replace(/[.,:;!?]+/g,' ')
+            .replace(/[()\[\]{}«»„“”"']/g,' ')
+            .replace(/[-]+/g,' ')
+            .replace(/\s+/g,' ')
+            .trim();
+    }
+    Object.keys(CONDITIONS).forEach(function(k){
+        ALIAS[matchNorm(k)]=k;
+        (CONDITIONS[k].aliases||[]).forEach(function(a){ALIAS[matchNorm(a)]=k;});
+    });
+
+    function clone(x){return x==null?x:JSON.parse(JSON.stringify(x));}
+    function root(){
+        state.AD5EffectTurns=state.AD5EffectTurns||{version:1,tokens:{}};
+        state.AD5EffectTurns.version=1;
+        state.AD5EffectTurns.tokens=state.AD5EffectTurns.tokens||{};
+        state.AD5EffectTurns.tempHpOwners=state.AD5EffectTurns.tempHpOwners&&typeof state.AD5EffectTurns.tempHpOwners==='object'?state.AD5EffectTurns.tempHpOwners:{};
+        return state.AD5EffectTurns;
+    }
+    function cleanRecord(rec){
+        rec=rec&&typeof rec==='object'?clone(rec):{effects:{},markerBase:{}};
+        rec.effects=rec.effects&&typeof rec.effects==='object'?rec.effects:{};
+        rec.markerBase=rec.markerBase&&typeof rec.markerBase==='object'?rec.markerBase:{};
+        return rec;
+    }
+    function snapshot(tokenId){
+        var rec=root().tokens[tokenId];
+        return rec?cleanRecord(rec):null;
+    }
+    function stable(rec){
+        if(!rec)return '';
+        var clean=cleanRecord(rec),effectKeys=Object.keys(clean.effects),baseKeys=Object.keys(clean.markerBase),out={effects:{},markerBase:{}};
+        if(!effectKeys.length&&!baseKeys.length)return '';
+        effectKeys.sort().forEach(function(k){out.effects[k]=clean.effects[k];});
+        baseKeys.sort().forEach(function(k){out.markerBase[k]=clean.markerBase[k];});
+        return JSON.stringify(out);
+    }
+    function equals(a,b){return stable(a)===stable(b);}
+
+    function sectionParse(description){
+        var text=String(description==null?'':description)
+            .replace(/<br\s*\/?>/gi,' ')
+            .replace(/<[^>]*>/g,' ')
+            .replace(/&nbsp;|&#160;/gi,' ')
+            .replace(/\r?\n/g,' ');
+        var re=/(?:^|[\s,;])(?:ПРВ|УСП)\s*[:：—–-]?\s*/ig,m,marks=[];
+        while((m=re.exec(text))){
+            var raw=m[0],type=/ПРВ/i.test(raw)?'failure':'success';
+            var bodyStart=re.lastIndex;
+            marks.push({type:type,start:m.index,end:bodyStart});
+        }
+        var out={failure:{present:false,items:[],damage:'full'},success:{present:false,items:[],damage:'none'}};
+        marks.forEach(function(mark,i){
+            var end=i+1<marks.length?marks[i+1].start:text.length;
+            var body=text.slice(mark.end,end).replace(/^[\s,;]+|[\s,;]+$/g,'').trim();
+            var sec=out[mark.type];sec.present=true;
+            body.split(',').map(function(x){return x.trim();}).filter(Boolean).forEach(function(x){sec.items.push(x);});
+        });
+        ['failure','success'].forEach(function(type){
+            var sec=out[type],explicit=null;
+            sec.items.forEach(function(item){
+                var n=norm(item);
+                if(/(?:^|\s)(?:нет урона|без урона|не получает урона|нет эффекта|no damage|no effect)(?:$|\s)/.test(n))explicit='none';
+                else if(/(?:половин(?:а|у)? урона|half damage|half)/.test(n))explicit='half';
+                else if(/(?:полный урон|полного урона|full damage)/.test(n))explicit='full';
+            });
+            if(explicit)sec.damage=explicit;
+            else sec.damage=type==='failure'?'full':'none';
+        });
+        return out;
+    }
+    function damageMode(description,outcome){
+        var p=sectionParse(description),sec=outcome==='failure'?p.failure:p.success;
+        /*
+         * AD5 extension: an explicit «ПРВ: полный урон» means the damage part
+         * ignores the result of the characteristic save.  The failed-save
+         * section still controls ONLY failed-save conditions/effects; on a
+         * successful save we borrow just its explicit full-damage directive.
+         * An explicit УСП section always wins, so
+         * «ПРВ: полный урон, УСП: половина урона» still halves on success.
+         */
+        if(outcome==='success'&&!p.success.present&&p.failure.present){
+            var failureExplicitFull=(p.failure.items||[]).some(function(item){
+                return /(?:полный урон|полного урона|full damage)/.test(norm(item));
+            });
+            if(failureExplicitFull)return 'full';
+        }
+        if(!sec.present)return outcome==='failure'?'full':'none';
+        return sec.damage;
+    }
+    function hasSection(description,outcome){var p=sectionParse(description);return !!p[outcome==='failure'?'failure':'success'].present;}
+    function isDamageItem(item){
+        var n=norm(item);
+        return /(?:нет урона|без урона|не получает урона|нет эффекта|no damage|no effect|половин(?:а|у)? урона|half damage|полный урон|полного урона|full damage)/.test(n);
+    }
+    function durationOf(item){
+        var text=String(item||'').trim();
+        // Duration may be written explicitly ("на 3 хода", "3 хода" / "3 turns")
+        // or as the final bare number ("... атакующего 3"). Only the LAST number
+        // in the item is treated as the counter, so numbers inside the effect
+        // text remain part of its label.
+        var m=text.match(/^(.*?)(?:\s+на)?\s+(\d{1,3})(?:\s*(?:ход(?:а|ов)?|turns?))?\s*\.?$/i);
+        if(!m)return {label:text,remaining:null,explicit:false};
+        var n=Number(m[2]);
+        if(!Number.isSafeInteger(n)||n<1||n>999)return {label:text,remaining:null,explicit:false};
+        return {label:m[1].trim(),remaining:n,explicit:true};
+    }
+    function conditionKey(label){return ALIAS[matchNorm(label)]||null;}
+
+    var RECOVERY_ABILITIES={
+        strength:{short:'СИЛ',label:'Силы',aliases:['сил','сила','силы','strength','str']},
+        dexterity:{short:'ЛОВ',label:'Ловкости',aliases:['лов','ловкость','ловкости','dexterity','dex']},
+        constitution:{short:'ТЕЛ',label:'Телосложения',aliases:['тел','телосложение','телосложения','constitution','con']},
+        intelligence:{short:'ИНТ',label:'Интеллекта',aliases:['инт','интеллект','интеллекта','intelligence','int']},
+        wisdom:{short:'МДР',label:'Мудрости',aliases:['мдр','мудрость','мудрости','wisdom','wis']},
+        charisma:{short:'ХАР',label:'Харизмы',aliases:['хар','харизма','харизмы','charisma','cha']}
+    };
+    var RECOVERY_ALIAS={};
+    Object.keys(RECOVERY_ABILITIES).forEach(function(k){
+        RECOVERY_ALIAS[matchNorm(k)]=k;
+        RECOVERY_ALIAS[matchNorm(RECOVERY_ABILITIES[k].short)]=k;
+        (RECOVERY_ABILITIES[k].aliases||[]).forEach(function(a){RECOVERY_ALIAS[matchNorm(a)]=k;});
+    });
+    function modifierAbility(value){
+        return RECOVERY_ALIAS[matchNorm(value)]||null;
+    }
+    function cleanModifierFormula(value){
+        return String(value||'').replace(/\s+/g,'').replace(/[ДдD]/g,'d');
+    }
+    function modifierFormulaSpec(raw){
+        var formula=cleanModifierFormula(raw),sign=1,value=null;
+        if(!formula)return null;
+        if(formula.charAt(0)==='-'){sign=-1;formula=formula.slice(1);}
+        else if(formula.charAt(0)==='+')formula=formula.slice(1);
+        if(!formula||!/\d/.test(formula)||!/^[0-9d+*\/().-]+$/i.test(formula))return null;
+        if(/^\d+$/.test(formula)){
+            value=sign*Number(formula);
+            if(!Number.isSafeInteger(value)||value===0||Math.abs(value)>1000000)return null;
+            return {dynamic:false,value:value,formula:String(Math.abs(value)),sign:value<0?-1:1,positive:value>0};
+        }
+        return {dynamic:true,value:null,formula:formula,sign:sign,positive:sign>0};
+    }
+    function modifierLabel(prefix,spec){
+        if(!spec)return prefix;
+        if(spec.dynamic)return prefix+' '+(spec.sign>0?'+':'-')+String(spec.formula||'').replace(/d/g,'д');
+        return prefix+' '+(spec.value>0?'+':'')+spec.value;
+    }
+    function modifierCore(label){
+        var text=norm(label),m,ability,metric,spec;
+        if(!text)return null;
+        m=/^(прем|преим|преимущество|adv|advantage)\s+([a-zа-я]+)$/i.exec(text);
+        if(m&&(ability=modifierAbility(m[2])))return {type:'saveMode',ability:ability,mode:'adv',positive:true,label:'ПРЕМ '+RECOVERY_ABILITIES[ability].short};
+        m=/^(пом|помеха|dis|disadv|disadvantage)\s+([a-zа-я]+)$/i.exec(text);
+        if(m&&(ability=modifierAbility(m[2])))return {type:'saveMode',ability:ability,mode:'dis',positive:false,label:'ПОМ '+RECOVERY_ABILITIES[ability].short};
+
+        // Legacy syntax «+2 МДР» remains a saving-throw modifier.
+        m=/^([+-])\s*([^\s]+)\s+([a-zа-я]+)$/i.exec(text);
+        if(m&&(ability=modifierAbility(m[3]))&&(spec=modifierFormulaSpec(m[1]+m[2]))){
+            return {type:'save',ability:ability,value:spec.value,formula:spec.dynamic?spec.formula:null,sign:spec.sign,dynamic:spec.dynamic,positive:spec.positive,label:modifierLabel('Спас '+RECOVERY_ABILITIES[ability].short,spec)};
+        }
+        m=/^([a-zа-я]+)\s+([+-])\s*([^\s]+)$/i.exec(text);
+        if(m&&(ability=modifierAbility(m[1]))&&(spec=modifierFormulaSpec(m[2]+m[3]))){
+            return {type:'save',ability:ability,value:spec.value,formula:spec.dynamic?spec.formula:null,sign:spec.sign,dynamic:spec.dynamic,positive:spec.positive,label:modifierLabel('Спас '+RECOVERY_ABILITIES[ability].short,spec)};
+        }
+
+        // Explicit saving throw syntax: «Спас МДР +1д4» / «+1д4 Спас МДР».
+        m=/^(?:спас|спасбросок|save)\s+([a-zа-я]+)\s*([+-])?\s*(.+)$/i.exec(text);
+        if(m&&/[0-9dд)]\s+(?=[0-9(])/i.test(m[3]))return null;
+        if(m&&(ability=modifierAbility(m[1]))&&(spec=modifierFormulaSpec((m[2]||'+')+m[3]))){
+            return {type:'save',ability:ability,value:spec.value,formula:spec.dynamic?spec.formula:null,sign:spec.sign,dynamic:spec.dynamic,positive:spec.positive,label:modifierLabel('Спас '+RECOVERY_ABILITIES[ability].short,spec)};
+        }
+        m=/^([+-])?\s*([^\s]+)\s+(?:спас|спасбросок|save)\s+([a-zа-я]+)$/i.exec(text);
+        if(m&&(ability=modifierAbility(m[3]))&&(spec=modifierFormulaSpec((m[1]||'+')+m[2]))){
+            return {type:'save',ability:ability,value:spec.value,formula:spec.dynamic?spec.formula:null,sign:spec.sign,dynamic:spec.dynamic,positive:spec.positive,label:modifierLabel('Спас '+RECOVERY_ABILITIES[ability].short,spec)};
+        }
+
+        // Ability-check syntax: «Проверка СИЛ +1д4» / «+1д4 Проверка СИЛ».
+        m=/^(?:проверка|пров|check)\s+([a-zа-я]+)\s*([+-])?\s*(.+)$/i.exec(text);
+        if(m&&/[0-9dд)]\s+(?=[0-9(])/i.test(m[3]))return null;
+        if(m&&(ability=modifierAbility(m[1]))&&(spec=modifierFormulaSpec((m[2]||'+')+m[3]))){
+            return {type:'check',ability:ability,value:spec.value,formula:spec.dynamic?spec.formula:null,sign:spec.sign,dynamic:spec.dynamic,positive:spec.positive,label:modifierLabel('Проверка '+RECOVERY_ABILITIES[ability].short,spec)};
+        }
+        m=/^([+-])?\s*([^\s]+)\s+(?:проверка|пров|check)\s+([a-zа-я]+)$/i.exec(text);
+        if(m&&(ability=modifierAbility(m[3]))&&(spec=modifierFormulaSpec((m[1]||'+')+m[2]))){
+            return {type:'check',ability:ability,value:spec.value,formula:spec.dynamic?spec.formula:null,sign:spec.sign,dynamic:spec.dynamic,positive:spec.positive,label:modifierLabel('Проверка '+RECOVERY_ABILITIES[ability].short,spec)};
+        }
+
+        function metricName(raw){
+            raw=matchNorm(raw);
+            if(raw==='атака'||raw==='attack')return 'attack';
+            if(raw==='кд'||raw==='ac'||raw==='armor class'||raw==='armour class')return 'ac';
+            if(raw==='урон'||raw==='damage')return 'damage';
+            return null;
+        }
+        m=/^(атака|attack|кд|ac|урон|damage)\s*([+-])?\s*(.+)$/i.exec(text);
+        if(m){
+            if(/[0-9dд)]\s+(?=[0-9(])/i.test(m[3]))return null;
+            metric=metricName(m[1]);spec=modifierFormulaSpec((m[2]||'+')+m[3]);
+        }
+        else {
+            m=/^([+-])?\s*([^\s]+)\s+(атака|attack|кд|ac|урон|damage)$/i.exec(text);
+            if(m){metric=metricName(m[3]);spec=modifierFormulaSpec((m[1]||'+')+m[2]);}
+        }
+        if(!metric||!spec)return null;
+        if(metric==='ac'){
+            if(spec.dynamic)return null; // AC remains deterministic.
+            return {type:'ac',value:spec.value,positive:spec.positive,label:modifierLabel('КД',spec)};
+        }
+        if(metric==='attack'){
+            return {type:'attack',value:spec.value,formula:spec.dynamic?spec.formula:null,sign:spec.sign,dynamic:spec.dynamic,positive:spec.positive,label:modifierLabel('Атака',spec)};
+        }
+        return {type:'damage',formula:spec.formula,sign:spec.sign,positive:spec.positive,label:'Урон '+(spec.sign>0?'+':'-')+String(spec.formula||Math.abs(spec.value||0)).replace(/d/g,'д')};
+    }
+    function modifierSpec(item){
+        var text=String(item||'').trim(),core=modifierCore(text);
+        if(core){core.remaining=null;core.timed=false;return core;}
+        var d=durationOf(text);if(!d.explicit)return null;
+        core=modifierCore(d.label);if(!core)return null;
+        core.remaining=d.remaining;core.timed=true;return core;
+    }
+    function modifierSlot(m){
+        if(!m)return '';
+        if(m.type==='attack'||m.type==='ac'||m.type==='damage')return m.type;
+        if(m.type==='save'&&m.ability)return 'save:'+m.ability;
+        if(m.type==='check'&&m.ability)return 'check:'+m.ability;
+        if(m.type==='saveMode'&&m.ability)return 'saveMode:'+m.ability;
+        return String(m.type||'modifier')+(m.ability?':'+m.ability:'');
+    }
+    function nextModifierSeq(){
+        var r=root();r.modifierSeq=Number.isSafeInteger(r.modifierSeq)&&r.modifierSeq>=0?r.modifierSeq:0;
+        r.modifierSeq++;return r.modifierSeq;
+    }
+    function activeModifierEntries(rec){
+        rec=cleanRecord(rec);var positives=Object.create(null),negative=[],passive=[];
+        Object.keys(rec.effects).forEach(function(k){
+            var e=rec.effects[k],m=e&&e.modifier;if(!m)return;
+            var slot=modifierSlot(m),row={key:k,effect:e,modifier:m,slot:slot};
+            // ПАСС is an occupancy layer owned by an area/aura. Unlike ordinary
+            // positive buffs, independent passive sources must coexist: leaving
+            // one area removes only that area's contribution and must not reveal,
+            // replace or destroy another buff.
+            if(e.passive||m.passive){passive.push(row);return;}
+            if(m.positive===false)negative.push(row);
+            else positives[slot]=row;
+        });
+        var out=[];Object.keys(positives).forEach(function(slot){out.push(positives[slot]);});
+        return out.concat(passive,negative);
+    }
+
+    function recoverySpec(label){
+        var text=String(label||'').trim().replace(/(?:^|\s)(\d{1,2})\s*(СИЛ|ЛОВ|ТЕЛ|ИНТ|МДР|ХАР)\s*$/i,' $2$1').trim();
+        var m=text.match(/(?:^|\s)([A-Za-zА-Яа-яЁё]+)\s*[:=]?\s*(\d{1,2})\s*$/);
+        if(!m)return {label:text,recovery:null};
+        var ability=RECOVERY_ALIAS[matchNorm(m[1])],dc=Number(m[2]);
+        if(!ability||!Number.isSafeInteger(dc)||dc<1||dc>99)return {label:text,recovery:null};
+        var cleaned=text.slice(0,m.index).trim();
+        if(!cleaned)return {label:text,recovery:null};
+        return {label:cleaned,recovery:{ability:ability,dc:dc,short:RECOVERY_ABILITIES[ability].short,attempted:false}};
+    }
+
+    var PERIODIC_DAMAGE={
+        poisoned:'яд',
+        burning:'огонь',
+        frostbite:'холод',
+        defilement:'некротическая энергия',
+        fracture:'дробящий'
+    };
+    function periodicSpec(d){
+        if(!d||!d.explicit||!d.label)return null;
+        var words=String(d.label).trim().split(/\s+/).filter(Boolean);
+        // Find the longest leading condition phrase. Everything after it is the
+        // damage formula.  This allows both "2д8" and "2d8 + 3".
+        for(var n=words.length-1;n>=1;n--){
+            var ck=conditionKey(words.slice(0,n).join(' '));
+            if(!ck||!PERIODIC_DAMAGE[ck])continue;
+            var formula=words.slice(n).join(' ').trim();
+            if(!formula)return null;
+            if(!/^[0-9dDдД+*\/().\s-]+$/.test(formula)||!/\d/.test(formula))return null;
+            return {condition:ck,formula:formula,damageType:PERIODIC_DAMAGE[ck]};
+        }
+        return null;
+    }
+
+    function slowedSpec(label){
+        var text=String(label||'').trim(),words=text.split(/\s+/).filter(Boolean);
+        for(var n=words.length;n>=1;n--){
+            var ck=conditionKey(words.slice(0,n).join(' '));
+            if(ck!=='slowed')continue;
+            var rest=words.slice(n).join(' ').trim();
+            if(!rest)return {condition:'slowed',loss:null};
+            var m=/^(\d+(?:[.,]\d+)?)\s*(?:фт\.?|фут(?:а|ов)?|ft\.?)?$/i.exec(rest);
+            if(!m)return null;
+            var loss=Number(m[1].replace(',','.'));
+            if(!Number.isFinite(loss)||loss<=0||loss>10000)return null;
+            return {condition:'slowed',loss:loss};
+        }
+        return null;
+    }
+    function speedNumber(value){
+        var m=String(value==null?'':value).replace(',','.').match(/\d+(?:\.\d+)?/);
+        return m?Number(m[0]):null;
+    }
+    function baseWalkingSpeed(token){
+        var cid=token&&token.get('represents');if(!cid)return null;
+        var npc=npcToken(token),names=npc?['npc_speed','speed']:['speed','npc_speed'];
+        for(var i=0;i<names.length;i++){
+            var a=attr(cid,names[i]);if(!a)continue;
+            var n=speedNumber(a.get('current'));if(Number.isFinite(n)&&n>=0)return n;
+        }
+        return null;
+    }
+    function slowingForToken(tokenId,baseSpeed){
+        var rec=snapshot(tokenId),effects=rec&&rec.effects||{},e=effects['condition:slowed'];
+        baseSpeed=Number(baseSpeed);
+        if(!Number.isFinite(baseSpeed)){
+            var token=getObj('graphic',tokenId);baseSpeed=baseWalkingSpeed(token);
+        }
+        // Campaign rule: these conditions fully immobilize voluntary movement.
+        // Forced movement remains possible because Movement Engine marks it as API/forced.
+        var immobilized=['stunned','restrained','petrified'].filter(function(k){return !!effects['condition:'+k];});
+        if(immobilized.length){
+            return {active:true,loss:Number.isFinite(baseSpeed)?Math.max(0,baseSpeed):0,effective:0,half:false,immobilized:true,conditions:immobilized};
+        }
+        if(!e)return {active:false,loss:0,effective:Number.isFinite(baseSpeed)?Math.max(0,baseSpeed):null,half:false,immobilized:false};
+        var explicit=e.slowLoss!==null&&e.slowLoss!==undefined&&Number.isFinite(Number(e.slowLoss));
+        var loss=explicit?Math.max(0,Number(e.slowLoss)):(Number.isFinite(baseSpeed)?Math.max(0,baseSpeed/2):0);
+        var effective=Number.isFinite(baseSpeed)?Math.max(0,baseSpeed-loss):null;
+        return {active:true,loss:loss,effective:effective,half:!explicit,remaining:e.remaining,immobilized:false};
+    }
+
+    function polarity(item){
+        var effect=parseEffect(item);
+        if(!effect)return 'neutral';
+        if(effect.modifier)return effect.modifier.positive===false?'debuff':'buff';
+        if(effect.kind==='condition')return POSITIVE_CONDITIONS[effect.condition]?'buff':'debuff';
+        return 'neutral'; // narrative text has no safely inferable allegiance
+    }
+    function effectKey(kind,key,label){if(kind==='condition')return 'condition:'+key;if(kind==='modifier')return 'modifier:'+String(key||'')+':'+matchNorm(label);return 'text:'+matchNorm(label);}
+    function markerEntries(token,marker){
+        return String(token.get('statusmarkers')||'').split(',').filter(Boolean).filter(function(x){return x.replace(/@[^,]+$/,'')===marker;});
+    }
+    function groupName(name){
+        return norm(name).replace(/\s*(?:[x×]\s*\d+|\(\s*\d+\s*\)|\[\s*\d+\s*\])\s*$/,'').trim();
+    }
+    function attr(cid,name){
+        var a=findObjs({_type:'attribute',_characterid:cid,name:name})[0];
+        if(a)return a;
+        var all=findObjs({_type:'attribute',_characterid:cid});
+        name=String(name).toLowerCase();
+        return all.filter(function(x){return String(x.get('name')||'').toLowerCase()===name;})[0]||null;
+    }
+    function npcFlagValue(value){
+        return /^(?:1|on|true|yes|да)$/i.test(String(value==null?'':value).trim());
+    }
+    function npcToken(token){
+        var cid=token&&token.get('represents');if(!cid)return false;
+        var a=attr(cid,'npc');return !!(a&&npcFlagValue(a.get('current')));
+    }
+    function decodeSheetText(raw){
+        var text=String(raw==null?'':raw);
+        for(var pass=0;pass<2;pass++){
+            text=text.replace(/%u([0-9a-f]{4})/gi,function(_,hex){return String.fromCharCode(parseInt(hex,16));});
+            if(/%[0-9a-f]{2}/i.test(text)){try{text=decodeURIComponent(text);}catch(ignore){}}
+        }
+        return matchNorm(text
+            .replace(/<br\s*\/?\s*>|<\/p>|<\/div>/gi,' ')
+            .replace(/<[^>]*>/g,' ')
+            .replace(/&nbsp;|&#160;/gi,' ')
+            .replace(/&amp;/gi,' и ')
+            .replace(/&quot;/gi,'"')
+            .replace(/&#39;|&apos;/gi,"'"));
+    }
+    function sheetConditionImmunities(token){
+        var out=typeof AD5SpellEffects!=='undefined'&&token?AD5SpellEffects.immune(token.id):{},cid=token&&token.get('represents');if(!cid)return out;
+        var names={
+            npc_condition_immunities:true,
+            npc_condition_immunity:true,
+            condition_immunities:true,
+            condition_immunity:true
+        };
+        var chunks=[];
+        findObjs({_type:'attribute',_characterid:cid}).forEach(function(a){
+            var name=String(a.get('name')||'').toLowerCase();
+            if(names[name]&&String(a.get('current')||'').trim())chunks.push(String(a.get('current')));
+        });
+        if(!chunks.length)return out;
+        var text=decodeSheetText(chunks.join(' ; ')),words=text.split(/\s+/).filter(Boolean);
+        for(var i=0;i<words.length;i++){
+            for(var n=Math.min(5,words.length-i);n>=1;n--){
+                var key=conditionKey(words.slice(i,i+n).join(' '));
+                if(key){out[key]=true;i+=n-1;break;}
+            }
+        }
+        return out;
+    }
+    function groupKey(token){
+        if(typeof NPCGroupInitiative!=='undefined'&&NPCGroupInitiative&&typeof NPCGroupInitiative.groupKey==='function')return NPCGroupInitiative.groupKey(token);
+        if(!token)return '';
+        if(npcToken(token)){
+            var cid=token.get('represents'),c=cid&&getObj('character',cid);
+            return 'npc:'+groupName((c&&c.get('name'))||token.get('name')||token.id);
+        }
+        return 'token:'+token.id;
+    }
+
+    function sanctuarySpec(d){
+        if(!d||!d.explicit||!d.label)return null;
+        var text=String(d.label||'').trim(),m=/^(.*?)(?:\s+(?:сл\s*)?(\d{1,2}))\s*$/i.exec(text);
+        if(!m)return null;
+        var ck=conditionKey(m[1]),dc=Number(m[2]);
+        if(ck!=='sanctuary'||!Number.isSafeInteger(dc)||dc<1||dc>99)return null;
+        return {condition:'sanctuary',dc:dc};
+    }
+    function parseEffect(item){
+        if(isDamageItem(item))return null;
+        var mod=modifierSpec(item);
+        if(mod){
+            var keyPart=mod.type+(mod.ability?':'+mod.ability:'')+(mod.mode?':'+mod.mode:'');
+            return {kind:'modifier',key:effectKey('modifier',keyPart,mod.label),condition:null,label:mod.label,marker:null,remaining:mod.remaining,timed:mod.timed,modifier:mod,raw:item};
+        }
+        var rawRecovery=recoverySpec(item);
+        var d=rawRecovery.recovery?{label:item,remaining:null,explicit:false}:durationOf(item),sanctuary=sanctuarySpec(d);
+        if(sanctuary){
+            var sc=CONDITIONS.sanctuary;
+            return {kind:'condition',key:effectKey('condition','sanctuary','sanctuary'),condition:'sanctuary',label:sc.label+' '+sanctuary.dc,marker:sc.marker,remaining:d.remaining,timed:true,sanctuaryDC:sanctuary.dc,raw:item};
+        }
+        var rs=recoverySpec(d.label);
+        var parsedBase={label:rs.label,remaining:d.remaining,explicit:d.explicit};
+        var periodic=periodicSpec(parsedBase),slow=periodic?null:slowedSpec(rs.label),ck=periodic?periodic.condition:(slow?slow.condition:conditionKey(rs.label));
+        if(ck){
+            var c=CONDITIONS[ck],label=c.label;
+            if(periodic)label+=' '+periodic.formula;
+            if(slow&&slow.loss!==null)label+=' '+String(slow.loss).replace(/\.0+$/,'');
+            if(rs.recovery)label+=' '+rs.recovery.short+rs.recovery.dc;
+            return {kind:'condition',key:effectKey('condition',ck,rs.label),condition:ck,label:label,marker:c.marker,remaining:d.remaining,timed:d.explicit,periodic:periodic,recovery:rs.recovery,slowLoss:slow?slow.loss:undefined,raw:item};
+        }
+        if(d.explicit){
+            return {kind:'text',key:effectKey('text','',d.label),condition:null,label:d.label,marker:null,remaining:d.remaining,timed:true,raw:item};
+        }
+        // Unknown non-timed text is an immediate/narrative effect: report it,
+        // but do not leave a permanent tooltip entry that can never expire.
+        return {kind:'instant',key:null,condition:null,label:item,marker:null,remaining:null,timed:false,raw:item};
+    }
+
+    function criticalDurationBonus(sourceContext,e){
+        var bonus=Math.max(0,Math.floor(Number(sourceContext&&sourceContext.durationBonus)||0));
+        if(!bonus||!e||!e.timed||e.remaining===null||e.remaining===undefined||!Number.isFinite(Number(e.remaining)))return e;
+        e.remaining=Math.max(0,Number(e.remaining))+bonus;
+        return e;
+    }
+
+    // Some D&D 2014 conditions end through a specific game action/relationship,
+    // not because a turn counter reaches zero. Keep them indefinite even when an
+    // imported/legacy description accidentally contains "N ходов".
+    function lifecycleCondition(e,sourceContext){
+        if(!e||e.kind!=='condition'||!e.condition)return e;
+        var rel=String(sourceContext&&sourceContext.relationshipType||'').toLowerCase();
+        if(e.condition==='prone'||e.condition==='grappled'||(e.condition==='restrained'&&rel==='pin')){
+            e.remaining=null;
+            e.timed=false;
+        }
+        return e;
+    }
+
+    function relationshipEffectKey(e,sourceContext){
+        if(!e||e.kind!=='condition'||!e.condition||!sourceContext)return e&&e.key;
+        if(sourceContext.sleepSpell&&e.condition==='unconscious'){e.key='condition:unconscious:sleep:'+String(sourceContext.castId||'managed');return e.key;}
+        var rel=String(sourceContext.relationshipKey||'').trim();
+        if(rel)e.key='condition:'+e.condition+':relation:'+rel;
+        return e.key;
+    }
+    function effectSourceRecord(sourceContext){
+        sourceContext=sourceContext&&typeof sourceContext==='object'?sourceContext:{};
+        return {
+            ownerPid:sourceContext.ownerPid||null,
+            sleepSpell:sourceContext.sleepSpell===true,
+            actor:sourceContext.actor||null,
+            actorName:sourceContext.actorName||'',
+            sourceToken:sourceContext.sourceToken||null,
+            targetToken:sourceContext.targetToken||null,
+            actionName:sourceContext.actionName||'',
+            castId:sourceContext.castId||null,
+            concentrationId:sourceContext.concentrationId||null,
+            phaseScope:sourceContext.phaseScope||null,
+            relationshipKey:sourceContext.relationshipKey||null,
+            relationshipType:sourceContext.relationshipType||null,
+            parentRelationshipKey:sourceContext.parentRelationshipKey||null,
+            reach:sourceContext.reach===undefined||sourceContext.reach===null?null:Number(sourceContext.reach),
+            payloadSustainConcentration:sourceContext.payloadSustainConcentration===true,
+            payloadIdentity:sourceContext.payloadIdentity||null
+        };
+    }
+
+    function plan(token,description,outcome,conditionImmunities,sourceContext){
+        if(!token||token.get('_subtype')!=='token')throw new Error('AD5 Effect Turns: токен не найден.');
+        outcome=outcome==='success'?'success':'failure';
+        conditionImmunities=conditionImmunities&&typeof conditionImmunities==='object'?clone(conditionImmunities):{};
+        sourceContext=sourceContext&&typeof sourceContext==='object'?clone(sourceContext):{};
+        var conditionalProfile=условныйПрофиль(description,sourceContext,token);if(conditionalProfile)sourceContext.условныйПрофиль=conditionalProfile;
+        // 1.0.7+: re-read the native condition-immunity field immediately before
+        // applying the outcome. This is authoritative for marker/tooltip creation.
+        var directImmunities=sheetConditionImmunities(token);
+        Object.keys(directImmunities).forEach(function(k){conditionImmunities[k]=true;});
+        var parsed=sectionParse(убратьУсловныеСтроки(description)),sec=parsed[outcome],before=snapshot(token.id),after=cleanRecord(before),applied=[],instant=[],blocked=[];
+        if(!sec.present)return {before:before,after:before,changed:false,applied:applied,instant:instant,blocked:blocked,present:false,damage:sec.damage,outcome:outcome};
+        sec.items.forEach(function(item){
+            var e=parseEffect(item);if(!e)return;criticalDurationBonus(sourceContext,e);lifecycleCondition(e,sourceContext);relationshipEffectKey(e,sourceContext);
+            if(e.kind==='condition'&&typeof AD5SpellEffects!=='undefined'&&AD5SpellEffects.protectionBlocks&&AD5SpellEffects.protectionBlocks(token,e.condition,sourceContext)){blocked.push(e);return;}
+        if(e.kind==='condition'&&e.condition&&conditionImmunities[e.condition]){
+                blocked.push(e);
+                // Remove the same stale managed condition if an older build
+                // incorrectly created it. Pre-existing/manual markers are kept
+                // through markerBase by writeRecord().
+                if(after.effects[e.key])delete after.effects[e.key];
+                return;
+            }
+            if(e.kind==='instant'){instant.push(e.label);return;}
+            var old=after.effects[e.key];
+            if(old){
+                if(old.remaining===null || e.remaining===null)e.remaining=null;
+                else e.remaining=Math.max(Number(old.remaining)||0,Number(e.remaining)||0);
+            }
+            if(e.marker && after.markerBase[e.marker]===undefined)after.markerBase[e.marker]=markerEntries(token,e.marker);
+            after.effects[e.key]={kind:e.kind,condition:e.condition,label:e.label,marker:e.marker,remaining:e.remaining,timed:e.timed};
+            if(e.modifier)after.effects[e.key].modifier=clone(e.modifier);
+            if(e.recovery)after.effects[e.key].recovery=clone(e.recovery);
+            if(sourceContext.recoveryRule&&e.condition===conditionKey(sourceContext.recoveryRule.condition)){
+                after.effects[e.key].recovery=clone(sourceContext.recoveryRule);
+                after.effects[e.key].recovery.snapshot=clone(sourceContext.phaseSnapshot);
+                after.effects[e.key].recovery.attempted=false;
+            }
+            if(e.condition==='slowed')after.effects[e.key].slowLoss=(e.slowLoss===undefined?null:e.slowLoss);
+            if(e.condition==='sanctuary')after.effects[e.key].sanctuaryDC=Number(e.sanctuaryDC)||null;
+            if(e.periodic)after.effects[e.key].periodic=clone(e.periodic);
+            after.effects[e.key].source=effectSourceRecord(sourceContext);
+            if(e.condition==='no_reactions'){after.effects[e.key].remaining=1;after.effects[e.key].timed=true;after.effects[e.key].reactionTurnStarted=false;}
+            применитьПрофильКЭффекту(after.effects[e.key],sourceContext);
+            if(sourceContext.sleepSpell&&e.condition==='unconscious')sleepProne(token,after,sourceContext,applied);
+            applied.push(after.effects[e.key]);
+        });
+        if(conditionalProfile&&!applied.length)добавитьУсловныйЯкорь(token,after,sourceContext,conditionalProfile,applied);
+        var changed=!equals(before,after);
+        return {before:before,after:after,changed:changed,applied:applied,instant:instant,blocked:blocked,present:true,damage:sec.damage,outcome:outcome};
+    }
+
+    function directSegments(description){
+        return String(description==null?'':description)
+            .replace(/<br\s*\/?\s*>/gi,'\n')
+            .replace(/<[^>]*>/g,' ')
+            .replace(/&nbsp;|&#160;/gi,' ')
+            .replace(/\r/g,'\n')
+            .split(/[\n,;]+/)
+            .map(function(x){x=String(x||'').trim();if(!/^-\s*\d/.test(x))x=x.replace(/^[\s.:—–-]+/g,'');return x.replace(/[\s.:—–-]+$/g,'').trim();})
+            .filter(Boolean);
+    }
+    /* ---------------------------------------------------------------------
+     * 1.4.0 — Conditional Effect Engine.
+     * Новая логика не создаёт отдельную БД эффектов: профиль хранится прямо
+     * в обычной записи Effect Turns (`эффект.условный`).
+     *
+     * Русский синтаксис описания:
+     *   ПОКА: КОНЦЕНТРАЦИЯ АКТИВНА
+     *   ПОКА: ВРХП ЭТОГО ЭФФЕКТА > 0
+     *   ПОКА: ДИСТАНЦИЯ <= 30 ФТ
+     *   ПОКА: НЕТ ПОЛНОГО УКРЫТИЯ
+     *   СНЯТЬ: ЦЕЛЬ УМЕРЛА
+     *   СНЯТЬ: ЦЕЛЬ ПОЛУЧИЛА УРОН ОТ ИСТОЧНИКА ИЛИ ЕГО СОЮЗНИКА
+     *   СНЯТЬ: ИСТОЧНИК АТАКОВАЛ ДРУГУЮ ЦЕЛЬ
+     *   СНЯТЬ: ЦЕЛЬ АТАКОВАЛА
+     *   РАСХ: АТАКА ПО ЦЕЛИ 1
+     *   ДО: КОНЕЦ СЛЕДУЮЩЕГО ХОДА ИСТОЧНИКА
+     *   УСЛЭФ: ПРЕМ АТАКАМ ПО ЦЕЛИ
+     *   УСЛЭФ: ПОМ АТАКАМ ЦЕЛИ НЕ ПО ИСТОЧНИКУ
+     *   УСЛЭФ: НЕВИДИМОСТЬ НЕ ДАЁТ ЗАЩИТУ
+     * ------------------------------------------------------------------ */
+    function условныеСтроки(описание){
+        return String(описание==null?'':описание)
+            .replace(/<br\s*\/?\s*>/gi,'\n').replace(/<\/p>\s*<p>/gi,'\n')
+            .replace(/<[^>]*>/g,' ').replace(/&nbsp;|&#160;/gi,' ')
+            .replace(/\r/g,'\n').split(/\n+/).map(function(x){return String(x||'').trim();}).filter(Boolean);
+    }
+    function строкаHitPayload(line){
+        return /^\s*(?:ПОПАД|ПОПАДУСЛ|ПОПАДЦЕЛЬ|ПОПАДУРОН|ПОПАДСПАС|ПОПАДПРВ|ПОПАДУСП|ПОПАДЭФФ|ПОПАДКОН|ПОПАДОБЛ|ПОПАДОБЛЦЕЛЬ|ПОПАДОБЛУРОН|ПОПАДОБЛСПАС|ПОПАДОБЛПРВ|ПОПАДОБЛУСП|ПОПАДОБЛИСКЛ)\s*[:：—–-]/i.test(String(line||''));
+    }
+    function убратьУсловныеСтроки(описание){
+        return условныеСтроки(описание).filter(function(x){return !/^\s*(?:ПОКА|СНЯТЬ|РАСХ|ДО|УСЛЭФ|УСЛ\s*ЭФФ|УСЛОВНЫЙ\s+ЭФФЕКТ)\s*[:：—–-]/i.test(x)&&!строкаHitPayload(x);}).join('\n');
+    }
+    function канонСобытияУсловия(raw){
+        try{if(typeof AD5События!=='undefined'&&AD5События&&typeof AD5События.имяСобытия==='function'){var c=AD5События.имяСобытия(raw);if(c)return c;}}catch(ignore){}
+        var t=matchNorm(raw).toUpperCase();
+        var map={
+            'АТАКА ПО ЦЕЛИ':'АТАКА ПО ЦЕЛИ','ПОПАДАНИЕ':'ПОПАДАНИЕ','ПРОМАХ':'ПРОМАХ',
+            'ПОПАДАНИЕ ПО ЦЕЛИ':'ПОПАДАНИЕ ПО ЦЕЛИ','ПОПАДАНИЕ ИСТОЧНИКА ПО ЦЕЛИ':'ПОПАДАНИЕ ИСТОЧНИКА ПО ЦЕЛИ',
+            'ПОЛУЧЕН УРОН':'ПОЛУЧЕН УРОН','ЦЕЛЬ УМЕРЛА':'ЦЕЛЬ УМЕРЛА','НАЧАЛО ХОДА':'НАЧАЛО ХОДА','КОНЕЦ ХОДА':'КОНЕЦ ХОДА'
+        };
+        return map[t]||'';
+    }
+    function разобратьПокаУсловия(raw){
+        var t=matchNorm(raw),m;
+        if(/^(?:концентрация\s+активна|активна\s+концентрация)$/.test(t))return {тип:'концентрация',raw:raw};
+        if(/^источник\s+(?:жив|жива|живой)$/.test(t))return {тип:'источникЖив',raw:raw};
+        if(/^цель\s+(?:жива|жив|живая)$/.test(t))return {тип:'цельЖива',raw:raw};
+        if(/^(?:врхп|временные\s+хп)\s+этого\s+эффекта\s*>\s*0$/.test(t))return {тип:'врхпЭффекта',raw:raw};
+        if(/^(?:врхп|временные\s+хп)\s*>\s*0$/.test(t))return {тип:'врхп',raw:raw};
+        m=/^дистанция\s*(?:<=|≤|не\s+более)\s*(\d+(?:[.,]\d+)?)\s*(?:фт|фут(?:а|ов)?)?$/.exec(t);
+        if(m)return {тип:'дистанцияМакс',футы:Number(String(m[1]).replace(',','.')),raw:raw};
+        if(/^(?:нет\s+полного\s+укрытия|без\s+полного\s+укрытия)$/.test(t))return {тип:'нетПолногоУкрытия',raw:raw};
+        return null;
+    }
+    function разобратьСнятьУсловия(raw){
+        var t=matchNorm(raw);
+        if(/^цель\s+умер(?:ла|ла|)$/.test(t)||t==='цель погибла')return {тип:'цельУмерла',raw:raw};
+        if(/^источник\s+умер(?:ла|)$/.test(t)||t==='источник погиб')return {тип:'источникУмер',raw:raw};
+        if(/^цель\s+(?:получила|получил)\s+урон\s+от\s+источника\s+или\s+(?:его\s+)?союзника/.test(t))return {тип:'уронЦелиОтИсточникаИлиСоюзника',raw:raw};
+        if(/^(?:источник\s+или\s+(?:его\s+)?союзник)\s+(?:нанес|нанёс|нанесла)\s+цели\s+урон/.test(t))return {тип:'уронЦелиОтИсточникаИлиСоюзника',raw:raw};
+        if(/^союзник\s+источника\s+(?:нанес|нанёс|нанесла)\s+цели\s+урон/.test(t))return {тип:'уронЦелиОтСоюзника',raw:raw};
+        if(/^цель\s+(?:получила|получил)\s+урон\s+от\s+источника/.test(t))return {тип:'уронЦелиОтИсточника',raw:raw};
+        if(/^цель\s+(?:получила|получил)\s+урон$/.test(t))return {тип:'уронЦели',raw:raw};
+        if(/^источник\s+(?:атаковал|атаковала)\s+другую\s+цель/.test(t))return {тип:'источникАтаковалДругую',raw:raw};
+        if(/^источник\s+(?:атаковал|атаковала)\s+цель$/.test(t))return {тип:'источникАтаковалЦель',raw:raw};
+        if(/^цель\s+(?:атаковала|атаковал)\s+не\s+источника/.test(t))return {тип:'цельАтаковалаНеИсточник',raw:raw};
+        if(/^цель\s+(?:атаковала|атаковал)$/.test(t))return {тип:'цельАтаковала',raw:raw};
+        if(/^(?:источник\s+или\s+(?:его\s+)?союзник)\s+(?:атаковал|атаковали|атаковала)\s+цель/.test(t))return {тип:'источникИлиСоюзникАтаковалЦель',raw:raw};
+        var m=/^конец\s+хода\s+источника\s+если\s+дистанция\s*(?:>|больше)\s*(\d+(?:[.,]\d+)?)\s*(?:фт|фут(?:а|ов)?)?$/.exec(t);
+        if(m)return {тип:'конецХодаИсточникаДальше',футы:Number(String(m[1]).replace(',','.')),raw:raw};
+        return null;
+    }
+    function разобратьРасходУсловия(raw){
+        var text=String(raw||'').trim(),m=/^(.*?)(?:\s+(\d{1,3}))?\s*$/.exec(text),name=String(m&&m[1]||text).trim(),count=m&&m[2]?Number(m[2]):1;
+        var event=канонСобытияУсловия(name);
+        if(!event||!Number.isSafeInteger(count)||count<1||count>999)return null;
+        return {событие:event,осталось:count,всего:count,raw:raw};
+    }
+    function разобратьДоУсловия(raw){
+        var t=matchNorm(raw),m=/^(начало|конец)\s+(следующего\s+)?хода\s+(источника|цели)$/.exec(t);
+        if(!m)return null;
+        return {фаза:m[1]==='начало'?'НАЧАЛО ХОДА':'КОНЕЦ ХОДА',следующий:!!m[2],роль:m[3]==='источника'?'источник':'цель',пропустить:0,raw:raw};
+    }
+    function разобратьУсловныйЭффект(raw){
+        var t=matchNorm(raw);
+        if(/^(?:прем|преимущество)\s+атакам\s+по\s+цели$/.test(t))return {тип:'премАтакамПоЦели',raw:raw};
+        if(/^(?:пом|помеха)\s+атакам\s+цели\s+не\s+по\s+источнику$/.test(t))return {тип:'помАтакамЦелиНеПоИсточнику',raw:raw};
+        if(/^(?:невидимость\s+не\s+дает\s+защиту|игнор\s+защиты\s+невидимости)$/.test(t))return {тип:'игнорЗащитыНевидимости',raw:raw};
+        return null;
+    }
+    function текущаяГруппаУсловия(){
+        try{var rows=JSON.parse(Campaign().get('turnorder')||'[]')||[],row=rows[0],t=row&&row.id&&row.id!=='-1'?getObj('graphic',row.id):null;return t?groupKey(t):'';}catch(ignore){return '';}
+    }
+    function подготовитьДоУсловия(до,sourceContext,targetToken){
+        if(!до)return null;var out=clone(до);if(!out.следующий)return out;
+        // «конец следующего хода» должен пережить конец ТЕКУЩЕГО хода, если
+        // эффект наложен прямо во время хода соответствующего существа.
+        if(out.фаза==='КОНЕЦ ХОДА'){
+            var tokenId=out.роль==='источник'?String(sourceContext&&sourceContext.sourceToken||''):String(targetToken&&targetToken.id||'');
+            var t=tokenId&&getObj('graphic',tokenId);if(t&&groupKey(t)===текущаяГруппаУсловия())out.пропустить=1;
+        }
+        return out;
+    }
+    function payloadТипУрона(raw){
+        var t=String(raw||'').trim();if(!t)return '';
+        var n=matchNorm(t);if(/^(?:как\s+оружие|тип\s+оружия|оружейный\s+тип)$/.test(n))return 'как оружие';
+        return t;
+    }
+    function payloadУрон(raw){
+        raw=String(raw||'').trim();var m=/^([0-9dDдД+*\/(). \-]+?)\s+(.+)$/.exec(raw);if(!m)return null;
+        var formula=String(m[1]||'').replace(/[дД]/g,'d').replace(/\s+/g,'').trim(),type=payloadТипУрона(m[2]);
+        if(!formula||!/\d/.test(formula)||!type)return null;
+        return {formula:formula,type:type,raw:raw};
+    }
+    function payloadSave(raw){
+        raw=String(raw||'').trim();var m=/^(СИЛ|ЛОВ|ТЕЛ|ИНТ|МДР|ХАР|STR|DEX|CON|INT|WIS|CHA)(?:\s+(АВТО|AUTO|\d{1,2}))?$/i.exec(raw);if(!m)return null;
+        var map={сил:'strength',лов:'dexterity',тел:'constitution',инт:'intelligence',мдр:'wisdom',хар:'charisma',str:'strength',dex:'dexterity',con:'constitution',int:'intelligence',wis:'wisdom',cha:'charisma'};
+        var ability=map[matchNorm(m[1])],dc=m[2]||'АВТО';if(!ability)return null;
+        if(/^\d+$/.test(String(dc))){dc=Number(dc);if(dc<1||dc>99)return null;}else dc='auto';
+        return {ability:ability,dc:dc,raw:raw};
+    }
+    function payloadУсловие(raw){
+        var t=matchNorm(raw);
+        if(/^(?:атака|любая атака)$/.test(t))return 'attack';
+        if(/^(?:оружие|оружейная атака|оружейное попадание)$/.test(t))return 'weapon';
+        if(/^(?:рукопашное оружие|рукопашная оружейная атака|ближнее оружие)$/.test(t))return 'meleeWeapon';
+        if(/^(?:дальнобойное оружие|дальнобойная оружейная атака|дальнее оружие)$/.test(t))return 'rangedWeapon';
+        if(/^(?:заклинание|атака заклинанием)$/.test(t))return 'spell';
+        return '';
+    }
+    function payloadЦель(raw){
+        var t=matchNorm(raw);if(/^(?:любая|любая цель|любую цель)$/.test(t))return 'any';
+        if(/^(?:цель эффекта|помеченная цель|эта цель)$/.test(t))return 'effectTarget';
+        return '';
+    }
+    function payloadКонцентрация(raw){
+        var t=matchNorm(raw);if(/^(?:завершить|снять|закончить|end)$/.test(t))return 'end';
+        if(/^(?:сохранить|продолжить|оставить|keep)$/.test(t))return 'keep';
+        return '';
+    }
+    function payloadMode(raw){
+        var t=matchNorm(raw);if(/^(?:постоянный|повтор|каждое попадание|многоразовый)$/.test(t))return 'persistent';
+        if(/^(?:разовый|одноразовый|следующее попадание|один)$/.test(t))return 'once';
+        return '';
+    }
+    function payloadAreaExclude(raw){var t=matchNorm(raw);return /^(?:основную|основную цель|первичную|первичную цель|да|yes)$/.test(t);}
+    function разобратьHitPayloads(описание){
+        var out=[],cur=null,errors=[];
+        условныеСтроки(описание).forEach(function(line){
+            var m=/^\s*(ПОПАД|ПОПАДУСЛ|ПОПАДЦЕЛЬ|ПОПАДУРОН|ПОПАДСПАС|ПОПАДПРВ|ПОПАДУСП|ПОПАДЭФФ|ПОПАДКОН|ПОПАДОБЛ|ПОПАДОБЛЦЕЛЬ|ПОПАДОБЛУРОН|ПОПАДОБЛСПАС|ПОПАДОБЛПРВ|ПОПАДОБЛУСП|ПОПАДОБЛИСКЛ)\s*[:：—–-]\s*(.*?)\s*$/i.exec(line);if(!m)return;
+            var key=matchNorm(m[1]),body=String(m[2]||'').trim();
+            if(key==='попад'){
+                var mode=payloadMode(body);if(!mode){errors.push(line);return;}
+                cur={index:out.length+1,mode:mode,condition:'weapon',target:'auto',damage:[],save:null,failure:'',success:'',effect:'',concentration:'keep',area:null,raw:[line]};out.push(cur);return;
+            }
+            if(!cur){errors.push(line+' (нет строки ПОПАД:)');return;}cur.raw.push(line);
+            if(key==='попадусл'){var c=payloadУсловие(body);if(!c)errors.push(line);else cur.condition=c;return;}
+            if(key==='попадцель'){var tg=payloadЦель(body);if(!tg)errors.push(line);else cur.target=tg;return;}
+            if(key==='попадурон'){var d=payloadУрон(body);if(!d)errors.push(line);else cur.damage.push(d);return;}
+            if(key==='попадспас'){var sv=payloadSave(body);if(!sv)errors.push(line);else cur.save=sv;return;}
+            if(key==='попадпрв'){cur.failure=body;return;}
+            if(key==='попадусп'){cur.success=body;return;}
+            if(key==='попадэфф'){cur.effect=cur.effect?cur.effect+', '+body:body;return;}
+            if(key==='попадкон'){var co=payloadКонцентрация(body);if(!co)errors.push(line);else cur.concentration=co;return;}
+            if(key==='попадобл'){cur.area=cur.area||{range:'',target:'каждое существо',damage:[],save:null,failure:'',success:'',excludePrimary:false};cur.area.range=body;return;}
+            if(key==='попадоблцель'){cur.area=cur.area||{range:'',target:'каждое существо',damage:[],save:null,failure:'',success:'',excludePrimary:false};cur.area.target=body||'каждое существо';return;}
+            if(key==='попадоблурон'){cur.area=cur.area||{range:'',target:'каждое существо',damage:[],save:null,failure:'',success:'',excludePrimary:false};var ad=payloadУрон(body);if(!ad)errors.push(line);else cur.area.damage.push(ad);return;}
+            if(key==='попадоблспас'){cur.area=cur.area||{range:'',target:'каждое существо',damage:[],save:null,failure:'',success:'',excludePrimary:false};var asv=payloadSave(body);if(!asv)errors.push(line);else cur.area.save=asv;return;}
+            if(key==='попадоблпрв'){cur.area=cur.area||{range:'',target:'каждое существо',damage:[],save:null,failure:'',success:'',excludePrimary:false};cur.area.failure=body;return;}
+            if(key==='попадоблусп'){cur.area=cur.area||{range:'',target:'каждое существо',damage:[],save:null,failure:'',success:'',excludePrimary:false};cur.area.success=body;return;}
+            if(key==='попадоблискл'){cur.area=cur.area||{range:'',target:'каждое существо',damage:[],save:null,failure:'',success:'',excludePrimary:false};cur.area.excludePrimary=payloadAreaExclude(body);return;}
+        });
+        out.forEach(function(p){if(!p.damage.length&&!p.effect&&!p.save&&!p.area)errors.push('ПОПАД #'+p.index+': нет УРОН/ЭФФ/СПАС/ОБЛ');if(p.area&&!p.area.range)errors.push('ПОПАД #'+p.index+': ПОПАДОБЛ без области');});
+        if(errors.length)throw new Error('Weapon-hit Payload: не распознано: '+errors.join(' | '));
+        return out;
+    }
+    function условныйПрофиль(описание,sourceContext,targetToken){
+        var hitPayloads=разобратьHitPayloads(описание),p={пока:[],снять:[],расход:[],до:null,эффекты:[],попадания:hitPayloads,сырой:[]},found=hitPayloads.length>0,errors=[];
+        hitPayloads.forEach(function(h){(h.raw||[]).forEach(function(x){p.сырой.push(x);});});
+        условныеСтроки(описание).forEach(function(line){
+            if(строкаHitPayload(line))return;
+            var m=/^\s*(ПОКА|СНЯТЬ|РАСХ|ДО|УСЛЭФ|УСЛ\s*ЭФФ|УСЛОВНЫЙ\s+ЭФФЕКТ)\s*[:：—–-]\s*(.*?)\s*$/i.exec(line);if(!m)return;
+            found=true;p.сырой.push(line);var kind=matchNorm(m[1]),body=String(m[2]||'').trim(),x=null;
+            if(kind==='пока')x=разобратьПокаУсловия(body);
+            else if(kind==='снять')x=разобратьСнятьУсловия(body);
+            else if(kind==='расх')x=разобратьРасходУсловия(body);
+            else if(kind==='до')x=разобратьДоУсловия(body);
+            else x=разобратьУсловныйЭффект(body);
+            if(!x){errors.push(line);return;}
+            if(kind==='пока')p.пока.push(x);else if(kind==='снять')p.снять.push(x);else if(kind==='расх')p.расход.push(x);else if(kind==='до')p.до=x;else p.эффекты.push(x);
+        });
+        if(errors.length)throw new Error('Conditional Effect Engine: не распознано: '+errors.join(' | '));
+        if(!found)return null;
+        p.до=подготовитьДоУсловия(p.до,sourceContext||{},targetToken||null);
+        return p;
+    }
+    function условныйКлючЧасть(v){return matchNorm(v).replace(/\s+/g,'_').replace(/[^a-zа-я0-9_:.-]/g,'').slice(0,80)||'эффект';}
+    function добавитьУсловныйЯкорь(token,after,sourceContext,profile,applied){
+        if(!profile)return false;
+        var src=effectSourceRecord(sourceContext),key='conditional:'+условныйКлючЧасть(src.actionName||'условный_эффект')+':'+условныйКлючЧасть(src.sourceToken||src.actor||'источник');
+        var e={kind:'conditional',condition:null,label:String(src.actionName||'Условный эффект'),marker:null,remaining:null,timed:false,source:src,условный:clone(profile),условныйКорень:true};
+        after.effects[key]=e;applied.push(e);return true;
+    }
+    function применитьПрофильКЭффекту(e,sourceContext){if(e&&sourceContext&&sourceContext.условныйПрофиль)e.условный=clone(sourceContext.условныйПрофиль);return e;}
+    function временныеХитыВладелец(tokenId){var o=root().tempHpOwners[String(tokenId||'')];return o?clone(o):null;}
+    function установитьВладельцаВременныхХитов(tokenId,meta){tokenId=String(tokenId||'');if(!tokenId)return null;if(!meta){delete root().tempHpOwners[tokenId];return null;}root().tempHpOwners[tokenId]=clone(meta);return clone(root().tempHpOwners[tokenId]);}
+    function токенЖивУсловия(token){if(!token)return false;var hp=Number(token.get('bar1_value'));if(Number.isFinite(hp)&&hp<=0)return false;return String(token.get('statusmarkers')||'').split(',').every(function(x){return String(x||'').replace(/@.*$/,'')!=='skull';});}
+    function дистанцияУсловия(a,b){
+        if(!a||!b)return Infinity;
+        try{if(typeof AD5!=='undefined'&&AD5&&AD5.conditionRules&&typeof AD5.conditionRules.rangeFeet==='function')return Number(AD5.conditionRules.rangeFeet(a,b));}catch(ignore){}
+        try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.rangeFeet==='function')return Number(AD5Height.rangeFeet(a,b));}catch(ignore2){}
+        try{if(typeof AD5Movement!=='undefined'&&AD5Movement&&typeof AD5Movement.rangeFeet==='function')return Number(AD5Movement.rangeFeet(a,b));}catch(ignore3){}
+        if(String(a.get('_pageid'))!==String(b.get('_pageid')))return Infinity;var page=getObj('page',a.get('_pageid')),scale=Number(page&&page.get('scale_number'))||5,dx=Math.abs(Number(a.get('left'))-Number(b.get('left')))/70,dy=Math.abs(Number(a.get('top'))-Number(b.get('top')))/70;return Math.max(dx,dy)*scale;
+    }
+    function полноеУкрытиеУсловия(a,b){
+        try{if(typeof AD5!=='undefined'&&AD5&&AD5.environment&&typeof AD5.environment.cover==='function'){var c=AD5.environment.cover(a,b)||{};return !!c.full||String(c.tier||'')==='full';}}catch(ignore){}
+        try{if(typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.coverBetween==='function'){var d=AD5Environment.coverBetween(a,b)||{};return !!d.full||String(d.tier||'')==='full';}}catch(ignore2){}
+        return false;
+    }
+    function концентрацияАктивнаУсловия(effect){
+        var src=effect&&effect.source||{},id=String(src.concentrationId||''),token=src.sourceToken&&getObj('graphic',String(src.sourceToken));if(!id)return false;
+        try{if(typeof AD5Concentration!=='undefined'&&AD5Concentration&&typeof AD5Concentration.currentForToken==='function'){var rec=token&&AD5Concentration.currentForToken(token);return !!(rec&&String(rec.id||'')===id);}}catch(ignore){}
+        return true; // removeByConcentration is authoritative when the manager exists without a readable bridge.
+    }
+    function врхпЭтогоЭффектаЖивы(effect,target){
+        if(!target||Number(target.get('bar2_value'))<=0)return false;var own=временныеХитыВладелец(target.id),src=effect&&effect.source||{};if(!own)return false;
+        if(src.castId&&own.castId)return String(src.castId)===String(own.castId);
+        return String(src.sourceToken||'')===String(own.sourceToken||'')&&matchNorm(src.actionName||'')===matchNorm(own.actionName||'');
+    }
+    function условиеПокаИстинно(rule,effect,target){
+        var src=effect&&effect.source||{},source=src.sourceToken&&getObj('graphic',String(src.sourceToken));
+        if(rule.тип==='концентрация')return концентрацияАктивнаУсловия(effect);
+        if(rule.тип==='источникЖив')return токенЖивУсловия(source);
+        if(rule.тип==='цельЖива')return токенЖивУсловия(target);
+        if(rule.тип==='врхп')return !!(target&&Number(target.get('bar2_value'))>0);
+        if(rule.тип==='врхпЭффекта')return врхпЭтогоЭффектаЖивы(effect,target);
+        if(rule.тип==='дистанцияМакс')return !!(source&&target&&дистанцияУсловия(source,target)<=Number(rule.футы)+0.0001);
+        if(rule.тип==='нетПолногоУкрытия')return !!(source&&target&&!полноеУкрытиеУсловия(source,target));
+        return true;
+    }
+    function профильПокаАктивен(effect,target){var p=effect&&effect.условный;if(!p)return true;return (p.пока||[]).every(function(r){return условиеПокаИстинно(r,effect,target);});}
+    function первоеЛожноеПока(effect,target){
+        var p=effect&&effect.условный,rows=p&&p.пока||[];
+        for(var i=0;i<rows.length;i++)if(!условиеПокаИстинно(rows[i],effect,target))return rows[i];
+        return null;
+    }
+    function условныйКореньЭффекта(effect){return !!(effect&&(effect.условныйКорень===true||effect.kind==='conditional'));}
+    function концентрацияУсловногоЭффекта(effect){return String(effect&&effect.source&&effect.source.concentrationId||'').trim();}
+    function естьДругойУсловныйКореньКонцентрации(concentrationId){
+        concentrationId=String(concentrationId||'').trim();if(!concentrationId)return false;var db=root().tokens,found=false;
+        Object.keys(db).some(function(tokenId){var rec=db[tokenId],effects=rec&&rec.effects||{};return Object.keys(effects).some(function(key){var e=effects[key];if(e&&условныйКореньЭффекта(e)&&концентрацияУсловногоЭффекта(e)===concentrationId){found=true;return true;}return false;});});
+        return found;
+    }
+    function поставитьЗавершениеКонцентрации(queue,effect,reason){
+        if(!queue||!условныйКореньЭффекта(effect))return;var id=концентрацияУсловногоЭффекта(effect);if(!id)return;
+        queue[id]={id:id,reason:String(reason||'условный эффект завершён'),actionName:String(effect&&effect.source&&effect.source.actionName||effect&&effect.label||'условный эффект')};
+    }
+    function завершитьКонцентрацииПослеУсловий(queue){
+        var ended=0;Object.keys(queue||{}).forEach(function(id){var row=queue[id];if(естьДругойУсловныйКореньКонцентрации(id))return;
+            try{
+                if(typeof AD5Concentration!=='undefined'&&AD5Concentration&&typeof AD5Concentration.end==='function'){
+                    var result=AD5Concentration.end(id,'условный эффект завершён: '+String(row.actionName||row.reason||'условие'));if(result!==null&&result!==undefined)ended++;
+                }
+            }catch(err){sendChat(SCRIPT,'/w gm <b>Conditional Effect Engine / концентрация:</b> '+esc(err.message||err),null,{noarchive:true});}
+        });return ended;
+    }
+    function событиеТокенId(ev,key){return String(ev&&ev[key]||'');}
+    function союзникУсловия(a,b){
+        a=String(a||'');b=String(b||'');if(!a||!b)return false;if(a===b)return true;var at=getObj('graphic',a),bt=getObj('graphic',b);if(!at||!bt)return false;
+        try{if(typeof AD5Sides!=='undefined'&&AD5Sides&&typeof AD5Sides.relation==='function')return AD5Sides.relation({sourceToken:b},at)==='ally';}catch(ignore){}
+        return false;
+    }
+    function правилоСнятияСовпало(rule,тип,ev,effect,targetId){
+        var src=String(effect&&effect.source&&effect.source.sourceToken||''),from=событиеТокенId(ev,'источникТокенId'),to=событиеТокенId(ev,'цельТокенId'),target=String(targetId||'');
+        if(rule.тип==='цельУмерла')return тип==='ЦЕЛЬ УМЕРЛА'&&to===target;
+        if(rule.тип==='источникУмер')return тип==='ЦЕЛЬ УМЕРЛА'&&to===src;
+        if(rule.тип==='уронЦели')return тип==='ПОЛУЧЕН УРОН'&&to===target;
+        if(rule.тип==='уронЦелиОтИсточника')return тип==='ПОЛУЧЕН УРОН'&&to===target&&from===src;
+        if(rule.тип==='уронЦелиОтСоюзника')return тип==='ПОЛУЧЕН УРОН'&&to===target&&from!==src&&союзникУсловия(from,src);
+        if(rule.тип==='уронЦелиОтИсточникаИлиСоюзника')return тип==='ПОЛУЧЕН УРОН'&&to===target&&(from===src||союзникУсловия(from,src));
+        if(rule.тип==='источникАтаковалДругую')return тип==='АТАКА ПО ЦЕЛИ'&&from===src&&to!==target;
+        if(rule.тип==='источникАтаковалЦель')return тип==='АТАКА ПО ЦЕЛИ'&&from===src&&to===target;
+        if(rule.тип==='цельАтаковалаНеИсточник')return тип==='АТАКА ПО ЦЕЛИ'&&from===target&&to!==src;
+        if(rule.тип==='цельАтаковала')return тип==='АТАКА ПО ЦЕЛИ'&&from===target;
+        if(rule.тип==='источникИлиСоюзникАтаковалЦель')return тип==='АТАКА ПО ЦЕЛИ'&&to===target&&(from===src||союзникУсловия(from,src));
+        if(rule.тип==='конецХодаИсточникаДальше'){
+            if(тип!=='КОНЕЦ ХОДА'||from!==src)return false;var st=src&&getObj('graphic',src),tt=target&&getObj('graphic',target);return !!(st&&tt&&дистанцияУсловия(st,tt)>Number(rule.футы)+0.0001);
+        }
+        return false;
+    }
+    function событиеРасходаСовпало(rule,тип,ev,effect,targetId){
+        var src=String(effect&&effect.source&&effect.source.sourceToken||''),from=событиеТокенId(ev,'источникТокенId'),to=событиеТокенId(ev,'цельТокенId'),target=String(targetId||'');
+        // «АТАКА ПО ЦЕЛИ» расходуется после завершённого d20 — на ПОПАДАНИИ или ПРОМАХЕ.
+        if(rule.событие==='АТАКА ПО ЦЕЛИ')return (тип==='ПОПАДАНИЕ'||тип==='ПРОМАХ')&&to===target;
+        if(rule.событие==='ПОПАДАНИЕ ПО ЦЕЛИ')return тип==='ПОПАДАНИЕ'&&to===target;
+        if(rule.событие==='ПОПАДАНИЕ ИСТОЧНИКА ПО ЦЕЛИ')return тип==='ПОПАДАНИЕ'&&from===src&&to===target;
+        if(rule.событие==='ПОЛУЧЕН УРОН')return тип==='ПОЛУЧЕН УРОН'&&to===target;
+        if(rule.событие==='ЦЕЛЬ УМЕРЛА')return тип==='ЦЕЛЬ УМЕРЛА'&&to===target;
+        return тип===rule.событие;
+    }
+    function границаДоСовпала(until,тип,ev,effect,targetId){
+        if(!until||тип!==until.фаза)return false;var who=until.роль==='источник'?String(effect&&effect.source&&effect.source.sourceToken||''):String(targetId||'');return событиеТокенId(ev,'источникТокенId')===who;
+    }
+    function обработатьУсловноеСобытие(тип,ev){
+        var db=root().tokens,changed=0,removed=0,концентрацииКЗавершению={};
+        Object.keys(db).slice().forEach(function(tokenId){
+            var token=getObj('graphic',tokenId);if(!token){delete db[tokenId];return;}var before=snapshot(tokenId),after=cleanRecord(before),touched=false;
+            Object.keys(after.effects).forEach(function(key){
+                var e=after.effects[key],p=e&&e.условный;if(!e||!p)return;
+                var failedWhile=первоеЛожноеПока(e,token);
+                if(failedWhile){
+                    // ПОКА: КОНЦЕНТРАЦИЯ is one-way cleanup: concentration has
+                    // already ended, so never call the manager back recursively.
+                    if(failedWhile.тип!=='концентрация')поставитьЗавершениеКонцентрации(концентрацииКЗавершению,e,'нарушено ПОКА');
+                    delete after.effects[key];touched=true;removed++;return;
+                }
+                if((p.снять||[]).some(function(r){return правилоСнятияСовпало(r,тип,ev,e,tokenId);})){поставитьЗавершениеКонцентрации(концентрацииКЗавершению,e,'сработало СНЯТЬ');delete after.effects[key];touched=true;removed++;return;}
+                if(p.до&&границаДоСовпала(p.до,тип,ev,e,tokenId)){
+                    if(Number(p.до.пропустить)||0){p.до.пропустить=Math.max(0,Number(p.до.пропустить)-1);e.условный=p;touched=true;}
+                    else{поставитьЗавершениеКонцентрации(концентрацииКЗавершению,e,'достигнуто ДО');delete after.effects[key];touched=true;removed++;return;}
+                }
+                if(!after.effects[key])return;
+                // РАСХ means that this payload/charge was spent. It does NOT by
+                // itself mean that a concentration spell ended: smites and other
+                // spells may immediately transition to another concentration-bound effect.
+                (p.расход||[]).forEach(function(r){if(!событиеРасходаСовпало(r,тип,ev,e,tokenId))return;r.осталось=Math.max(0,(Number(r.осталось)||0)-1);touched=true;if(r.осталось<=0){delete after.effects[key];removed++;}});
+            });
+            if(touched){changed++;writeRecord(token,after);}
+        });
+        var concentrationsEnded=завершитьКонцентрацииПослеУсловий(концентрацииКЗавершению);
+        return {changed:changed,removed:removed,concentrationsEnded:concentrationsEnded};
+    }
+    function проверитьУсловныеСвязи(){
+        var db=root().tokens,changed=0,removed=0,концентрацииКЗавершению={};
+        Object.keys(db).slice().forEach(function(tokenId){
+            var token=getObj('graphic',tokenId);if(!token){delete db[tokenId];return;}var before=snapshot(tokenId),after=cleanRecord(before),touched=false;
+            Object.keys(after.effects).forEach(function(k){var e=after.effects[k];if(!e||!e.условный)return;var failedWhile=первоеЛожноеПока(e,token);if(!failedWhile)return;if(failedWhile.тип!=='концентрация')поставитьЗавершениеКонцентрации(концентрацииКЗавершению,e,'нарушено ПОКА');delete after.effects[k];touched=true;removed++;});
+            if(touched){changed++;writeRecord(token,after);}
+        });
+        var concentrationsEnded=завершитьКонцентрацииПослеУсловий(концентрацииКЗавершению);
+        return {changed:changed,removed:removed,concentrationsEnded:concentrationsEnded};
+    }
+    function условноеПравилоАтаки(sourceToken,targetToken){
+        var out={advantage:[],disadvantage:[],ignoreTargetInvisible:false};if(!sourceToken||!targetToken)return out;
+        var targetRec=snapshot(targetToken.id),sourceRec=snapshot(sourceToken.id);
+        function each(rec,ownerToken,fn){if(!rec||!rec.effects)return;Object.keys(rec.effects).forEach(function(k){var e=rec.effects[k];if(!e||!e.условный||!профильПокаАктивен(e,ownerToken))return;(e.условный.эффекты||[]).forEach(function(x){fn(x,e,k);});});}
+        each(targetRec,targetToken,function(x,e){
+            if(x.тип==='премАтакамПоЦели')out.advantage.push(e.label||'Условный эффект');
+            if(x.тип==='игнорЗащитыНевидимости')out.ignoreTargetInvisible=true;
+        });
+        each(sourceRec,sourceToken,function(x,e){
+            if(x.тип==='помАтакамЦелиНеПоИсточнику'){
+                var required=String(e.source&&e.source.sourceToken||'');if(required&&String(targetToken.id)!==required)out.disadvantage.push(e.label||'Условный эффект');
+            }
+        });
+        return out;
+    }
+    function payloadУсловиеСовпало(payload,attackInfo){
+        attackInfo=attackInfo&&typeof attackInfo==='object'?attackInfo:{};var c=String(payload&&payload.condition||'weapon');
+        var weapon=!!attackInfo.оружие,spell=!!attackInfo.заклинание,cls=matchNorm(attackInfo.классАтаки||'');
+        if(c==='attack')return true;if(c==='weapon')return weapon;if(c==='spell')return spell;
+        if(c==='meleeWeapon')return weapon&&cls==='рукопашная';if(c==='rangedWeapon')return weapon&&cls==='дальнобойная';return false;
+    }
+    function payloadЦельСовпала(payload,effect,ownerTokenId,sourceToken,targetToken){
+        var mode=String(payload&&payload.target||'auto'),effectTarget=String(effect&&effect.source&&effect.source.targetToken||ownerTokenId||'');
+        if(mode==='any')return true;if(mode==='effectTarget')return String(targetToken.id)===effectTarget;
+        // AUTO: self-cast payloads may hit any legal target; a payload stored on
+        // another token is a mark and therefore applies only to that token.
+        return String(ownerTokenId)===String(sourceToken.id)?true:String(targetToken.id)===String(ownerTokenId);
+    }
+    function hitPayloadsForAttack(sourceToken,targetToken,attackInfo){
+        var out=[],seen={};if(!sourceToken||!targetToken)return out;var db=root().tokens;
+        Object.keys(db).forEach(function(ownerTokenId){var owner=getObj('graphic',ownerTokenId),rec=db[ownerTokenId];if(!owner||!rec||!rec.effects)return;
+            Object.keys(rec.effects).forEach(function(key){var e=rec.effects[key],p=e&&e.условный;if(!e||!p||!Array.isArray(p.попадания)||!p.попадания.length)return;
+                if(String(e.source&&e.source.sourceToken||'')!==String(sourceToken.id))return;if(!профильПокаАктивен(e,owner))return;
+                p.попадания.forEach(function(payload){if(!payloadУсловиеСовпало(payload,attackInfo)||!payloadЦельСовпала(payload,e,ownerTokenId,sourceToken,targetToken))return;
+                    var identity=String(e.source&&e.source.castId||e.source&&e.source.actionName||key)+'|'+String(payload.index||0)+'|'+String(ownerTokenId);
+                    if(seen[identity])return;seen[identity]=true;
+                    out.push({tokenId:String(ownerTokenId),effectKey:String(key),identity:identity,payload:clone(payload),source:clone(e.source||{}),label:String(e.label||e.source&&e.source.actionName||'Weapon-hit Payload')});
+                });
+            });
+        });return out;
+    }
+    function профильПослеРасходаPayload(profile,index){var p=clone(profile),before=(p.попадания||[]).length;p.попадания=(p.попадания||[]).filter(function(x){return Number(x.index)!==Number(index);});return {profile:p,removed:before-p.попадания.length};}
+    function профильПустПослеPayload(p){return !p||(!(p.снять||[]).length&&!(p.расход||[]).length&&!p.до&&!(p.эффекты||[]).length&&!(p.попадания||[]).length);}
+    function commitHitPayloads(rows){
+        rows=Array.isArray(rows)?rows:[];var touched={},consumed=0,endConcentrations=[];
+        rows.forEach(function(row){var payload=row&&row.payload;if(!row||!payload)return;if(payload.concentration==='end'&&row.source&&row.source.concentrationId&&endConcentrations.indexOf(String(row.source.concentrationId))<0)endConcentrations.push(String(row.source.concentrationId));if(payload.mode!=='once')return;
+            var token=getObj('graphic',row.tokenId),before=token?snapshot(row.tokenId):null;if(!token||!before||!before.effects[row.effectKey])return;var after=touched[row.tokenId]||cleanRecord(before),e=after.effects[row.effectKey];if(!e||!e.условный)return;
+            var next=профильПослеРасходаPayload(e.условный,payload.index);if(!next.removed)return;consumed+=next.removed;
+            if(e.kind==='conditional'&&профильПустПослеPayload(next.profile))delete after.effects[row.effectKey];else{e.условный=next.profile;after.effects[row.effectKey]=e;}touched[row.tokenId]=after;
+        });
+        Object.keys(touched).forEach(function(tokenId){var t=getObj('graphic',tokenId);if(t)writeRecord(t,touched[tokenId]);});
+        return {consumed:consumed,endConcentrations:endConcentrations};
+    }
+
+    var условныеПодписки=[];
+    function подключитьУсловныеСобытия(){
+        if(условныеПодписки.length||typeof AD5События==='undefined'||!AD5События||typeof AD5События.подписаться!=='function')return false;
+        // Turn boundaries are intentionally NOT subscribed here. Effect Turns is
+        // itself the authoritative Turn Tracker consumer; processing them locally
+        // avoids load-order/event-order races between two independent scripts.
+        ['АТАКА ПО ЦЕЛИ','ПОПАДАНИЕ','ПРОМАХ','ПОЛУЧЕН УРОН','ЦЕЛЬ УМЕРЛА'].forEach(function(name){условныеПодписки.push(AD5События.подписаться(name,function(ev){try{обработатьУсловноеСобытие(name,ev||{});}catch(err){sendChat(SCRIPT,'/w gm <b>Conditional Effect Engine:</b> '+esc(err.message||err),null,{noarchive:true});}}));});
+        return true;
+    }
+    // 1.3.4: lightweight recognizer for direct/no-save mechanical text.
+    // AD5 uses this before opening a transaction so pure buffs/debuffs/conditions
+    // such as «Атака +1д6 3» are not mistaken for narrative-only NPC actions.
+    function recognizesDirect(description){
+        try{if(условныйПрофиль(description,{},null))return true;}catch(e){throw e;}
+        var segments=directSegments(убратьУсловныеСтроки(description));
+        for(var i=0;i<segments.length;i++){
+            var raw=segments[i],candidate=raw;
+            var hasOutcomePrefix=/^(?:ПРВ|УСП|при\s+провале|при\s+успехе)\s*[:：—–-]?/i.test(candidate);
+            if(hasOutcomePrefix)candidate=candidate.replace(/^(?:ПРВ|УСП|при\s+провале|при\s+успехе)\s*[:：—–-]?\s*/i,'').trim();
+            var e=parseEffect(candidate);
+            if(!e)continue;
+            if(e.kind==='modifier')return true;
+            if(e.kind==='condition'){
+                // Outcome-prefixed ordinary conditions belong to save resolution,
+                // except periodic/recovery text that planDirect already accepts.
+                if(!hasOutcomePrefix||e.periodic||e.recovery)return true;
+            }
+        }
+        return false;
+    }
+
+    function sleepProne(token,after,sourceContext,applied){
+        if(!sourceContext.sleepSpell||after.effects['condition:prone'])return;
+        var c=CONDITIONS.prone;
+        if(after.markerBase[c.marker]===undefined)after.markerBase[c.marker]=markerEntries(token,c.marker);
+        var src=clone(sourceContext);src.sleepSpell=false;delete src.условныйПрофиль;
+        var p={kind:'condition',condition:'prone',label:c.label,marker:c.marker,remaining:null,timed:false,source:effectSourceRecord(src)};
+        after.effects['condition:prone']=p;applied.push(p);
+    }
+    function mergeEffectIntoPlan(token,after,e,conditionImmunities,sourceContext,applied,blocked){
+        if(e.kind!=='condition'&&e.kind!=='modifier')return false;
+        lifecycleCondition(e,sourceContext);relationshipEffectKey(e,sourceContext);
+        if(e.kind==='condition'&&typeof AD5SpellEffects!=='undefined'&&AD5SpellEffects.protectionBlocks&&AD5SpellEffects.protectionBlocks(token,e.condition,sourceContext)){blocked.push(e);return true;}
+        if(e.kind==='condition'&&e.condition&&conditionImmunities[e.condition]){
+            blocked.push(e);
+            if(after.effects[e.key])delete after.effects[e.key];
+            return true;
+        }
+        if(e.kind==='modifier'&&e.modifier){
+            var slot=modifierSlot(e.modifier);
+            if(e.modifier.positive===false){
+                // Debuffs are independent applications and therefore stack, even
+                // when their text/value is identical. Each application receives
+                // its own key and duration.
+                e.key='modifier:debuff:'+slot+':'+String(nextModifierSeq());
+            }else{
+                // Positive modifiers never stack with another positive modifier
+                // of the same slot. The newly applied buff replaces the old one
+                // completely, including its remaining duration.
+                Object.keys(after.effects).forEach(function(k){
+                    var prev=after.effects[k],pm=prev&&prev.modifier;
+                    if(pm&&pm.positive!==false&&modifierSlot(pm)===slot)delete after.effects[k];
+                });
+                for(var ai=applied.length-1;ai>=0;ai--){var am=applied[ai]&&applied[ai].modifier;if(am&&am.positive!==false&&modifierSlot(am)===slot)applied.splice(ai,1);}
+                e.key='modifier:buff:'+slot;
+            }
+        }else{
+            var old=after.effects[e.key];
+            if(old){
+                if(old.remaining===null||e.remaining===null)e.remaining=null;
+                else e.remaining=Math.max(Number(old.remaining)||0,Number(e.remaining)||0);
+            }
+        }
+        if(e.marker&&after.markerBase[e.marker]===undefined)after.markerBase[e.marker]=markerEntries(token,e.marker);
+        after.effects[e.key]={kind:e.kind,condition:e.condition,label:e.label,marker:e.marker,remaining:e.remaining,timed:e.timed};
+        if(e.modifier)after.effects[e.key].modifier=clone(e.modifier);
+        if(e.recovery)after.effects[e.key].recovery=clone(e.recovery);
+            if(sourceContext.recoveryRule&&e.condition===conditionKey(sourceContext.recoveryRule.condition)){
+                after.effects[e.key].recovery=clone(sourceContext.recoveryRule);
+                after.effects[e.key].recovery.snapshot=clone(sourceContext.phaseSnapshot);
+                after.effects[e.key].recovery.attempted=false;
+            }
+        if(e.condition==='slowed')after.effects[e.key].slowLoss=(e.slowLoss===undefined?null:e.slowLoss);
+        if(e.condition==='sanctuary')after.effects[e.key].sanctuaryDC=Number(e.sanctuaryDC)||null;
+        if(e.periodic)after.effects[e.key].periodic=clone(e.periodic);
+        after.effects[e.key].source=effectSourceRecord(sourceContext);
+            if(e.condition==='no_reactions'){after.effects[e.key].remaining=1;after.effects[e.key].timed=true;after.effects[e.key].reactionTurnStarted=false;}
+        применитьПрофильКЭффекту(after.effects[e.key],sourceContext);
+            if(sourceContext.sleepSpell&&e.condition==='unconscious')sleepProne(token,after,sourceContext,applied);
+        applied.push(after.effects[e.key]);
+        return true;
+    }
+    // Direct/no-save abilities used to be written only to AD5TokenEffects as
+    // tooltip prose.  Recognized conditions (including periodic damage syntax)
+    // must instead enter the same Effect Turns state machine as save outcomes.
+    function planDirect(token,description,conditionImmunities,sourceContext){
+        if(!token||token.get('_subtype')!=='token')throw new Error('AD5 Effect Turns: токен не найден.');
+        conditionImmunities=conditionImmunities&&typeof conditionImmunities==='object'?clone(conditionImmunities):{};
+        sourceContext=sourceContext&&typeof sourceContext==='object'?clone(sourceContext):{};
+        var conditionalProfile=условныйПрофиль(description,sourceContext,token);if(conditionalProfile)sourceContext.условныйПрофиль=conditionalProfile;
+        var directImmunities=sheetConditionImmunities(token);
+        Object.keys(directImmunities).forEach(function(k){conditionImmunities[k]=true;});
+        var before=snapshot(token.id),after=cleanRecord(before),applied=[],blocked=[],consumed=[];
+        directSegments(убратьУсловныеСтроки(description)).forEach(function(item){
+            var candidate=item,hasOutcomePrefix=/^(?:ПРВ|УСП|при\s+провале|при\s+успехе)(?=\s|[:：—–-]|$)/i.test(candidate);
+            if(hasOutcomePrefix){
+                // If the sheet/card did not actually expose an active save, older
+                // AD5 builds left periodic text such as `ПРВ: Горение 2д8 3` in
+                // the legacy tooltip.  Periodic conditions are unambiguous, so
+                // allow only THEM through this direct fallback.
+                candidate=candidate.replace(/^(?:ПРВ|УСП|при\s+провале|при\s+успехе)\s*[:：—–-]?\s*/i,'').trim();
+            }
+            var e=parseEffect(candidate);
+            if(!e||(e.kind!=='condition'&&e.kind!=='modifier'))return;
+            if(hasOutcomePrefix&&e.kind==='condition'&&!e.periodic&&!e.recovery)return;
+            if(mergeEffectIntoPlan(token,after,e,conditionImmunities,sourceContext,applied,blocked))consumed.push(item);
+        });
+        if(conditionalProfile&&!applied.length){добавитьУсловныйЯкорь(token,after,sourceContext,conditionalProfile,applied);consumed=consumed.concat(conditionalProfile.сырой||[]);}
+        var changed=!equals(before,after);
+        return {before:before,after:after,changed:changed,applied:applied,instant:[],blocked:blocked,present:consumed.length>0||!!conditionalProfile,damage:'full',outcome:'direct',consumed:consumed};
+    }
+    function stripDirect(description,directPlan){
+        var used={};
+        ((directPlan&&directPlan.consumed)||[]).forEach(function(x){used[matchNorm(x)]=true;});
+        if(!Object.keys(used).length)return String(description==null?'':description);
+        return directSegments(description).filter(function(x){return !used[matchNorm(x)];}).join(', ');
+    }
+
+    function sanctuaryForToken(tokenId){
+        var rec=snapshot(tokenId),e=rec&&rec.effects&&rec.effects['condition:sanctuary'];
+        if(!e)return null;
+        var dc=Number(e.sanctuaryDC);
+        if(!Number.isSafeInteger(dc)||dc<1||dc>99){
+            var m=String(e.label||'').match(/(?:^|\s)(\d{1,2})\s*$/);dc=m?Number(m[1]):0;
+        }
+        if(!Number.isSafeInteger(dc)||dc<1||dc>99)return null;
+        return {dc:dc,remaining:e.remaining,label:e.label||('Убежище '+dc)};
+    }
+    var POSITIVE_CONDITIONS={invisible:true,haste:true,flying:true,concentration:true,shielded:true,blessed:true,sanctuary:true};
+    function effectIsDebuff(e){
+        if(!e)return false;
+        if(e.kind==='modifier')return !!(e.modifier&&e.modifier.positive===false);
+        if(e.kind==='condition'&&e.condition)return !POSITIVE_CONDITIONS[e.condition];
+        return false;
+    }
+    function descriptionHasDebuff(description){
+        function harmful(item){return effectIsDebuff(parseEffect(item));}
+        var parsed=sectionParse(description),found=false;
+        ['failure','success'].forEach(function(side){(parsed[side].items||[]).forEach(function(item){if(harmful(item))found=true;});});
+        if(found)return true;
+        return directSegments(description).some(function(item){
+            var candidate=String(item||'').replace(/^(?:ПРВ|УСП|при\s+провале|при\s+успехе)\s*[:：—–-]?\s*/i,'').trim();
+            return harmful(candidate);
+        });
+    }
+    function planHasDebuff(plan){
+        return !!(plan&&Array.isArray(plan.applied)&&plan.applied.some(effectIsDebuff));
+    }
+    function modifierSummaryState(rec){
+        var out={buff:false,debuff:false};
+        activeModifierEntries(rec).some(function(row){
+            var m=row&&row.modifier;if(!m)return false;
+            if(m.positive===false)out.debuff=true;else out.buff=true;
+            return out.buff&&out.debuff;
+        });
+        return out;
+    }
+    function managedMarkers(rec){
+        var out={};rec=cleanRecord(rec);
+        Object.keys(rec.markerBase).forEach(function(m){out[m]=true;});
+        Object.keys(rec.effects).forEach(function(k){var m=rec.effects[k].marker;if(m)out[m]=true;});
+        var state=modifierSummaryState(rec),tags=summaryMarkerTags();
+        if(state.buff&&tags.buff)out[tags.buff]=true;
+        if(state.debuff&&tags.debuff)out[tags.debuff]=true;
+        return out;
+    }
+    function markerValues(effect,token){
+        if(!effect||!effect.marker)return effect&&effect.marker?[effect.marker]:[];
+        if(effect.condition==='slowed'){
+            var base=baseWalkingSpeed(token),explicit=effect.slowLoss!==null&&effect.slowLoss!==undefined&&Number.isFinite(Number(effect.slowLoss));
+            var loss=explicit?Math.max(0,Number(effect.slowLoss)):(Number.isFinite(base)?Math.max(0,base/2):0);
+            loss=Math.max(0,Math.round(loss));
+            if(loss<=0)return [effect.marker];
+            // Roll20 supports only one digit per badge. Multiple copies of the
+            // same marker are valid, so 10 ft is rendered as purple@1,purple@0.
+            return String(loss).split('').map(function(d){return effect.marker+'@'+d;});
+        }
+        var r=effect.remaining;
+        if(r===null||r===undefined||!Number.isFinite(Number(r)))return [effect.marker];
+        r=Number(r);
+        // Sanctuary uses its angel-outfit badge as the visible remaining-turn counter.
+        return r>=0&&r<=9?[effect.marker+'@'+r]:[effect.marker];
+    }
+    function syncMarkers(token,oldRec,newRec){
+        oldRec=cleanRecord(oldRec);newRec=cleanRecord(newRec);
+        var markers=String(token.get('statusmarkers')||'').split(',').filter(Boolean),summary=modifierSummaryState(newRec),tags=summaryMarkerTags();
+        // Preserve a manually placed copy of the same custom marker before AD5
+        // starts managing it. When the last corresponding modifier disappears,
+        // that original marker is restored instead of being deleted.
+        [{active:summary.buff,tag:tags.buff},{active:summary.debuff,tag:tags.debuff}].forEach(function(x){
+            if(!x.active||!x.tag)return;
+            if(newRec.markerBase[x.tag]===undefined){
+                newRec.markerBase[x.tag]=oldRec.markerBase[x.tag]!==undefined?clone(oldRec.markerBase[x.tag]):markerEntries(token,x.tag);
+            }
+        });
+        var all=managedMarkers(oldRec),n=managedMarkers(newRec);
+        Object.keys(n).forEach(function(k){all[k]=true;});
+        Object.keys(all).forEach(function(marker){
+            markers=markers.filter(function(x){return x.replace(/@[^,]+$/,'')!==marker;});
+            var active=null;
+            Object.keys(newRec.effects).some(function(k){var e=newRec.effects[k];if(e.marker===marker&&e.condition==='sanctuary'){active=e;return true;}return false;});
+            if(!active)Object.keys(newRec.effects).some(function(k){var e=newRec.effects[k];if(e.marker===marker){active=e;return true;}return false;});
+            if(active){markerValues(active,token).forEach(function(v){markers.push(v);});return;}
+            var base=(newRec.markerBase[marker]!==undefined?newRec.markerBase[marker]:oldRec.markerBase[marker])||[];
+            base.forEach(function(x){markers.push(x);});
+            var summaryActive=(tags.buff===marker&&summary.buff)||(tags.debuff===marker&&summary.debuff);
+            if(summaryActive&&!base.some(function(x){return x.replace(/@[^,]+$/,'')===marker;}))markers.push(marker);
+        });
+        var nextMarkers=markers.join(','),currentMarkers=String(token.get('statusmarkers')||'');
+        if(currentMarkers!==nextMarkers)token.set('statusmarkers',nextMarkers);
+        return newRec;
+    }
+    function reassertMarkersSoon(token){
+        if(!token||typeof setTimeout!=='function')return;
+        setTimeout(function(){
+            try{
+                var live=getObj('graphic',token.id);if(!live)return;
+                var rec=snapshot(token.id);if(rec)syncMarkers(live,rec,rec);
+            }catch(ignore){}
+        },50);
+    }
+    function refreshTooltip(token){
+        try{
+            if(typeof AD5Wounds!=='undefined'&&AD5Wounds&&typeof AD5Wounds.sync==='function'){AD5Wounds.sync(token);return;}
+        }catch(ignore){}
+        // Standalone fallback: append only our own block without claiming wound data.
+        var lines=tooltipLines(token.id),parts=modifierTooltipParts(token.id),current=String(token.get('tooltip')||'').replace(/\n?\[AD5FX\][\s\S]*?\[\/AD5FX\]\n?/g,'\n').trim(),blocks=[];
+        if(parts.buffs.length)blocks.push('Баффы: '+parts.buffs.join('; '));
+        if(parts.debuffs.length)blocks.push('Дебаффы: '+parts.debuffs.join('; '));
+        if(lines.length)blocks.push('Эффекты:\n'+lines.map(function(x){return '• '+x;}).join('\n'));
+        var block=blocks.length?'[AD5FX]\n'+blocks.join('\n')+'\n[/AD5FX]':'';
+        token.set({tooltip:[current,block].filter(Boolean).join('\n'),show_tooltip:true});
+    }
+    function поддерживающиеКонцентрации(rec){
+        var out={};rec=rec&&typeof rec==='object'?rec:{effects:{}};Object.keys(rec.effects||{}).forEach(function(k){
+            var e=rec.effects[k],src=e&&e.source,id=String(src&&src.concentrationId||'').trim();
+            if(id&&src.payloadSustainConcentration===true)out[id]=true;
+        });return out;
+    }
+    function естьПоддерживающийЭффектКонцентрации(concentrationId){
+        concentrationId=String(concentrationId||'').trim();if(!concentrationId)return false;var db=root().tokens,found=false;
+        Object.keys(db).some(function(tokenId){var rec=db[tokenId];return Object.keys(rec&&rec.effects||{}).some(function(k){var e=rec.effects[k],src=e&&e.source;if(src&&src.payloadSustainConcentration===true&&String(src.concentrationId||'')===concentrationId){found=true;return true;}return false;});});
+        return found||(typeof AD5SpellEffects!=='undefined'&&AD5SpellEffects.hasConcentration(concentrationId));
+    }
+    function завершитьОсвобожденныеPayloadКонцентрации(oldRec,newRec){
+        var before=поддерживающиеКонцентрации(oldRec),after=поддерживающиеКонцентрации(newRec);
+        Object.keys(before).forEach(function(id){if(after[id]||естьПоддерживающийЭффектКонцентрации(id))return;
+            try{if(typeof AD5Concentration!=='undefined'&&AD5Concentration&&typeof AD5Concentration.end==='function')AD5Concentration.end(id,'завершён последний эффект Weapon-hit Payload');}
+            catch(err){sendChat(SCRIPT,'/w gm <b>Weapon-hit Payload / концентрация:</b> '+esc(err.message||err),null,{noarchive:true});}
+        });
+    }
+    function hasPayloadSustain(concentrationId){return естьПоддерживающийЭффектКонцентрации(concentrationId);}
+
+    function writeRecord(token,newRec,suppressLifecycle){
+        var old=snapshot(token.id),db=root().tokens;
+        newRec=newRec?cleanRecord(newRec):null;
+        newRec=syncMarkers(token,old,newRec);
+        if(newRec&&Object.keys(newRec.effects).length)db[token.id]=newRec;
+        else delete db[token.id];
+        // 1.5.1: a one-shot payload may hand concentration to its persistent
+        // child effect (for example Searing Smite burning). When the final
+        // sustaining child disappears naturally, close the caster's actual
+        // concentration record as well. During AD5Concentration cleanup the
+        // active record is already gone, so the callback is safely idempotent.
+        завершитьОсвобожденныеPayloadКонцентрации(old,newRec);
+        // 1.2.5: Height Engine receives the authoritative BEFORE/AFTER effect
+        // records only after state has been committed. This lets airborne tokens
+        // fall when a flight-breaking condition is actually applied (and not
+        // when it was blocked by condition immunity). Height schedules the fall
+        // after the current AD5 transaction to avoid re-entrant HP writes.
+        try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.effectsChanged==='function')AD5Height.effectsChanged(token,old,newRec);}catch(heightEffectError){sendChat(SCRIPT,'/w gm Высота/падение: '+esc(heightEffectError.message||heightEffectError),null,{noarchive:true});}
+        refreshTooltip(token);
+        function hasRestraint(rec){return !!(rec&&Object.keys(rec.effects||{}).some(function(k){return rec.effects[k].condition==='restrained';}));}
+        if(hasRestraint(old)!==hasRestraint(newRec))syncRestrainedAction(token.get('represents'));
+        if(!suppressLifecycle&&typeof AD5Phases!=='undefined')AD5Phases.effectsChanged(token,old,newRec);
+        if(newRec&&Object.keys(newRec.effects).length)reassertMarkersSoon(token);
+        try{syncRecoveryActions(token);}catch(ignore){}
+        try{if(typeof AD5Movement!=='undefined'&&AD5Movement&&typeof AD5Movement.refreshToken==='function')AD5Movement.refreshToken(token);}catch(ignoreMovement){}
+    }
+    function commit(token,transaction){
+        if(!transaction)return;
+        writeRecord(token,transaction.after);
+    }
+    function restore(token,snap,suppressLifecycle){writeRecord(token,snap,suppressLifecycle);}
+    function endSanctuaryForHarm(target,sourceContext){
+        var ctx=sourceContext||{},source=getObj('graphic',String(ctx.sourceToken||''));
+        if(ctx.deferSanctuary||!source||!target||source.id===target.id||!sanctuaryForToken(source.id))return false;
+        removeCondition(source,'sanctuary');return true;
+    }
+    function applyCondition(tokenOrId,description,sourceContext){
+        var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;
+        if(!token||token.get('_subtype')!=='token')throw new Error('AD5 Effect Turns: токен не найден.');
+        var tx=planDirect(token,String(description||''),sheetConditionImmunities(token),sourceContext||{});
+        if(tx&&tx.changed)commit(token,tx);
+        if(planHasDebuff(tx))endSanctuaryForHarm(token,sourceContext);
+        return tx;
+    }
+    var RELEASE_RESTRAINED_ACTION='!ad5fx unrestrain @{selected|token_id}';
+    function restrainedToken(t){
+        if(!t||t.get('_subtype')!=='token'||t.get('isdrawing'))return false;
+        var rec=snapshot(t.id);return !!(rec&&Object.keys(rec.effects).some(function(k){return rec.effects[k].condition==='restrained';}))||String(t.get('statusmarkers')||'').split(',').some(function(m){return m.replace(/@[^,]+$/,'')===CONDITIONS.restrained.marker;});
+    }
+    function syncRestrainedAction(cid){
+        if(!cid)return;
+        var needed=(findObjs({_type:'graphic',_subtype:'token',represents:cid})||[]).some(restrainedToken);
+        var abilities=(findObjs({_type:'ability',_characterid:cid})||[]).filter(function(a){return String(a.get('action')||'')===RELEASE_RESTRAINED_ACTION;});
+        if(!needed){abilities.forEach(function(a){a.remove();});return;}
+        var props={name:'Снять опутывание',action:RELEASE_RESTRAINED_ACTION,istokenaction:true,description:'AD5: только GM; без проверки и расхода действия.'};
+        if(!abilities.length)createObj('ability',Object.assign({characterid:cid},props));
+        else{var a=abilities[0],patch={};Object.keys(props).forEach(function(k){if(a.get(k)!==props[k])patch[k]=props[k];});if(Object.keys(patch).length)a.set(patch);abilities.slice(1).forEach(function(x){x.remove();});}
+    }
+    function releaseRestrained(token,pid){
+        if(!playerIsGM(pid))throw new Error('Снять опутывание этой кнопкой может только GM.');
+        if(!token||token.get('_subtype')!=='token')throw new Error('Выделите токен.');
+        if(typeof AD5SpellEffects!=='undefined'&&AD5SpellEffects.releaseRestrained)AD5SpellEffects.releaseRestrained(token.id);
+        removeCondition(token,'restrained');
+        var kept=String(token.get('statusmarkers')||'').split(',').filter(function(m){return m&&m.replace(/@[^,]+$/,'')!==CONDITIONS.restrained.marker;}).join(',');
+        if(kept!==String(token.get('statusmarkers')||''))token.set('statusmarkers',kept);
+        syncRestrainedAction(token.get('represents'));
+    }
+    function removeCondition(tokenOrId,condition,options){
+        var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;
+        if(!token||token.get('_subtype')!=='token')return {changed:false,removed:0};
+        options=options&&typeof options==='object'?options:{};
+        var ck=conditionKey(condition)||String(condition||'').trim().toLowerCase(),before=snapshot(token.id);
+        if(!before)return {changed:false,removed:0};
+        var after=cleanRecord(before),removed=0;
+        Object.keys(after.effects).forEach(function(k){
+            var e=after.effects[k],src=e&&e.source||{};if(!e||e.condition!==ck)return;
+            if(options.effectKey&&String(k)!==String(options.effectKey))return;
+            if(options.relationshipKey&&String(src.relationshipKey||'')!==String(options.relationshipKey))return;
+            if(options.sourceToken&&String(src.sourceToken||'')!==String(options.sourceToken))return;
+            delete after.effects[k];removed++;
+        });
+        if(removed)writeRecord(token,after);
+        return {changed:removed>0,removed:removed};
+    }
+
+    function migrateLifecycleConditions(){
+        var db=root().tokens,changedTokens=0,changedEffects=0;
+        Object.keys(db).forEach(function(tokenId){
+            var before=snapshot(tokenId);if(!before||!before.effects)return;
+            var after=cleanRecord(before),changed=false;
+            Object.keys(after.effects).forEach(function(k){
+                var e=after.effects[k],src=e&&e.source||{},rel=String(src.relationshipType||'').toLowerCase();
+                if(!e||e.kind!=='condition')return;
+                if(e.condition==='prone'||e.condition==='grappled'||(e.condition==='restrained'&&rel==='pin')){
+                    if(e.remaining!==null||e.timed!==false){e.remaining=null;e.timed=false;changed=true;changedEffects++;}
+                }
+            });
+            if(!changed)return;
+            changedTokens++;
+            var token=getObj('graphic',tokenId);
+            if(token)writeRecord(token,after);else db[tokenId]=after;
+        });
+        return {tokens:changedTokens,effects:changedEffects};
+    }
+
+    function tooltipLines(tokenId){
+        var rec=snapshot(tokenId);if(!rec)return [];
+        return Object.keys(rec.effects).sort().filter(function(k){return rec.effects[k]&&rec.effects[k].kind!=='modifier';}).map(function(k){
+            var e=rec.effects[k],r=e.remaining;
+            return e.label+(e.kind==='conditional'?' [условный]':'')+(r===null||r===undefined?'':' '+r);
+        });
+    }
+    function rollModifierFormula(formula){
+        var source=cleanModifierFormula(formula),pos=0,tokens=[];
+        if(!source||!/\d/.test(source)||!/^[0-9d+*\/().-]+$/i.test(source))throw new Error('Некорректная формула модификатора: '+formula);
+        while(pos<source.length){
+            var rest=source.slice(pos),m=/^(\d*)d(\d+)/i.exec(rest);
+            if(m){
+                var count=Number(m[1]||1),sides=Number(m[2]);
+                if(!Number.isSafeInteger(count)||count<1||count>100||!Number.isSafeInteger(sides)||sides<2||sides>1000)throw new Error('Недопустимый куб в модификаторе: '+m[0]);
+                var rolls=[],sum=0;for(var i=0;i<count;i++){var die=(typeof randomInteger==='function')?randomInteger(sides):(Math.floor(Math.random()*sides)+1);rolls.push(die);sum+=die;}
+                tokens.push({type:'number',value:sum,dice:m[0],rolls:rolls});pos+=m[0].length;continue;
+            }
+            m=/^\d+(?:\.\d+)?/.exec(rest);if(m){tokens.push({type:'number',value:Number(m[0])});pos+=m[0].length;continue;}
+            var ch=source.charAt(pos);if('+-*/()'.indexOf(ch)>=0){tokens.push({type:ch});pos++;continue;}
+            throw new Error('Не удалось разобрать формулу модификатора: '+formula);
+        }
+        var at=0,dice=[];
+        function peek(t){return tokens[at]&&tokens[at].type===t;}
+        function take(t){if(!peek(t))throw new Error('Ошибка формулы модификатора: '+formula);return tokens[at++];}
+        function factor(){if(peek('+')){take('+');return factor();}if(peek('-')){take('-');return -factor();}if(peek('(')){take('(');var v=expr();take(')');return v;}var n=take('number');if(n.dice)dice.push({formula:n.dice,rolls:n.rolls.slice(),total:n.value});return n.value;}
+        function term(){var v=factor();while(peek('*')||peek('/')){if(peek('*')){take('*');v*=factor();}else{take('/');var d=factor();if(d===0)throw new Error('Деление на ноль в формуле модификатора.');v/=d;}}return v;}
+        function expr(){var v=term();while(peek('+')||peek('-')){if(peek('+')){take('+');v+=term();}else{take('-');v-=term();}}return v;}
+        var total=expr();if(at!==tokens.length||!Number.isFinite(total)||Math.abs(total)>1000000)throw new Error('Некорректный итог формулы модификатора.');
+        return {formula:source,total:Math.trunc(total),dice:dice};
+    }
+    function rollModifierRows(rows){
+        rows=Array.isArray(rows)?rows:[];var total=0,rolled=[];
+        rows.forEach(function(row){var sign=Number(row&&row.sign)<0?-1:1,r=rollModifierFormula(row&&row.formula||'0'),delta=sign*r.total;total+=delta;rolled.push({label:String(row&&row.label||''),formula:r.formula,sign:sign,raw:r.total,delta:delta,dice:r.dice});});
+        return {total:total,rolled:rolled};
+    }
+    function modifiersForToken(tokenId){
+        var abilities={strength:0,dexterity:0,constitution:0,intelligence:0,wisdom:0,charisma:0};
+        var out={attack:0,attackBuff:0,attackDebuff:0,attackRolls:[],attackBuffRolls:[],attackDebuffRolls:[],ac:0,acBuff:0,acDebuff:0,damage:[],damageBuff:[],damageDebuff:[],saves:clone(abilities),saveBuffs:{},saveDebuffs:{},saveRolls:{},checks:clone(abilities),checkBuffs:{},checkDebuffs:{},checkRolls:{},saveModes:{},advantage:{},disadvantage:{}};
+        var rec=snapshot(tokenId);if(!rec||!rec.effects)return out;
+        activeModifierEntries(rec).forEach(function(row){
+            var e=row.effect,m=row.modifier;if(!m)return;
+            function dynamicRow(){return {formula:String(m.formula||''),sign:Number(m.sign)<0?-1:1,label:e.label||m.label||''};}
+            if(m.type==='attack'){
+                if(m.dynamic&&m.formula){var ar=dynamicRow();out.attackRolls.push(ar);if(m.positive===false)out.attackDebuffRolls.push(ar);else out.attackBuffRolls.push(ar);}
+                else if(m.positive===false)out.attackDebuff+=(Number(m.value)||0);else out.attackBuff+=(Number(m.value)||0);
+            }else if(m.type==='ac'){
+                if(m.positive===false)out.acDebuff+=(Number(m.value)||0);else out.acBuff+=(Number(m.value)||0);
+            }else if(m.type==='damage'){
+                var d={formula:String(m.formula||'0'),sign:Number(m.sign)<0?-1:1,label:e.label||m.label||'Урон'};
+                out.damage.push(d);if(m.positive===false)out.damageDebuff.push(d);else out.damageBuff.push(d);
+            }else if(m.type==='save'&&m.ability){
+                if(m.dynamic&&m.formula){if(!out.saveRolls[m.ability])out.saveRolls[m.ability]=[];out.saveRolls[m.ability].push(dynamicRow());}
+                else if(m.positive===false)out.saveDebuffs[m.ability]=(out.saveDebuffs[m.ability]||0)+(Number(m.value)||0);
+                else out.saveBuffs[m.ability]=(out.saveBuffs[m.ability]||0)+(Number(m.value)||0);
+            }else if(m.type==='check'&&m.ability){
+                if(m.dynamic&&m.formula){if(!out.checkRolls[m.ability])out.checkRolls[m.ability]=[];out.checkRolls[m.ability].push(dynamicRow());}
+                else if(m.positive===false)out.checkDebuffs[m.ability]=(out.checkDebuffs[m.ability]||0)+(Number(m.value)||0);
+                else out.checkBuffs[m.ability]=(out.checkBuffs[m.ability]||0)+(Number(m.value)||0);
+            }else if(m.type==='saveMode'&&m.ability){
+                if(m.mode==='adv')out.advantage[m.ability]=1;
+                if(m.mode==='dis')out.disadvantage[m.ability]=(out.disadvantage[m.ability]||0)+1;
+            }
+        });
+        out.attack=out.attackBuff+out.attackDebuff;out.ac=out.acBuff+out.acDebuff;
+        Object.keys(out.saves).forEach(function(a){
+            out.saves[a]=Number(out.saveBuffs[a]||0)+Number(out.saveDebuffs[a]||0);
+            out.checks[a]=Number(out.checkBuffs[a]||0)+Number(out.checkDebuffs[a]||0);
+            var adv=Number(out.advantage[a]||0)>0,dis=Number(out.disadvantage[a]||0)>0;
+            out.saveModes[a]=adv===dis?'normal':(adv?'adv':'dis');
+        });
+        return out;
+    }
+    function modifierTooltipParts(tokenId){
+        var rec=snapshot(tokenId),out={buffs:[],debuffs:[]};if(!rec||!rec.effects)return out;
+        activeModifierEntries(rec).sort(function(a,b){return String(a.key).localeCompare(String(b.key),'ru');}).forEach(function(row){
+            var e=row.effect,m=row.modifier,label=String(e.label||m.label||'').trim();
+            if(e.passive||m.passive)label+=' [ПАСС]';
+            if(e.remaining!==null&&e.remaining!==undefined)label+=' ('+e.remaining+')';
+            (m.positive===false?out.debuffs:out.buffs).push(label);
+        });
+        return out;
+    }
+    function saveModifierForToken(tokenId,ability){
+        var m=modifiersForToken(tokenId);return {bonus:Number(m.saves[ability]||0),rolls:(m.saveRolls&&m.saveRolls[ability]?clone(m.saveRolls[ability]):[]),mode:m.saveModes[ability]||'normal'};
+    }
+    function checkModifierForToken(tokenId,ability){
+        var m=modifiersForToken(tokenId);return {bonus:Number(m.checks[ability]||0),rolls:(m.checkRolls&&m.checkRolls[ability]?clone(m.checkRolls[ability]):[])};
+    }
+    function describePlan(p){
+        if(!p||!p.present)return '';
+        var bits=[];
+        (p.applied||[]).forEach(function(e){bits.push(e.label+(e.remaining===null||e.remaining===undefined?'':' '+e.remaining));});
+        (p.instant||[]).forEach(function(x){bits.push(x);});
+        return bits.join(', ');
+    }
+
+    var RECOVERY_ACTION_PREFIX='AD5 · Снять: ';
+    function numericValue(v){
+        if(v===null||v===undefined||String(v).trim()==='')return null;
+        var n=Number(v);if(Number.isFinite(n))return n;
+        var m=String(v).match(/[-+]?\d+(?:\.\d+)?/);return m?Number(m[0]):null;
+    }
+    function abilityScoreMod(v){var n=numericValue(v);return n===null?null:Math.floor((n-10)/2);}
+    function recoverySaveBonus(token,ability){
+        var cid=token&&token.get('represents');if(!cid)throw new Error('Токен не связан с листом персонажа.');
+        var a,v,base=null;
+        if(npcToken(token)){
+            a=attr(cid,'npc_'+ability.slice(0,3)+'_save');v=a&&numericValue(a.get('current'));if(v!==null&&v!==undefined)base=v;
+            if(base===null){a=attr(cid,ability+'_mod');v=a&&numericValue(a.get('current'));if(v!==null&&v!==undefined)base=v;}
+            if(base===null){a=attr(cid,ability);v=a&&abilityScoreMod(a.get('current'));if(v!==null&&v!==undefined)base=v;}
+            if(base===null)throw new Error('Не найден бонус спасброска '+RECOVERY_ABILITIES[ability].short+' у NPC.');
+        }else{
+            a=attr(cid,ability+'_save_bonus');v=a&&numericValue(a.get('current'));if(v!==null&&v!==undefined)base=v;
+            if(base===null){a=attr(cid,ability+'_mod');v=a&&numericValue(a.get('current'));if(v!==null&&v!==undefined)base=v;}
+            if(base===null){a=attr(cid,ability);v=a&&abilityScoreMod(a.get('current'));if(v!==null&&v!==undefined)base=v;}
+            if(base===null)throw new Error('Не найден бонус спасброска '+RECOVERY_ABILITIES[ability].short+' у персонажа.');
+        }
+        var sm=saveModifierForToken(token.id,ability),dynamic=rollModifierRows(sm.rolls||[]);
+        return base+Number(sm.bonus||0)+Number(dynamic.total||0);
+    }
+    function controllersOf(token){
+        var out={},cid=token&&token.get('represents'),c=cid&&getObj('character',cid);
+        [c&&c.get('controlledby'),token&&token.get('controlledby')].forEach(function(raw){
+            String(raw||'').split(',').map(function(x){return x.trim();}).filter(Boolean).forEach(function(id){out[id]=true;});
+        });
+        return out;
+    }
+    function canControlRecovery(token,pid){
+        if(playerIsGM(pid))return true;
+        var c=controllersOf(token);return !!(c.all||c[pid]);
+    }
+    function recoveryAbilityObjects(cid){
+        if(!cid)return [];
+        return findObjs({_type:'ability'}).filter(function(a){
+            var owner=String(a.get('_characterid')||a.get('characterid')||'');
+            if(owner!==String(cid))return false;
+            return String(a.get('action')||'').indexOf('!ad5fx recover ')===0 || String(a.get('name')||'').indexOf(RECOVERY_ACTION_PREFIX)===0;
+        });
+    }
+    function clearRecoveryAbilitiesForCharacter(cid){recoveryAbilityObjects(cid).forEach(function(a){a.remove();});}
+    function clearAllRecoveryAbilities(){
+        findObjs({_type:'ability'}).filter(function(a){return String(a.get('action')||'').indexOf('!ad5fx recover ')===0 || String(a.get('name')||'').indexOf(RECOVERY_ACTION_PREFIX)===0;}).forEach(function(a){a.remove();});
+    }
+    function activeRecoveryEffects(token){
+        var rec=snapshot(token.id);if(!rec)return [];
+        return Object.keys(rec.effects).sort().map(function(k){return {key:k,e:rec.effects[k]};}).filter(function(x){return x.e&&x.e.recovery&&x.e.condition;});
+    }
+    function syncRecoveryActions(token){
+        if(!token)return;
+        var cid=token.get('represents');if(!cid)return;
+        var info=currentTurnInfo();if(!info||info.groupKey!==groupKey(token)||token.get('_pageid')!==info.pageId)return;
+        clearRecoveryAbilitiesForCharacter(cid);
+        activeRecoveryEffects(token).forEach(function(x){
+            if(x.e.recovery.attempted||(npcToken(token)&&!x.e.recovery.action))return;
+            var r=x.e.recovery,base=(CONDITIONS[x.e.condition]&&CONDITIONS[x.e.condition].label)||x.e.label;
+            createObj('ability',{characterid:cid,name:Array(21).join('\u200b')+RECOVERY_ACTION_PREFIX+(r.action?'Действие · ':'')+base+' '+r.short+r.dc,action:'!ad5fx recover '+(npcToken(token)?'@{selected|token_id}':token.id)+' '+x.e.condition,istokenaction:true});
+        });
+    }
+    function clearRecoveryActionsForGroup(pageId,key){
+        var done={};
+        Object.keys(root().tokens).forEach(function(tokenId){
+            var token=getObj('graphic',tokenId);if(!token||token.get('_pageid')!==pageId||groupKey(token)!==key)return;
+            var cid=token.get('represents');if(cid&&!done[cid]){done[cid]=true;clearRecoveryAbilitiesForCharacter(cid);}
+        });
+    }
+    function recoveryBonus(token,r){
+        if(!r.check)return recoverySaveBonus(token,r.ability);
+        var cid=token.get('represents'),a=attr(cid,r.ability+'_mod'),v=a&&numericValue(a.get('current'));
+        if(v===null||v===undefined){a=attr(cid,r.ability);v=a&&abilityScoreMod(a.get('current'));}
+        if(v===null||v===undefined)throw new Error('Не найден модификатор характеристики для проверки.');
+        return v;
+    }
+    function recoveryFailure(token,e){
+        var r=e&&e.recovery;if(!r||!r.action||!r.phase||!r.snapshot)return;
+        if(typeof AD5Phases==='undefined')throw new Error('Не загружен AD5 Phases.');
+        AD5Phases.run(r.snapshot,r.phase,token.id,'ОСВОБ · провал',e.source&&e.source.phaseScope,null,{forcedOutcome:'failure'});
+    }
+    function conditionSaveRule(token,ability){
+        try{
+            if(typeof AD5!=='undefined'&&AD5&&AD5.conditionRules&&typeof AD5.conditionRules.saveRule==='function')
+                return AD5.conditionRules.saveRule(token,ability)||{autoFail:false,mode:'normal',labels:[]};
+        }catch(ignore){}
+        return {autoFail:false,mode:'normal',labels:[]};
+    }
+    function conditionCheckRule(token,ability,context){
+        try{
+            if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.abilityCheckRule==='function')
+                return AD5ConditionEngine.abilityCheckRule(token,ability,context)||{autoFail:false,mode:'normal',labels:[]};
+            if(typeof AD5!=='undefined'&&AD5&&AD5.conditionRules&&typeof AD5.conditionRules.abilityCheckRule==='function')
+                return AD5.conditionRules.abilityCheckRule(token,ability,context)||{autoFail:false,mode:'normal',labels:[]};
+        }catch(ignore){}
+        return {autoFail:false,mode:'normal',labels:[]};
+    }
+    function combineModes(a,b){
+        a=['adv','dis'].indexOf(a)>=0?a:'normal';b=['adv','dis'].indexOf(b)>=0?b:'normal';
+        if(a==='normal')return b;if(b==='normal')return a;if(a===b)return a;return 'normal';
+    }
+    function recoveryMode(token,recovery,e,condition){
+        if(recovery.check)return condition.mode||'normal';
+        var mods=saveModifierForToken(token.id,recovery.ability).mode||'normal';
+        var protectedSave=typeof AD5SpellEffects!=='undefined'&&AD5SpellEffects.protectionRecovery&&AD5SpellEffects.protectionRecovery(token,e);
+        var adv=mods==='adv'||condition.mode==='adv'||protectedSave,dis=mods==='dis'||condition.mode==='dis';
+        return adv===dis?'normal':adv?'adv':'dis';
+    }
+    function recoveryRollTotal(token,recovery,e){
+        var condition=recovery.check?conditionCheckRule(token,recovery.ability,{recovery:true}):conditionSaveRule(token,recovery.ability),bonus=recoveryBonus(token,recovery);
+        if(condition.autoFail)return {die:0,die2:null,bonus:bonus,total:Number(recovery.dc)-1,mode:'condition',autoFailCondition:true,conditionLabels:condition.labels||[],check:!!recovery.check};
+        var mode=recoveryMode(token,recovery,e,condition),d1=typeof randomInteger==='function'?randomInteger(20):(Math.floor(Math.random()*20)+1),d2=null,die=d1;
+        if(mode!=='normal'){d2=typeof randomInteger==='function'?randomInteger(20):(Math.floor(Math.random()*20)+1);die=mode==='adv'?Math.max(d1,d2):Math.min(d1,d2);}
+        return {die:die,die2:d2,bonus:bonus,total:die+bonus,mode:mode,check:!!recovery.check,critical:recovery.check?'':(die===1?'failure':(die===20?'success':''))};
+    }
+    function recoverySucceeded(result,recovery){if(!result)return false;if(result.autoFailCondition)return false;if(!recovery.check){if(result.die===1)return false;if(result.die===20)return true;}return Number(result.total)>=Number(recovery.dc);}
+    function recoveryChat(token,e,result,success,automatic){
+        var r=e.recovery,who=esc(token.get('name')||token.id),status=success?'УСПЕХ — эффект снят':'ПРОВАЛ — эффект остаётся';
+        var effectName=esc((CONDITIONS[e.condition]&&CONDITIONS[e.condition].label)||e.label);
+        // Keep the public recovery roll consistent with ordinary AD5 player saves:
+        // show the result/status, but do not publish the DC in the common chat.
+        var modeText=result.mode==='adv'?'Преимущество':result.mode==='dis'?'Помеха':result.autoFailCondition?('Автопровал: '+((result.conditionLabels||[]).join(', ')||'состояние')):'';
+        var resultText=result.autoFailCondition?'автоматический провал':(result.total+' ('+result.die+(result.bonus>=0?'+':'')+result.bonus+')');
+        sendChat(SCRIPT,'&{template:default} {{name=Снятие эффекта: '+effectName+'}} {{Цель='+who+'}} {{'+(r.check?'Проверка (действие)':'Спасбросок')+'='+esc(RECOVERY_ABILITIES[r.ability].label)+'}} {{Результат='+esc(resultText)+'}}'+(modeText?' {{Модификатор='+esc(modeText)+'}}':'')+' {{Статус=<b>'+status+'</b>}}'+(automatic?' {{Режим=автоматически}}':''));
+        sendChat(SCRIPT,'/w gm '+who+': '+effectName+', '+r.short+' СЛ '+r.dc+', результат '+result.total+' — '+(success?'успех, эффект снят':'провал, эффект остаётся')+'.');
+    }
+    function removeRecoveryEffect(token,condition){
+        var rec=snapshot(token.id);if(!rec)return false;
+        var key='condition:'+condition;if(!rec.effects[key])return false;
+        delete rec.effects[key];writeRecord(token,rec);return true;
+    }
+    function markRecoveryAttempt(token,condition){
+        var rec=snapshot(token.id),key='condition:'+condition;if(!rec||!rec.effects[key]||!rec.effects[key].recovery)return null;
+        rec.effects[key].recovery.attempted=true;rec.effects[key].recovery.attemptId=Date.now().toString(36)+':'+Math.random();writeRecord(token,rec);return rec.effects[key];
+    }
+    function autoNpcRecovery(token,e){
+        var result=recoveryRollTotal(token,e.recovery,e),success=recoverySucceeded(result,e.recovery);
+        recoveryChat(token,e,result,success,true);return success;
+    }
+    function playerRecovery(token,condition,pid){
+        if(!token||token.get('_pageid')!==partyPageId())throw new Error('Токен должен находиться на активной карте.');
+        
+        if(!canControlRecovery(token,pid))throw new Error('Вы не управляете этим токеном.');
+        var info=currentTurnInfo();if(!info||info.groupKey!==groupKey(token))throw new Error('Снять эффект можно только в ход этого токена.');
+        var rec=snapshot(token.id),key='condition:'+condition,e=rec&&rec.effects[key];
+        if(!e||!e.recovery)throw new Error('Эффект с проверкой для снятия не найден.');
+        if(npcToken(token)&&!e.recovery.action)throw new Error('NPC совершает этот спасбросок автоматически.');
+        if(e.recovery.attempted)throw new Error('Спасбросок для этого эффекта уже совершался в текущем ходу.');
+        e=markRecoveryAttempt(token,condition);syncRecoveryActions(token);
+        var r=e.recovery,bonus=recoveryBonus(token,r),condition=r.check?conditionCheckRule(token,r.ability,{recovery:true}):conditionSaveRule(token,r.ability);
+        if(condition.autoFail){
+            var failed={die:0,die2:null,bonus:bonus,total:Number(r.dc)-1,mode:'condition',autoFailCondition:true,conditionLabels:condition.labels||[]};
+            recoveryChat(token,e,failed,false,false);recoveryFailure(token,e);syncRecoveryActions(token);return;
+        }
+        var saveMode=recoveryMode(token,r,e,condition),diceExpr=saveMode==='adv'?'2d20kh1':saveMode==='dis'?'2d20kl1':'1d20',expr=diceExpr+(bonus>=0?'+':'')+bonus;
+        sendChat(SCRIPT,'[[ '+expr+' ]]',function(messages){
+            try{
+                var m=messages&&messages[0],inline=m&&m.inlinerolls&&m.inlinerolls[0],total=inline&&inline.results?Number(inline.results.total):NaN;
+                if(!Number.isFinite(total))throw new Error('Не удалось прочитать результат спасброска.');
+                var die=total-bonus,result={die:die,bonus:bonus,total:total,mode:saveMode,check:!!r.check,critical:r.check?'':(die===1?'failure':(die===20?'success':''))},success=recoverySucceeded(result,r);
+                var live=getObj('graphic',token.id);if(!live)return;
+                var liveInfo=currentTurnInfo();
+                if(!liveInfo||liveInfo.groupKey!==groupKey(live)){
+                    sendChat(SCRIPT,'/w gm Запоздавший спасбросок снятия эффекта по '+esc(live.get('name')||live.id)+' проигнорирован: ход уже завершён.');
+                    return;
+                }
+                var liveRec=snapshot(live.id),liveE=liveRec&&liveRec.effects[key];if(!liveE||!liveE.recovery||liveE.recovery.attemptId!==r.attemptId)return;
+                recoveryChat(live,liveE,result,success,false);
+                if(success)removeRecoveryEffect(live,condition);else{recoveryFailure(live,liveE);syncRecoveryActions(live);}
+            }catch(err){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+'</b>: '+esc(err.message||err));}
+        });
+    }
+
+    function partyPageId(){return Campaign().get('playerpageid')||'';}
+    function currentTurnInfo(){
+        var rows=[];try{rows=JSON.parse(Campaign().get('turnorder')||'[]')||[];}catch(e){rows=[];}
+        if(!rows.length)return null;
+        var active=partyPageId();
+        var row=rows[0],token=row&&row.id&&row.id!=='-1'?getObj('graphic',row.id):null;
+        if(token&&token.get('_subtype')==='token'){
+            if(token.get('_pageid')!==active)return null;
+            return {pageId:active,groupKey:groupKey(token),label:token.get('name')||token.id};
+        }
+        if(row&&row.id==='-1'&&row.custom){
+            var page=partyPageId();
+            return page?{pageId:page,groupKey:'npc:'+groupName(row.custom),label:row.custom}:null;
+        }
+        return null;
+    }
+    function triggerPeriodic(token,e){
+        if(!e||!e.periodic)return false;
+        if(typeof AD5==='undefined'||!AD5||!AD5.periodic||typeof AD5.periodic.trigger!=='function'){
+            sendChat(SCRIPT,'/w gm <b>'+SCRIPT+'</b>: не найден AD5 periodic bridge; урон эффекта «'+esc(e.label)+'» не применён.');
+            return false;
+        }
+        try{
+            AD5.periodic.trigger(token.id,clone(e.periodic),clone(e.source||{}),e.label);
+            return true;
+        }catch(err){
+            sendChat(SCRIPT,'/w gm <b>'+SCRIPT+'</b>: ошибка периодического урона «'+esc(e.label)+'» по '+esc(token.get('name')||token.id)+': '+esc(err.message||err));
+            return false;
+        }
+    }
+    function beginGroup(pageId,key,silent){
+        var active=partyPageId();
+        if(!key||!active||pageId!==active)return {changed:0,expired:0,recovered:0};
+        var db=root().tokens,changed=0,expired=0,recovered=0;
+        Object.keys(db).forEach(function(tokenId){
+            var token=getObj('graphic',tokenId);if(!token){delete db[tokenId];return;}
+            if(token.get('_pageid')!==pageId||groupKey(token)!==key)return;
+            var before=snapshot(tokenId),after=cleanRecord(before),touched=false;
+            Object.keys(after.effects).sort().forEach(function(k){
+                var e=after.effects[k];if(!e)return;
+                if(e.condition==='no_reactions'){e.reactionTurnStarted=true;e.remaining=1;touched=true;return;}
+                if(e.recovery){
+                    e.recovery.attempted=false;touched=true;
+                    if(npcToken(token)&&!e.recovery.action){
+                        e.recovery.attempted=true;
+                        try{
+                            if(autoNpcRecovery(token,e)){delete after.effects[k];expired++;recovered++;}
+                        }catch(err){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+'</b>: спасбросок снятия эффекта по '+esc(token.get('name')||token.id)+': '+esc(err.message||err));}
+                    }
+                    return;
+                }
+                if(e.remaining===null||e.remaining===undefined)return;
+                // Legacy/no-recovery timed effects keep their original start-turn
+                // behavior for backwards compatibility.
+                if(e.periodic)triggerPeriodic(token,e);
+                e.remaining=Number(e.remaining)-1;touched=true;
+                if(e.remaining<=0){delete after.effects[k];expired++;}
+            });
+            if(touched){changed++;writeRecord(token,after);}
+            syncRecoveryActions(token);
+        });
+        if(!silent&&changed)sendChat(SCRIPT,'/w gm <b>'+SCRIPT+'</b>: начало хода «'+String(key).replace(/^npc:|^token:/,'')+'» — обновлено токенов: '+changed+', снято эффектов спасброском: '+recovered+'.');
+        return {changed:changed,expired:expired,recovered:recovered};
+    }
+    function endGroup(pageId,key,silent){
+        var active=partyPageId();
+        if(!key||!active||pageId!==active)return {changed:0,expired:0};
+        var db=root().tokens,changed=0,expired=0;
+        Object.keys(db).forEach(function(tokenId){
+            var token=getObj('graphic',tokenId);if(!token){delete db[tokenId];return;}
+            if(token.get('_pageid')!==pageId||groupKey(token)!==key)return;
+            var before=snapshot(tokenId),after=cleanRecord(before),touched=false;
+            Object.keys(after.effects).sort().forEach(function(k){
+                var e=after.effects[k];if(!e)return;
+                if(e.condition==='no_reactions'){if(e.reactionTurnStarted){delete after.effects[k];touched=true;expired++;}return;}
+                if(!e.recovery)return;
+                // Recovery-save effects resolve their periodic damage at END of
+                // the turn. A successful recovery save removed the effect earlier,
+                // so only unresolved/failed/unused effects reach this point.
+                if(e.periodic)triggerPeriodic(token,e);
+                if(e.remaining!==null&&e.remaining!==undefined){
+                    e.remaining=Number(e.remaining)-1;touched=true;
+                    if(e.remaining<=0){delete after.effects[k];expired++;return;}
+                }
+                if(after.effects[k]&&after.effects[k].recovery){after.effects[k].recovery.attempted=false;touched=true;}
+            });
+            if(touched){changed++;writeRecord(token,after);}
+        });
+        clearRecoveryActionsForGroup(pageId,key);
+        if(!silent&&changed)sendChat(SCRIPT,'/w gm <b>'+SCRIPT+'</b>: конец хода «'+String(key).replace(/^npc:|^token:/,'')+'» — обновлено токенов: '+changed+', завершено эффектов: '+expired+'.');
+        return {changed:changed,expired:expired};
+    }
+    function tickGroup(pageId,key,silent){return beginGroup(pageId,key,silent);}
+    function rowKey(row){return row?(String(row.id||'')+'|'+String(row.custom||'')):'';}
+    function parseTurnRows(raw){try{return JSON.parse(raw||'[]')||[];}catch(e){return [];}}
+    function isNextTurnRotation(before,after){
+        if(!before.length||before.length!==after.length)return false;
+        for(var i=0;i<before.length-1;i++)if(rowKey(after[i])!==rowKey(before[i+1]))return false;
+        return rowKey(after[after.length-1])===rowKey(before[0]);
+    }
+    function infoFromRow(row){
+        if(!row)return null;
+        var active=partyPageId(),token=row.id&&row.id!=='-1'?getObj('graphic',row.id):null;
+        if(token&&token.get('_subtype')==='token'){
+            if(token.get('_pageid')!==active)return null;
+            return {pageId:active,groupKey:groupKey(token),label:token.get('name')||token.id};
+        }
+        if(row.id==='-1'&&row.custom&&active)return {pageId:active,groupKey:'npc:'+groupName(row.custom),label:row.custom};
+        return null;
+    }
+    function условноеСобытиеГруппы(pageId,key,тип){
+        if(!pageId||!key)return {events:0,changed:0,removed:0,concentrationsEnded:0};
+        var events=0,changed=0,removed=0,concentrationsEnded=0;
+        findObjs({_type:'graphic',_subtype:'token',_pageid:pageId,layer:'objects'}).forEach(function(t){
+            if(!t||t.get('isdrawing')||!t.get('represents')||groupKey(t)!==key)return;
+            var r=обработатьУсловноеСобытие(тип,{
+                источникТокенId:t.id,
+                цельТокенId:t.id,
+                источникПерсонажId:String(t.get('represents')||''),
+                страницаId:String(pageId||''),
+                имяТокена:String(t.get('name')||'')
+            })||{};
+            events++;changed+=Number(r.changed)||0;removed+=Number(r.removed)||0;concentrationsEnded+=Number(r.concentrationsEnded)||0;
+        });
+        return {events:events,changed:changed,removed:removed,concentrationsEnded:concentrationsEnded};
+    }
+    function turnChanged(campaign,prev){
+        var after=parseTurnRows(Campaign().get('turnorder')),before=parseTurnRows(prev&&prev.turnorder);
+        var info=after.length?infoFromRow(after[0]):null;
+        if(!info){clearAllRecoveryAbilities();runtimeLastGroup=Object.create(null);return;}
+        var previous=runtimeLastGroup[info.pageId]||'',oldInfo=before.length?infoFromRow(before[0]):null;
+        if(!previous){
+            runtimeLastGroup[info.pageId]=info.groupKey;
+            beginGroup(info.pageId,info.groupKey,true);
+            return;
+        }
+        if(previous===info.groupKey){runtimeLastGroup[info.pageId]=info.groupKey;return;}
+        // End the actually active previous group first. This is where unresolved
+        // player recovery effects deal their periodic damage and lose duration.
+        var previousInfo=(oldInfo&&oldInfo.pageId===info.pageId&&oldInfo.groupKey===previous)?oldInfo:{pageId:info.pageId,groupKey:previous,label:previous};
+        // Conditional end-of-turn rules are evaluated from this same transition,
+        // before the next group begins. Example: Compelled Duel ends if the caster
+        // finishes its turn more than 30 ft from the linked target.
+        условноеСобытиеГруппы(previousInfo.pageId,previousInfo.groupKey,'КОНЕЦ ХОДА');
+        endGroup(previousInfo.pageId,previousInfo.groupKey,true);
+        runtimeLastGroup[info.pageId]=info.groupKey;
+        beginGroup(info.pageId,info.groupKey,true);
+        условноеСобытиеГруппы(info.pageId,info.groupKey,'НАЧАЛО ХОДА');
+    }
+    function initCurrentTurn(){
+        var info=currentTurnInfo();
+        if(info){
+            runtimeLastGroup[info.pageId]=info.groupKey;
+            // API restart in the middle of a PC turn must not consume duration or
+            // auto-roll an NPC save, but PC token-action buttons should exist.
+            Object.keys(root().tokens).forEach(function(tokenId){var t=getObj('graphic',tokenId);if(t&&t.get('_pageid')===info.pageId&&groupKey(t)===info.groupKey)syncRecoveryActions(t);});
+        }
+    }
+    function migrateStoredMarkers(token,rec){
+        if(!token||!rec||!rec.effects)return rec;
+        var changed=false,obsolete={},rebuilt={};
+        Object.keys(rec.effects).forEach(function(k){
+            var e=rec.effects[k];
+            if(!e)return;
+            // 1.0.10: old builds could save "Горение 2д6" / "Обморожение 1д8"
+            // as a plain timed text effect. Convert such records to real periodic
+            // conditions so they gain a marker and begin dealing start-turn damage.
+            if((!e.condition||e.kind==='text')&&e.remaining!==null&&e.remaining!==undefined){
+                var ps=periodicSpec({label:e.label,remaining:e.remaining,explicit:true});
+                if(ps&&CONDITIONS[ps.condition]){
+                    var pc=CONDITIONS[ps.condition],nk='condition:'+ps.condition;
+                    e.kind='condition';e.condition=ps.condition;e.marker=pc.marker;e.label=pc.label+' '+ps.formula;e.timed=true;e.periodic=ps;
+                    e.source=e.source&&typeof e.source==='object'?e.source:{};
+                    k=nk;changed=true;
+                }
+            }
+            if(e.condition&&CONDITIONS[e.condition]){
+                var expected=CONDITIONS[e.condition].marker;
+                if(e.marker!==expected){if(e.marker)obsolete[e.marker]=true;e.marker=expected;changed=true;}
+            }
+            if(rebuilt[k]){
+                var old=rebuilt[k];
+                if(old.remaining===null||e.remaining===null)old.remaining=null;
+                else old.remaining=Math.max(Number(old.remaining)||0,Number(e.remaining)||0);
+                if(e.periodic)old.periodic=clone(e.periodic);
+                if(e.recovery)old.recovery=clone(e.recovery);
+                if(e.condition==='slowed')old.slowLoss=(e.slowLoss===undefined?null:e.slowLoss);
+                if(e.condition==='sanctuary')old.sanctuaryDC=Number(e.sanctuaryDC)||null;
+                if(e.source)old.source=clone(e.source);
+            }else rebuilt[k]=e;
+        });
+        if(JSON.stringify(rec.effects)!==JSON.stringify(rebuilt)){rec.effects=rebuilt;changed=true;}
+        if(changed){
+            var markers=String(token.get('statusmarkers')||'').split(',').filter(Boolean).filter(function(x){return !obsolete[x.replace(/@[^,]+$/,'')];});
+            token.set('statusmarkers',markers.join(','));
+        }
+        return rec;
+    }
+    var reconcileGuard=Object.create(null);
+    function reconcilePeriodicLegacyToken(token){
+        if(!token||reconcileGuard[token.id])return false;
+        if(typeof AD5TokenEffects==='undefined'||!AD5TokenEffects||typeof AD5TokenEffects.list!=='function'||typeof AD5TokenEffects.set!=='function')return false;
+        reconcileGuard[token.id]=true;
+        try{
+            var notes=AD5TokenEffects.list(token.id)||[],kept=[],changed=false,before=snapshot(token.id),after=cleanRecord(before),immunities=sheetConditionImmunities(token),applied=[],blocked=[];
+            notes.forEach(function(note){
+                var consumed=false;
+                directSegments(note).forEach(function(part){
+                    var candidate=String(part||'').replace(/^(?:ПРВ|УСП|при\s+провале|при\s+успехе)\s*[:：—–-]?\s*/i,'').trim();
+                    var e=parseEffect(candidate);
+                    if(!e||!e.periodic)return;
+                    if(mergeEffectIntoPlan(token,after,e,immunities,{},applied,blocked)){consumed=true;changed=true;}
+                });
+                if(!consumed)kept.push(note);
+            });
+            if(changed){
+                writeRecord(token,after);
+                AD5TokenEffects.set(token,kept);
+                return true;
+            }
+            return false;
+        }finally{delete reconcileGuard[token.id];}
+    }
+    function migrateModifierStacking(rec){
+        rec=cleanRecord(rec);var rebuilt={},positiveSlots=Object.create(null),changed=false,legacyDebuff=0;
+        Object.keys(rec.effects).forEach(function(k){
+            var e=rec.effects[k],m=e&&e.modifier;if(!m){rebuilt[k]=e;return;}
+            if(e.passive||m.passive){rebuilt[k]=e;return;}
+            var slot=modifierSlot(m);
+            if(m.positive===false){
+                var nk=/^modifier:debuff:/.test(k)?k:'modifier:debuff:'+slot+':legacy'+String(++legacyDebuff);
+                if(nk!==k)changed=true;rebuilt[nk]=e;return;
+            }
+            // Object insertion order reflects application order in old builds.
+            // Keeping only the last positive entry prevents an expired/replaced
+            // buff from becoming active again later.
+            positiveSlots[slot]={key:'modifier:buff:'+slot,effect:e};
+            if(k!=='modifier:buff:'+slot)changed=true;
+        });
+        Object.keys(positiveSlots).forEach(function(slot){rebuilt[positiveSlots[slot].key]=positiveSlots[slot].effect;});
+        if(JSON.stringify(rec.effects)!==JSON.stringify(rebuilt)){rec.effects=rebuilt;changed=true;}
+        return {record:rec,changed:changed};
+    }
+    function refreshAll(){
+        var db=root().tokens;
+        Object.keys(db).forEach(function(tokenId){
+            var token=getObj('graphic',tokenId);
+            if(!token){delete db[tokenId];return;}
+            // 1.0.10+: migrate periodic-effect markers/records from older builds
+            // (notably burning: flame -> rolling-bomb), then reassert badges.
+            db[tokenId]=migrateStoredMarkers(token,db[tokenId]);
+            var modifierMigration=migrateModifierStacking(db[tokenId]);db[tokenId]=modifierMigration.record;
+            db[tokenId]=syncMarkers(token,null,db[tokenId]);
+            refreshTooltip(token);
+        });
+    }
+    function migrateLegacyDirectEffects(){
+        try{
+            var page=partyPageId();if(!page)return;
+            findObjs({_type:'graphic',_subtype:'token',_pageid:page,layer:'objects'}).forEach(function(token){
+                if(!token||token.get('isdrawing'))return;
+                reconcilePeriodicLegacyToken(token);
+            });
+        }catch(err){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+'</b>: миграция старых периодических эффектов: '+esc(err.message||err));}
+    }
+
+    function passiveModifierSpec(item){
+        // Be tolerant to the common typo used in ability descriptions: «Аатка».
+        var text=String(item||'').replace(/аатка/ig,'атака');
+        return modifierSpec(text);
+    }
+    function validatePassive(description){
+        var segments=directSegments(description),labels=[];
+        if(!segments.length)throw new Error('ПАСС: укажите модификаторы, например «+2 КД, +2 Атака, +2 Урон».');
+        segments.forEach(function(item){
+            var mod=passiveModifierSpec(item);
+            if(!mod)throw new Error('ПАСС поддерживает боевые модификаторы Effect Turns. Не распознано: «'+String(item)+'».');
+            labels.push(mod.label);
+        });
+        return labels;
+    }
+
+    function passiveSource(sourceContext,scope){
+        sourceContext=sourceContext&&typeof sourceContext==='object'?clone(sourceContext):{};
+        return {
+            ownerPid:sourceContext.ownerPid||null,
+            actor:sourceContext.actor||null,
+            actorName:sourceContext.actorName||'',
+            sourceToken:sourceContext.sourceToken||null,
+            concentrationId:sourceContext.concentrationId||null,
+            phaseScope:String(scope||''),
+            passive:true
+        };
+    }
+    function passivePlan(token,phaseScope,description,sourceContext){
+        if(!token||token.get('_subtype')!=='token')throw new Error('AD5 Effect Turns: токен ПАСС не найден.');
+        phaseScope=String(phaseScope||'').trim();
+        if(!phaseScope)throw new Error('ПАСС: не указан ID области/ауры.');
+        var segments=directSegments(description),mods=[],ownerPositiveOnly=!!(sourceContext&&sourceContext.concentrationAuraOwner);
+        if(!segments.length)throw new Error('ПАСС: укажите модификаторы, например «+2 КД, +2 Атака, +2 Урон».');
+        segments.forEach(function(item){
+            var mod=passiveModifierSpec(item);
+            if(!mod)throw new Error('ПАСС поддерживает боевые модификаторы Effect Turns. Не распознано: «'+String(item)+'».');
+            // The physical token maintaining a concentration aura receives only
+            // positive tooltip buffs from that aura: +КД, +Атака, +Урон and
+            // positive characteristic/save modifiers (+СТАТ).  Negative ПАСС,
+            // disadvantage and any other modifier kind are ignored for it.
+            if(ownerPositiveOnly && !(mod.positive===true&&['ac','attack','damage','save','check'].indexOf(mod.type)>=0))return;
+            mod.remaining=null;mod.timed=false;mod.passive=true;
+            mods.push({raw:item,modifier:mod});
+        });
+        var before=snapshot(token.id),after=cleanRecord(before),source=passiveSource(sourceContext,phaseScope),applied=[];
+        // Reapplying membership is idempotent: replace only this area's passive
+        // entries on this token, never ordinary buffs or another area's ПАСС.
+        Object.keys(after.effects).forEach(function(k){
+            var e=after.effects[k],src=e&&e.source;
+            if(e&&e.passive&&src&&String(src.phaseScope||'')===phaseScope)delete after.effects[k];
+        });
+        mods.forEach(function(row,index){
+            var mod=clone(row.modifier),slot=modifierSlot(mod),key='modifier:passive:'+phaseScope+':'+slot+':'+String(index+1);
+            var e={kind:'modifier',condition:null,label:mod.label,marker:null,remaining:null,timed:false,passive:true,modifier:mod,source:clone(source)};
+            after.effects[key]=e;applied.push(e);
+        });
+        return {before:before,after:after,changed:!equals(before,after),applied:applied,present:true,passive:true,scope:phaseScope};
+    }
+    function applyPassive(token,phaseScope,description,sourceContext){
+        var plan=passivePlan(token,phaseScope,description,sourceContext);
+        if(plan.changed){writeRecord(token,plan.after);if(planHasDebuff(plan))endSanctuaryForHarm(token,sourceContext);}
+        return plan;
+    }
+    function removePassiveByScopeToken(tokenId,phaseScope){
+        tokenId=String(tokenId||'');phaseScope=String(phaseScope||'').trim();
+        if(!tokenId||!phaseScope)return {token:false,effects:0};
+        var token=getObj('graphic',tokenId),before=snapshot(tokenId);if(!before)return {token:!!token,effects:0};
+        var after=cleanRecord(before),count=0;
+        Object.keys(after.effects).forEach(function(k){
+            var e=after.effects[k],src=e&&e.source;
+            if(e&&e.passive&&src&&String(src.phaseScope||'')===phaseScope){delete after.effects[k];count++;}
+        });
+        if(count){
+            if(token)writeRecord(token,after);else if(Object.keys(after.effects).length)root().tokens[tokenId]=after;else delete root().tokens[tokenId];
+        }
+        return {token:!!token,effects:count};
+    }
+
+    function removeNonPassiveByScopeToken(tokenId,phaseScope){
+        tokenId=String(tokenId||'');phaseScope=String(phaseScope||'').trim();
+        if(!tokenId||!phaseScope)return {token:false,effects:0};
+        var token=getObj('graphic',tokenId),before=snapshot(tokenId);if(!before)return {token:!!token,effects:0};
+        var after=cleanRecord(before),count=0;
+        // Concentration-aura owner cleanup: keep only scoped ПАСС entries.
+        // Timed conditions, debuffs and other non-passive Effect Turns entries
+        // from this same aura are removed from the physical concentration token.
+        Object.keys(after.effects).forEach(function(k){
+            var e=after.effects[k],src=e&&e.source;
+            if(e&&!e.passive&&src&&String(src.phaseScope||'')===phaseScope){delete after.effects[k];count++;}
+        });
+        if(count){
+            if(token)writeRecord(token,after);else if(Object.keys(after.effects).length)root().tokens[tokenId]=after;else delete root().tokens[tokenId];
+        }
+        return {token:!!token,effects:count};
+    }
+
+    function removeByConcentration(concentrationId){
+        concentrationId=String(concentrationId||'').trim();
+        if(!concentrationId)return {tokens:0,effects:0};
+        var db=root().tokens,tokenCount=0,effectCount=0;
+        Object.keys(db).forEach(function(tokenId){
+            var token=getObj('graphic',tokenId),before=snapshot(tokenId);if(!before)return;
+            var after=cleanRecord(before),changed=false;
+            Object.keys(after.effects).forEach(function(k){
+                var e=after.effects[k],source=e&&e.source;
+                if(source&&String(source.concentrationId||'')===concentrationId){delete after.effects[k];effectCount++;changed=true;}
+            });
+            if(changed){
+                tokenCount++;
+                if(token)writeRecord(token,after);else if(Object.keys(after.effects).length)db[tokenId]=after;else delete db[tokenId];
+            }
+        });
+        return {tokens:tokenCount,effects:effectCount};
+    }
+
+    function removeByScope(phaseScope){
+        phaseScope=String(phaseScope||'').trim();
+        if(!phaseScope)return {tokens:0,effects:0};
+        var db=root().tokens,tokenCount=0,effectCount=0;
+        Object.keys(db).forEach(function(tokenId){
+            var token=getObj('graphic',tokenId),before=snapshot(tokenId);if(!before)return;
+            var after=cleanRecord(before),changed=false;
+            Object.keys(after.effects).forEach(function(k){
+                var e=after.effects[k],source=e&&e.source;
+                if(source&&String(source.phaseScope||'')===phaseScope){delete after.effects[k];effectCount++;changed=true;}
+            });
+            if(changed){
+                tokenCount++;
+                if(token)writeRecord(token,after);else if(Object.keys(after.effects).length)db[tokenId]=after;else delete db[tokenId];
+            }
+        });
+        return {tokens:tokenCount,effects:effectCount};
+    }
+
+    function damageMultiplierForToken(tokenId,damageType){
+        var rec=snapshot(tokenId),type=matchNorm(damageType);
+        if(!rec||!rec.effects)return {multiplier:1,label:''};
+        if(rec.effects['condition:defilement'] && (type==='некротическая энергия'||type==='некротический'||type==='necrotic'))
+            return {multiplier:2,label:'Осквернение'};
+        if(rec.effects['condition:fracture'] && (type==='рубящий'||type==='slashing'||type==='дробящий'||type==='bludgeoning'||type==='колющий'||type==='piercing'))
+            return {multiplier:2,label:'Разлом'};
+        return {multiplier:1,label:''};
+    }
+    function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+    function selectedTokens(msg){var page=partyPageId();return (msg.selected||[]).filter(function(x){return x._type==='graphic';}).map(function(x){return getObj('graphic',x._id);}).filter(function(t){return !!t&&t.get('_pageid')===page;});}
+    function command(msg){
+        if(msg.type!=='api'||!/^!ad5fx(?:\s|$)/i.test(msg.content))return;
+        var parts=msg.content.trim().split(/\s+/),sub=norm(parts[1]||'help');
+        try{
+            if(sub==='recover'){
+                var tokenId=parts[2],condition=parts[3],token=getObj('graphic',tokenId);
+                if(!token)throw new Error('Токен для спасброска не найден.');
+                if(!condition)throw new Error('Не указан эффект для снятия.');
+                playerRecovery(token,condition,msg.playerid);return;
+            }
+            if(sub==='unrestrain'){var selected=String(msg.content||'').trim().split(/\s+/)[2],rt=getObj('graphic',selected||((msg.selected||[])[0]||{})._id);releaseRestrained(rt,msg.playerid);sendChat(SCRIPT,'/w gm Опутывание снято.',null,{noarchive:true});return;}
+            if(sub==='ping'){sendChat(SCRIPT,'/w gm '+SCRIPT+' <b>'+VERSION+'</b> активен.'+(AD5EffectTurns_PreviousVersion?' До него в sandbox уже была загружена версия <b>'+esc(AD5EffectTurns_PreviousVersion)+'</b>; отключите старую вкладку Effect Turns и перезапустите API, чтобы не было двух обработчиков Turn Tracker.':''));return;}
+            if(sub==='status'){
+                var ts=selectedTokens(msg);if(!ts.length)throw new Error('Выделите токен.');
+                ts.forEach(function(t){var lines=tooltipLines(t.id);sendChat(SCRIPT,'/w gm <b>'+esc(t.get('name')||t.id)+'</b><br>'+(lines.length?lines.map(esc).join('<br>'):'Нет активных эффектов.'));});return;
+            }
+            if(sub==='clear'){
+                if(!playerIsGM(msg.playerid))throw new Error('Только GM.');
+                var clear=selectedTokens(msg);if(!clear.length)throw new Error('Выделите токен(ы).');
+                clear.forEach(function(t){writeRecord(t,null);});sendChat(SCRIPT,'/w gm Эффекты выбранных токенов очищены.');return;
+            }
+            if(sub==='clean'||sub==='clear-effects'||sub==='effects-clear'){
+                if(!playerIsGM(msg.playerid))throw new Error('Только GM.');
+                var clean=selectedTokens(msg);if(!clean.length)throw new Error('Выделите токен(ы).');
+                clean.forEach(function(t){
+                    // Remove all timed/condition effects owned by Effect Turns.
+                    // writeRecord also restores pre-existing status markers instead of
+                    // deleting markers that were not created by AD5.
+                    writeRecord(t,null);
+                    // Remove legacy/direct AD5 tooltip notes from older ability logic.
+                    try{
+                        if(typeof AD5TokenEffects!=='undefined'&&AD5TokenEffects&&typeof AD5TokenEffects.set==='function')AD5TokenEffects.set(t,[]);
+                    }catch(ignore1){}
+                    // Rebuild tooltip from wound state only.  Wound counters and
+                    // lost limbs are deliberately NOT modified by this command.
+                    try{
+                        if(typeof AD5Wounds!=='undefined'&&AD5Wounds&&typeof AD5Wounds.sync==='function')AD5Wounds.sync(t);
+                        else {
+                            var raw=String(t.get('tooltip')||'');
+                            raw=raw.replace(/\n?\[AD5FX\][\s\S]*?\[\/AD5FX\]\n?/g,'\n').trim();
+                            t.set({tooltip:raw,show_tooltip:!!raw});
+                        }
+                    }catch(ignore2){}
+                });
+                sendChat(SCRIPT,'/w gm Эффекты выбранных токенов удалены. Раны и потеря конечностей сохранены.');return;
+            }
+            if(sub==='reset'||sub==='reset-token'){
+                if(!playerIsGM(msg.playerid))throw new Error('Только GM.');
+                var reset=selectedTokens(msg);if(!reset.length)throw new Error('Выделите токен(ы).');
+                reset.forEach(function(t){
+                    // 1) timed effects and their managed status-marker badges
+                    writeRecord(t,null);
+                    // 2) legacy/direct AD5 tooltip notes
+                    try{if(typeof AD5TokenEffects!=='undefined'&&AD5TokenEffects&&typeof AD5TokenEffects.set==='function')AD5TokenEffects.set(t,[]);}catch(ignore1){}
+                    // 3) wound counters + AD5-owned lost-limb marker
+                    try{
+                        if(typeof AD5Wounds!=='undefined'&&AD5Wounds&&typeof AD5Wounds.set==='function')AD5Wounds.set(t,{light:0,medium:0,heavy:0,limbs:[]});
+                        else if(state.AD5Wounds&&state.AD5Wounds.tokens)delete state.AD5Wounds.tokens[t.id];
+                    }catch(ignore2){}
+                    // The main AD5 renderer (4.2.34+) hides an empty tooltip.
+                    try{if(typeof AD5Wounds!=='undefined'&&AD5Wounds&&typeof AD5Wounds.sync==='function')AD5Wounds.sync(t);else t.set({tooltip:'',show_tooltip:false});}catch(ignore3){t.set({tooltip:'',show_tooltip:false});}
+                });
+                sendChat(SCRIPT,'/w gm Сброс выбранных токенов: подсказка и эффекты очищены, раны = 0.');return;
+            }
+            if(sub==='tick'){
+                if(!playerIsGM(msg.playerid))throw new Error('Только GM.');
+                var info=currentTurnInfo();if(!info)throw new Error('Порядок ходов пуст.');
+                var result=tickGroup(info.pageId,info.groupKey,true);sendChat(SCRIPT,'/w gm Ручной тик: обновлено '+result.changed+', завершено '+result.expired+'.');return;
+            }
+            sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' '+VERSION+'</b><br><code>!ad5fx ping</code> — проверка.<br><code>!ad5fx status</code> — эффекты выделенного токена.<br><code>!ad5fx clear</code> — очистить таймеры Effect Turns.<br><code>!ad5fx clean</code> — удалить все эффекты из tooltip, сохранив раны и потерю конечностей.<br><code>!ad5fx reset</code> — очистить tooltip/эффекты и обнулить раны выбранных токенов.<br><code>!ad5fx tick</code> — вручную обработать начало хода текущей группы.<br>Эффекты с записью ТЕЛ19/ЛОВ16 и т. п. создают Token Action для спасброска снятия в ход персонажа.');
+        }catch(e){sendChat(SCRIPT,'/w gm Ошибка: '+esc(e.message||e));}
+    }
+
+    on('change:campaign:turnorder',turnChanged);
+    on('change:campaign:playerpageid',function(){clearAllRecoveryAbilities();runtimeLastGroup=Object.create(null);initCurrentTurn();migrateLegacyDirectEffects();});
+    on('change:graphic',function(t,prev){
+        try{
+            if(!t||t.get('_subtype')!=='token'||t.get('isdrawing')||t.get('_pageid')!==partyPageId())return;
+            if(String(t.get('tooltip')||'')!==String((prev&&prev.tooltip)||'') || String(t.get('statusmarkers')||'')!==String((prev&&prev.statusmarkers)||'')){
+                reconcilePeriodicLegacyToken(t);
+                var rec=snapshot(t.id);if(rec)syncMarkers(t,rec,rec);
+            }
+            var moved=!!prev&&(Number(prev.left)!==Number(t.get('left'))||Number(prev.top)!==Number(t.get('top'))||Number(prev.bar3_value)!==Number(t.get('bar3_value'))||Number(prev.bar4_value)!==Number(t.get('bar4_value')));
+            var tempChanged=!!prev&&String(prev.bar2_value)!==String(t.get('bar2_value'));
+            if(tempChanged&&Number(t.get('bar2_value'))<=0)установитьВладельцаВременныхХитов(t.id,null);
+            if(moved||tempChanged)setTimeout(function(){try{проверитьУсловныеСвязи();}catch(ignoreConditional){}},0);
+        }catch(ignore){}
+    });
+    on('destroy:graphic',function(t){var db=root().tokens;if(db[t.id])delete db[t.id];delete root().tempHpOwners[t.id];try{clearRecoveryAbilitiesForCharacter(t.get('represents'));}catch(ignore){}});
+    on('chat:message',command);
+    on('ready',function(){
+        root();clearAllRecoveryAbilities();initCurrentTurn();var lifecycleMigration=migrateLifecycleConditions();refreshAll();migrateLegacyDirectEffects();подключитьУсловныеСобытия();проверитьУсловныеСвязи();
+        var warning=AD5EffectTurns_PreviousVersion?' <b>ВНИМАНИЕ:</b> до 1.0.11 уже была загружена Effect Turns '+esc(AD5EffectTurns_PreviousVersion)+'. Отключите все старые вкладки AD5 Effect Turns и оставьте только 1.4.1, затем Restart API Sandbox.':'';
+        var tags=summaryMarkerTags(),markerWarning='';
+        if(!tags.buff||!tags.debuff)markerWarning=' <b>Маркеры:</b> '+(!tags.buff?'не найден «'+esc(BUFF_MARKER_NAME)+'»; ':'')+(!tags.debuff?'не найден «'+esc(DEBUFF_MARKER_NAME)+'».':'');
+        sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' '+VERSION+'</b> запущен. Conditional Effect Engine: <b>ПОКА / СНЯТЬ / РАСХ / ДО / УСЛЭФ</b>. Ограничение реакций: <b>Реакции 0 / Без реакций</b>. Weapon-hit Payload: <b>ПОПАД / ПОПАДУСЛ / ПОПАДУРОН / ПОПАДСПАС / ПОПАДЭФФ / ПОПАДОБЛ</b>. Условных эффектов переведено в бессрочные: '+lifecycleMigration.effects+'. Счётчики эффектов, спасброски снятия состояний и периодический урон привязаны к фактической смене активного токена/группы в Turn Tracker только на карте под «Лентой для вечеринок». '+warning+markerWarning);
+    });
+
+    on('change:graphic:statusmarkers',function(t,prev){function marked(raw){return String(raw||'').split(',').some(function(m){return m.replace(/@[^,]+$/,'')===CONDITIONS.restrained.marker;});}if(marked(prev&&prev.statusmarkers)!==marked(t.get('statusmarkers')))syncRestrainedAction(t.get('represents'));});
+    on('change:graphic:represents',function(t,prev){syncRestrainedAction(prev&&prev.represents);syncRestrainedAction(t.get('represents'));});
+    on('add:graphic',function(t){syncRestrainedAction(t.get('represents'));});
+    on('destroy:graphic',function(t){syncRestrainedAction(t.get('represents'));});
+    on('ready',function(){var ids={};(findObjs({_type:'graphic',_subtype:'token'})||[]).forEach(function(t){var cid=t.get('represents');if(cid)ids[cid]=true;});Object.keys(ids).forEach(syncRestrainedAction);});
+    return {
+        version:VERSION,
+        parse:sectionParse,
+        damageMode:damageMode,
+        hasSection:hasSection,
+        plan:plan,
+        planDirect:planDirect,
+        conditionKey:conditionKey,
+        recognizesDirect:recognizesDirect,
+        stripDirect:stripDirect,
+        commit:commit,
+        restore:restore,
+        applyCondition:applyCondition,
+        removeCondition:removeCondition,
+        migrateLifecycleConditions:migrateLifecycleConditions,
+        snapshot:snapshot,
+        equals:equals,
+        tooltipLines:tooltipLines,
+        describePlan:describePlan,
+        groupKey:groupKey,
+        tickGroup:tickGroup,
+        conditionImmunitiesForToken:sheetConditionImmunities,
+        damageMultiplierForToken:damageMultiplierForToken,
+        modifiersForToken:modifiersForToken,
+        modifierTooltipParts:modifierTooltipParts,
+        saveModifierForToken:saveModifierForToken,
+        checkModifierForToken:checkModifierForToken,
+        rollModifierFormula:rollModifierFormula,
+        rollModifiers:rollModifierRows,
+        conditionalProfile:условныйПрофиль,
+        conditionalAttackRule:условноеПравилоАтаки,
+        hitPayloadProfiles:разобратьHitPayloads,
+        hitPayloadsForAttack:hitPayloadsForAttack,
+        commitHitPayloads:commitHitPayloads,
+        hasPayloadSustain:hasPayloadSustain,
+        evaluateConditional:проверитьУсловныеСвязи,
+        handleConditionalEvent:обработатьУсловноеСобытие,
+        tempHpOwner:временныеХитыВладелец,
+        setTempHpOwner:установитьВладельцаВременныхХитов,
+        movementPenaltyForToken:slowingForToken,
+        sanctuaryForToken:sanctuaryForToken,
+        descriptionHasDebuff:descriptionHasDebuff,
+        planHasDebuff:planHasDebuff,
+        removeByConcentration:removeByConcentration,
+        removeByScope:removeByScope,
+        applyPassive:applyPassive,
+        validatePassive:validatePassive,
+        removePassiveByScopeToken:removePassiveByScopeToken,
+        removeNonPassiveByScopeToken:removeNonPassiveByScopeToken,
+        conditionKey:conditionKey,
+        remapScope:function(oldId,newId){Object.keys(root().tokens).forEach(function(tid){var rec=root().tokens[tid];Object.keys(rec.effects||{}).forEach(function(k){var e=rec.effects[k];if(e.source&&e.source.phaseScope===oldId)e.source.phaseScope=newId;});});},
+        polarity:polarity,
+        _test:{recoveryMode:recoveryMode,releaseRestrained:releaseRestrained,syncRestrainedAction:syncRestrainedAction,parseEffect:parseEffect,modifierSpec:modifierSpec,recognizesDirect:recognizesDirect,conditionalProfile:условныйПрофиль,hitPayloadProfiles:разобратьHitPayloads,hitPayloadsForAttack:hitPayloadsForAttack,commitHitPayloads:commitHitPayloads,conditionalAttackRule:условноеПравилоАтаки,handleConditionalEvent:обработатьУсловноеСобытие,conditionalTurnGroupEvent:условноеСобытиеГруппы,whileCondition:условиеПокаИстинно,rollModifierFormula:rollModifierFormula,rollModifiers:rollModifierRows,passivePlan:passivePlan,recoverySpec:recoverySpec,recoverySaveBonus:recoverySaveBonus,beginGroup:beginGroup,endGroup:endGroup,playerRecovery:playerRecovery,slowedSpec:slowedSpec,sanctuarySpec:sanctuarySpec,sanctuaryForToken:sanctuaryForToken,descriptionHasDebuff:descriptionHasDebuff,markerValues:markerValues,baseWalkingSpeed:baseWalkingSpeed,customMarkerTag:customMarkerTag,modifierSummaryState:modifierSummaryState,modifierSlot:modifierSlot,activeModifierEntries:activeModifierEntries,migrateModifierStacking:migrateModifierStacking,syncMarkers:syncMarkers}
+    };
+}());
+}
