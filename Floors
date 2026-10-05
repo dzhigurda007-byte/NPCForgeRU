@@ -1,0 +1,436 @@
+/* Installation guard: disable old unguarded versions before installing. */
+if(typeof AD5Floors!=='undefined'&&AD5Floors) {
+    log('AD5Floors: duplicate module skipped; keep one installed copy.');
+} else {
+/*
+ * AD5 Floors 1.2.6 — многоэтажные карты на одной Roll20 Page.
+ *
+ * Архитектура:
+ * - каждый этаж = одна или несколько скрытых Path/PathV2-зон на GM Layer;
+ * - переход = пара объектов-порталов на разных этажах;
+ * - игрок сам двигает свой токен на портал и автоматически переносится к парному;
+ * - переход не тратит движение, не провоцирует АОО/МУВ/ВХОД-ВЫХОД по гигантскому
+ *   маршруту между физически разнесёнными частями карты и не наносит ложный урон падения;
+ * - bar4 после перехода синхронизируется через AD5 Environment;
+ * - прямые AD5-эффекты, реакции/дистанции и Areas логически изолированы по этажам
+ *   при установленных совместимых версиях AD5/Areas/Movement/Environment.
+ * - 1.2.0: endpoint может быть настоящим Graphic/Token даже с Represents; после связывания
+ *   оба конца принудительно находятся на слое map (задний план), а боевые токены на objects
+ *   телепортируются при входе центром в геометрию portal-token.
+ * - 1.2.1: создание token-порталов больше НЕ требует заранее зарегистрированных этажей.
+ *   Если этажи есть, endpoint автоматически запоминает floorKey; если их нет, портал работает
+ *   как обычный двусторонний телепорт. Перевод на map атомарный и проверяемый.
+ * - 1.2.2: смена слоя endpoint сохраняет его точную трансформацию (позицию/размер/поворот/масштаб),
+ *   затем вызывает toFront(), поэтому portal-token остаётся на месте и находится поверх остальных объектов слоя MAP.
+ *   !ad5floor repair восстанавливает слой и floorKey без сдвига portal-token.
+ * - 1.2.3: синхронизация высоты этажей затрагивает только реальные боевые токены
+ *   с Represents на Objects. MAP/GM/decorative/portal tokens сохраняют собственные bar3/bar4 при repair/restart.
+ *
+ * Рекомендуемые совместимые версии:
+ *   AD5 4.3.67+
+ *   AD5 Areas 2.23.5+
+ *   AD5 Movement 2.3.3+
+ *   AD5 Environment 1.6.1+
+ *   AD5 Height 1.4.8+
+ *
+ * Настройка:
+ * 1) Нарисуйте отдельный Path/PathV2, охватывающий каждый этаж, выделите его и:
+ *      !ad5floor floor add Этаж1 0
+ *      !ad5floor floor add Этаж2 15
+ *    Можно выделить несколько зон одного этажа одновременно.
+ * 2) Поставьте по одному небольшому рисунку/path/непривязанному токену на каждом конце лестницы/портала,
+ *    выделите ОБА объекта и:
+ *      !ad5floor portal add
+ *    Имя вводить не нужно: связка получает автоматические ID P0001, P0001-A, P0001-B.
+ *    Если физически удалить любой конец портала, второй конец удаляется автоматически.
+ * 3) Игрок входит токеном в портал. Переход автоматический. Резервная Token Action:
+ *      !ad5floor use
+ *
+ * Визуальная изоляция этажей выполняется штатным Dynamic Lighting: части карты должны
+ * быть физически разнесены на Page и закрыты стенами/зонами света. API не может дать
+ * одному игроку отдельный слой Objects, поэтому Floors отвечает за механику, а DL — за зрение.
+ */
+var AD5Floors=(function(){
+    'use strict';
+    var VERSION='1.2.6',SCRIPT='AD5 Floors',teleporting=Object.create(null),pending=Object.create(null),portalLayerGuard=Object.create(null),patched=false,originals={};
+
+    function root(){
+        if(!state.AD5Floors||typeof state.AD5Floors!=='object')state.AD5Floors={};
+        var r=state.AD5Floors;r.version=VERSION;
+        r.floors=r.floors&&typeof r.floors==='object'?r.floors:{};
+        r.portals=r.portals&&typeof r.portals==='object'?r.portals:{};
+        r.tokenFloor=r.tokenFloor&&typeof r.tokenFloor==='object'?r.tokenFloor:{};
+        r.portalLatch=r.portalLatch&&typeof r.portalLatch==='object'?r.portalLatch:{};
+        r.sequence=Number(r.sequence)||0;
+        // 1.1.0 migration: old name-keyed portals remain valid, but every pair gets
+        // a stable internal pair ID plus endpoint IDs. No manual portal name is required.
+        var maxSeq=r.sequence;
+        Object.keys(r.portals).forEach(function(k){var p=r.portals[k];if(!p)return;var m=/^P(\d+)$/i.exec(String(p.uid||''));if(m)maxSeq=Math.max(maxSeq,Number(m[1])||0);});
+        r.sequence=maxSeq;
+        Object.keys(r.portals).forEach(function(k){
+            var p=r.portals[k];if(!p)return;
+            if(!p.uid){r.sequence++;p.uid=portalUid(r.sequence);}
+            if(!p.name)p.name='Переход '+p.uid;
+            p.page=String(p.page||String(k).split('::')[0]||'');
+            p.ends=Array.isArray(p.ends)?p.ends:[];
+            p.ends.forEach(function(ep,i){if(!ep)return;ep.portalId=p.uid;ep.endId=ep.endId||(p.uid+'-'+(i===0?'A':'B'));ep.portalLayer='map';});
+        });
+        return r;
+    }
+    function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+    function norm(s){try{if(typeof AD5Syntax!=='undefined'&&AD5Syntax&&typeof AD5Syntax.normalize==='function')return AD5Syntax.normalize(s);}catch(ignore){}return String(s==null?'':s).replace(/&nbsp;|&#160;/gi,' ').replace(/[‐‑‒–—―]/g,'-').replace(/\s+/g,' ').trim().toLocaleLowerCase('ru-RU').replace(/ё/g,'е');}
+    function number(v){var n=Number(String(v==null?'':v).replace(',','.'));return Number.isFinite(n)?n:NaN;}
+    function portalUid(n){var s=String(Math.max(0,Number(n)||0));while(s.length<4)s='0'+s;return 'P'+s;}
+    function pageIdOf(o){return String(o&&o.get&&(o.get('_pageid')||o.get('pageid'))||'');}
+    function objectType(o){return String(o&&o.get&&(o.get('_type')||o.get('type'))||'').toLowerCase();}
+    function isToken(o){return !!(o&&o.get&&objectType(o)==='graphic'&&(o.get('_subtype')==='token'||o.get('subtype')==='token')&&!o.get('isdrawing'));}
+    function isTerrainCombatToken(o){return !!(isToken(o)&&String(o.get('layer')||'')==='objects'&&String(o.get('represents')||'').trim());}
+    function isRegionObject(o){var t=objectType(o);return !!o&&(t==='path'||t==='pathv2');}
+    function isPortalObject(o){
+        var t=objectType(o);if(!o)return false;
+        // 1.2.0: portal endpoints may be ordinary Graphics/Drawings OR real Roll20
+        // token objects, including Graphics with Represents filled in. Once linked,
+        // an endpoint is excluded from combat-token handling by its portal endpoint ID.
+        return t==='graphic'||t==='path'||t==='pathv2';
+    }
+    function portalTransformSnapshot(o){
+        if(!o||!o.get)return null;
+        var ty=objectType(o),snap={type:ty};
+        if(ty==='pathv2'){
+            snap.x=Number(o.get('x'));snap.y=Number(o.get('y'));
+            snap.width=Number(o.get('width'));snap.height=Number(o.get('height'));
+            snap.rotation=Number(o.get('rotation'));snap.scaleX=Number(o.get('scaleX'));snap.scaleY=Number(o.get('scaleY'));
+        }else{
+            snap.left=Number(o.get('left'));snap.top=Number(o.get('top'));
+            snap.width=Number(o.get('width'));snap.height=Number(o.get('height'));
+            snap.rotation=Number(o.get('rotation'));snap.scaleX=Number(o.get('scaleX'));snap.scaleY=Number(o.get('scaleY'));
+        }
+        return snap;
+    }
+    function restorePortalTransform(o,snap){
+        if(!o||!o.set||!snap)return false;var props={};
+        function put(k,v){if(Number.isFinite(v))props[k]=v;}
+        if(snap.type==='pathv2'){put('x',snap.x);put('y',snap.y);}else{put('left',snap.left);put('top',snap.top);}
+        put('width',snap.width);put('height',snap.height);put('rotation',snap.rotation);put('scaleX',snap.scaleX);put('scaleY',snap.scaleY);
+        if(Object.keys(props).length)o.set(props);return true;
+    }
+    function movePortalObjectToMapFront(o,requireRegistered){
+        if(!o||!o.get)return false;
+        if(requireRegistered!==false&&!isPortalEndpointObjectId(o.id))return false;
+        var id=String(o.id||''),snap=portalTransformSnapshot(o);
+        if(id&&portalLayerGuard[id])return String(o.get('layer')||'')==='map';
+        if(id)portalLayerGuard[id]=true;
+        try{
+            // Roll20 can alter a Graphic's transform when it crosses layers. Snapshot
+            // BEFORE changing layer, then restore the exact world position/size.
+            if(String(o.get('layer')||'')!=='map')o.set({layer:'map'});
+            restorePortalTransform(o,snap);
+            // Portal markers must be visible above the battle-map artwork while still
+            // remaining on the MAP layer (never on Objects).
+            try{if(typeof toFront==='function')toFront(o);}catch(ignoreFront){}
+            // Reassert once after z-order change as a guard against Roll20 clients/builds
+            // that normalize a token transform while changing layer/z-order.
+            restorePortalTransform(o,snap);
+            return String(o.get('layer')||'')==='map';
+        }catch(ignoreLayer){return false;}
+        finally{if(id)setTimeout(function(){delete portalLayerGuard[id];},0);}
+    }
+    // Backward-compatible alias for integrations/tests written against 1.2.0/1.2.1.
+    function movePortalObjectToBackground(o,requireRegistered){return movePortalObjectToMapFront(o,requireRegistered);}
+    function enforcePortalLayer(o){return movePortalObjectToMapFront(o,true);}
+    function enforceAllPortalLayers(){
+        var n=0;portalEndpoints().forEach(function(x){var o=endpointObject(x.end);if(o&&enforcePortalLayer(o))n++;});return n;
+    }
+    function playerPageId(){return String(Campaign().get('playerpageid')||'');}
+    function floorKey(page,id){return String(page||'')+'::'+norm(id||'');}
+    function floorByKey(key){return root().floors[String(key||'')]||null;}
+    function floorsOnPage(page){page=String(page||'');return Object.keys(root().floors).map(function(k){return root().floors[k];}).filter(function(f){return f&&f.page===page;});}
+    function floorById(page,id){return floorByKey(floorKey(page,id));}
+    function hasFloors(page){return floorsOnPage(page).length>0;}
+
+    function objectByRef(ref){
+        if(!ref)return null;var id=String(ref.id||ref._id||ref.objectId||''),hint=String(ref.type||ref._type||'').toLowerCase(),o=null;
+        if(hint)try{o=getObj(hint,id);}catch(ignore){}
+        if(o)return o;
+        ['graphic','path','pathv2'].some(function(t){try{o=getObj(t,id);}catch(ignore2){o=null;}return !!o;});return o;
+    }
+    function selectedObjects(msg){
+        var seen={},out=[];(msg.selected||[]).forEach(function(ref){var o=objectByRef(ref);if(o&&!seen[o.id]){seen[o.id]=true;out.push(o);}});return out;
+    }
+    function scaleOf(o,name){var n=Number(o&&o.get&&o.get(name));return Number.isFinite(n)&&Math.abs(n)>1e-9?Math.abs(n):1;}
+    function objLeft(o){return Number(objectType(o)==='pathv2'?o.get('x'):o.get('left'))||0;}
+    function objTop(o){return Number(objectType(o)==='pathv2'?o.get('y'):o.get('top'))||0;}
+    function rawPathPoints(o){
+        var ty=objectType(o),raw=[],out=[];try{raw=JSON.parse(ty==='pathv2'?(o.get('points')||'[]'):(o.get('_path')||'[]'))||[];}catch(ignore){raw=[];}
+        raw.forEach(function(pt){if(!Array.isArray(pt)||pt.length<2)return;if(typeof pt[0]==='number'&&typeof pt[1]==='number'){out.push([Number(pt[0]),Number(pt[1])]);return;}var nums=pt.slice(1).map(Number).filter(Number.isFinite);if(nums.length>=2)out.push([nums[nums.length-2],nums[nums.length-1]]);});
+        return out.filter(function(pt){return Number.isFinite(pt[0])&&Number.isFinite(pt[1]);});
+    }
+    function objDims(o){
+        var ty=objectType(o),sx=scaleOf(o,'scaleX'),sy=scaleOf(o,'scaleY'),w=Number(o.get('width')),h=Number(o.get('height'));
+        if(ty!=='pathv2')return {w:Math.max(1,(Number.isFinite(w)&&w>0?w:70)*sx),h:Math.max(1,(Number.isFinite(h)&&h>0?h:70)*sy)};
+        if(Number.isFinite(w)&&w>0&&Number.isFinite(h)&&h>0)return {w:Math.max(1,w*sx),h:Math.max(1,h*sy)};
+        var pts=rawPathPoints(o),minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;pts.forEach(function(pt){minX=Math.min(minX,pt[0]);minY=Math.min(minY,pt[1]);maxX=Math.max(maxX,pt[0]);maxY=Math.max(maxY,pt[1]);});
+        return Number.isFinite(minX)?{w:Math.max(1,(maxX-minX)*sx),h:Math.max(1,(maxY-minY)*sy)}:{w:70*sx,h:70*sy};
+    }
+    function objectShape(o){
+        var t=objectType(o);if(t==='graphic')return 'square';if(t==='path'){var pp=rawPathPoints(o);return pp.length>=3?'polygon':'square';}
+        if(t==='pathv2'){var s=norm(o.get('shape')||'');if(s==='eli'||s==='ellipse'||s==='circle')return 'circle';if(s==='rec'||s==='rect'||s==='rectangle')return 'square';return rawPathPoints(o).length>=3?'polygon':'square';}
+        return 'square';
+    }
+    function geomInfo(o){var d=objDims(o);return {cx:objLeft(o),cy:objTop(o),hw:d.w/2,hh:d.h/2,w:d.w,h:d.h,rot:(Number(o.get('rotation'))||0)*Math.PI/180,shape:objectShape(o)};}
+    function localPoint(info,x,y){var dx=Number(x)-info.cx,dy=Number(y)-info.cy,c=Math.cos(-info.rot),s=Math.sin(-info.rot);return {x:dx*c-dy*s,y:dx*s+dy*c};}
+    function polygonLocalPoints(o){
+        var pts=rawPathPoints(o);if(pts.length<3)return [];var minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;pts.forEach(function(pt){minX=Math.min(minX,pt[0]);minY=Math.min(minY,pt[1]);maxX=Math.max(maxX,pt[0]);maxY=Math.max(maxY,pt[1]);});
+        var d=objDims(o),bw=Math.max(1e-6,maxX-minX),bh=Math.max(1e-6,maxY-minY),cx=(minX+maxX)/2,cy=(minY+maxY)/2;return pts.map(function(pt){return {x:(pt[0]-cx)*d.w/bw,y:(pt[1]-cy)*d.h/bh};});
+    }
+    function pointInPolygon(p,poly){var inside=false;for(var i=0,j=poly.length-1;i<poly.length;j=i++){var a=poly[i],b=poly[j],hit=((a.y>p.y)!==(b.y>p.y))&&(p.x<(b.x-a.x)*(p.y-a.y)/((b.y-a.y)||1e-12)+a.x);if(hit)inside=!inside;}return inside;}
+    function containsObjectPoint(o,x,y){
+        if(!o)return false;var g=geomInfo(o),p=localPoint(g,x,y);if(g.shape==='circle'){var nx=p.x/Math.max(.5,g.hw),ny=p.y/Math.max(.5,g.hh);return nx*nx+ny*ny<=1.0001;}if(g.shape==='polygon'){var poly=polygonLocalPoints(o);return poly.length>=3?pointInPolygon(p,poly):false;}return Math.abs(p.x)<=g.hw+.01&&Math.abs(p.y)<=g.hh+.01;
+    }
+    function objectArea(o){var d=objDims(o);return d.w*d.h;}
+    function endpointObject(ep){return ep&&objectByRef(ep);}
+
+    function floorAtPoint(page,x,y,preferredKey){
+        page=String(page||'');var hits=[];floorsOnPage(page).forEach(function(f){(f.regions||[]).forEach(function(ref){var o=objectByRef(ref);if(o&&containsObjectPoint(o,x,y))hits.push({floor:f,score:objectArea(o)});});});
+        if(!hits.length)return null;if(preferredKey){var preferred=hits.filter(function(h){return h.floor.key===preferredKey;})[0];if(preferred)return preferred.floor;}
+        hits.sort(function(a,b){return a.score-b.score;});return hits[0].floor;
+    }
+    function floorIdAt(page,x,y){var f=floorAtPoint(page,x,y,null);return f?f.id:'';}
+    function floorKeyAt(page,x,y,preferred){var f=floorAtPoint(page,x,y,preferred);return f?f.key:'';}
+    function floorRecordOf(token){
+        if(!isToken(token))return null;var page=pageIdOf(token),r=root(),remembered=String(r.tokenFloor[token.id]||''),f=floorAtPoint(page,Number(token.get('left'))||0,Number(token.get('top'))||0,remembered);
+        if(f){r.tokenFloor[token.id]=f.key;return f;}
+        var old=floorByKey(remembered);return old&&old.page===page?old:null;
+    }
+    function floorOf(tokenOrId){var t=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId,f=floorRecordOf(t);return f?f.id:'';}
+    function sameFloor(aOrId,bOrId){
+        var a=typeof aOrId==='string'?getObj('graphic',aOrId):aOrId,b=typeof bOrId==='string'?getObj('graphic',bOrId):bOrId;if(!isToken(a)||!isToken(b))return true;if(pageIdOf(a)!==pageIdOf(b))return false;
+        var page=pageIdOf(a);if(!hasFloors(page))return true;var fa=floorRecordOf(a),fb=floorRecordOf(b);if(!fa&&!fb)return true;return !!(fa&&fb&&fa.key===fb.key);
+    }
+    function floorForArea(a,path){
+        if(!a)return null;var page=String(a.page||(path&&pageIdOf(path))||'');
+        if(a.kind==='aura'&&a.anchor){var anchor=getObj('graphic',String(a.anchor));if(anchor)return floorRecordOf(anchor);}
+        if(a.floorId){var byId=floorById(page,a.floorId);if(byId)return byId;}
+        if(a.source&&!a.coverageFrozen){var source=getObj('graphic',String(a.source));var sf=source&&floorRecordOf(source);if(sf)return sf;}
+        if(path)return floorAtPoint(page,objLeft(path),objTop(path),null);return null;
+    }
+    function areaAllowsToken(a,path,token){
+        if(!isToken(token))return true;var page=pageIdOf(token);if(!hasFloors(page))return true;var af=floorForArea(a,path),tf=floorRecordOf(token);if(!af&&!tf)return true;return !!(af&&tf&&af.key===tf.key);
+    }
+    function isTeleporting(tokenId){return !!teleporting[String(tokenId||'')];}
+
+    function shapeForEnvironment(o){var s=objectShape(o);return s==='circle'?'circle':s==='polygon'?'polygon':'square';}
+    function unregisterRegionEnvironment(ref){
+        if(!ref||!ref.envRegistered)return;try{if(typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.unregisterExternalArea==='function')AD5Environment.unregisterExternalArea(ref.id);}catch(ignore){}ref.envRegistered=false;
+    }
+    function syncFloorEnvironment(floor){
+        if(!floor)return false;var available=typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.registerExternalArea==='function';
+        (floor.regions||[]).forEach(function(ref){var o=objectByRef(ref);if(!o)return;try{o.set('layer','gmlayer');}catch(ignoreLayer){}
+            if(Math.abs(Number(floor.base)||0)<.001){unregisterRegionEnvironment(ref);return;}
+            if(!available)return;
+            try{AD5Environment.registerExternalArea(o,Number(floor.base),'phys',{shape:shapeForEnvironment(o),name:'Этаж '+floor.id+' · пол '+floor.base+' фт',source:'AD5 Floors',external:true});ref.envRegistered=true;}catch(e){gm('<b>Этаж '+esc(floor.id)+':</b> Environment: '+esc(e.message||e));}
+        });return true;
+    }
+    function syncAllEnvironment(){floorsOnPage(playerPageId()).forEach(syncFloorEnvironment);}
+    function syncTokenTerrain(token){try{if(typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.syncSupport==='function')AD5Environment.syncSupport(token);}catch(e){gm('Синхронизация bar4: '+esc(e.message||e));}}
+    function syncTokensForFloor(floor){
+        if(!floor)return 0;var n=0;findObjs({_type:'graphic',_subtype:'token',_pageid:floor.page}).filter(function(t){return isTerrainCombatToken(t)&&!isPortalEndpointObjectId(t.id);}).forEach(function(t){var f=floorAtPoint(floor.page,Number(t.get('left'))||0,Number(t.get('top'))||0,root().tokenFloor[t.id]);if(f&&f.key===floor.key){setTokenFloor(t,f);syncTokenTerrain(t);n++;}});return n;
+    }
+
+    function portalEndpoints(){var out=[];Object.keys(root().portals).forEach(function(k){var p=root().portals[k];if(!p)return;(p.ends||[]).forEach(function(ep,i){out.push({key:k,portal:p,end:ep,index:i});});});return out;}
+    function portalByEndpointObjectId(id){var found=null;portalEndpoints().some(function(x){if(x.end&&String(x.end.id)===String(id)){found=x;return true;}return false;});return found;}
+    function isPortalEndpointObjectId(id){return !!portalByEndpointObjectId(id);}
+    function nextPortalUid(){var r=root(),uid,key;do{r.sequence++;uid=portalUid(r.sequence);key=uid.toLowerCase();}while(Object.keys(r.portals).some(function(k){var p=r.portals[k];return p&&String(p.uid||'').toLowerCase()===key;}));return uid;}
+    function clearPortalLatchesForEnds(ends){var ids={};(ends||[]).forEach(function(ep){if(ep&&ep.id)ids[String(ep.id)]=true;});var r=root();Object.keys(r.portalLatch||{}).forEach(function(tid){if(ids[String(r.portalLatch[tid]||'')])delete r.portalLatch[tid];});}
+    function removePortalRecord(key,deleteObjects,reason){
+        var r=root(),p=r.portals[key];if(!p)return false;var ends=(p.ends||[]).slice(),uid=String(p.uid||p.name||key);delete r.portals[key];clearPortalLatchesForEnds(ends);
+        if(deleteObjects){ends.forEach(function(ep){var o=endpointObject(ep);if(o)try{o.remove();}catch(ignoreRemove){}});}
+        if(reason)gm('<b>'+esc(uid)+'</b>: '+esc(reason)+(deleteObjects?' Оба связанных объекта удалены.':''));
+        return true;
+    }
+    function portalEndpointAtToken(token){
+        if(!isToken(token))return null;var f=floorRecordOf(token),x=Number(token.get('left'))||0,y=Number(token.get('top'))||0,hits=[];
+        portalEndpoints().forEach(function(xp){var o=endpointObject(xp.end);if(!o||pageIdOf(o)!==pageIdOf(token)||!containsObjectPoint(o,x,y))return;var ef=floorAtPoint(pageIdOf(o),objLeft(o),objTop(o),null);if(f&&ef&&f.key!==ef.key)return;hits.push({portal:xp.portal,end:xp.end,index:xp.index,obj:o,score:objectArea(o),floor:ef});});
+        hits.sort(function(a,b){return a.score-b.score;});return hits[0]||null;
+    }
+    function endpointByObjectId(id){return portalByEndpointObjectId(id);}
+    function clearLatchIfLeft(token){var r=root(),latch=String(r.portalLatch&&r.portalLatch[token.id]||'');if(!latch)return;if(!r.portalLatch)r.portalLatch={};var ep=endpointByObjectId(latch),o=ep&&endpointObject(ep.end);if(!o||!containsObjectPoint(o,Number(token.get('left'))||0,Number(token.get('top'))||0))delete r.portalLatch[token.id];}
+    function setTokenFloor(token,floor){if(token&&floor)root().tokenFloor[token.id]=floor.key;}
+    function teleport(token,hit,reason){
+        if(!isToken(token)||!hit||!hit.portal)return false;var p=hit.portal,destIndex=hit.index===0?1:0,dest=p.ends&&p.ends[destIndex],destObj=endpointObject(dest);if(!destObj)throw new Error('Парный портал удалён.');
+        var r=root(),destFloor=floorAtPoint(pageIdOf(destObj),objLeft(destObj),objTop(destObj),dest&&dest.floorKey||null);
+        // Keep endpoint floor metadata fresh when zones were created after the portal.
+        if(dest)dest.floorKey=destFloor?destFloor.key:'';
+        r.portalLatch=r.portalLatch&&typeof r.portalLatch==='object'?r.portalLatch:{};teleporting[token.id]=true;r.portalLatch[token.id]=dest.id;
+        if(destFloor)setTokenFloor(token,destFloor);else delete r.tokenFloor[token.id];
+        var props={left:objLeft(destObj),top:objTop(destObj),lastmove:''};
+        try{
+            if(typeof AD5Movement!=='undefined'&&AD5Movement&&typeof AD5Movement.withSuppressed==='function')AD5Movement.withSuppressed(token.id,function(){token.set(props);});
+            else token.set(props);
+        }catch(e){delete teleporting[token.id];throw e;}
+        setTimeout(function(){var live=getObj('graphic',token.id);if(live){if(destFloor)setTokenFloor(live,destFloor);else delete root().tokenFloor[live.id];syncTokenTerrain(live);try{if(typeof AD5Movement!=='undefined'&&AD5Movement&&typeof AD5Movement.refreshToken==='function')AD5Movement.refreshToken(live);}catch(ignoreMoveRefresh){}}},0);
+        setTimeout(function(){delete teleporting[token.id];},150);
+        whisperControllers(token,'Переход: <b>'+esc(p.name)+'</b>'+(destFloor?' → этаж <b>'+esc(destFloor.id)+'</b>':' → связанный портал')+'.');
+        return true;
+    }
+    function usePortal(token,reason){
+        if(!isToken(token)||isTeleporting(token.id))return false;clearLatchIfLeft(token);var r=root(),latch=String(r.portalLatch&&r.portalLatch[token.id]||''),hit=portalEndpointAtToken(token);if(!hit)return false;if(latch&&latch===hit.end.id)return false;return teleport(token,hit,reason||'portal');
+    }
+
+    function tokenControllers(token){var ids=String(token.get('controlledby')||'').split(',').filter(Boolean),c=token.get('represents')&&getObj('character',token.get('represents'));if(c)String(c.get('controlledby')||'').split(',').filter(Boolean).forEach(function(id){if(ids.indexOf(id)<0)ids.push(id);});return ids;}
+    function canControl(token,pid){if(playerIsGM(pid))return true;return tokenControllers(token).some(function(x){return x==='all'||x===pid;});}
+    function whisperControllers(token,text){var ids=tokenControllers(token).filter(function(x){return x!=='all'&&getObj('player',x);});if(!ids.length)return;ids.forEach(function(id){var pl=getObj('player',id),name=String(pl&&(pl.get('_displayname')||pl.get('displayname'))||'').replace(/"/g,'');if(name)sendChat(SCRIPT,'/w "'+name+'" '+text,null,{noarchive:true});});}
+    function gm(text){sendChat(SCRIPT,'/w gm '+text,null,{noarchive:true});}
+
+    function addFloor(msg,id,base){
+        if(!playerIsGM(msg.playerid))throw new Error('Создавать этажи может только GM.');id=String(id||'').trim();if(!id)throw new Error('Укажите ID этажа.');base=number(base);if(!Number.isFinite(base))throw new Error('Высота пола должна быть числом.');var objs=selectedObjects(msg).filter(isRegionObject);if(!objs.length)throw new Error('Выделите Path/PathV2, который охватывает этаж.');
+        var page=pageIdOf(objs[0]);if(objs.some(function(o){return pageIdOf(o)!==page;}))throw new Error('Все зоны этажа должны быть на одной Page.');var key=floorKey(page,id),r=root(),floor=r.floors[key];
+        if(!floor)floor=r.floors[key]={key:key,id:id,page:page,base:base,regions:[],created:Date.now()};
+        if(Number(floor.base)!==base)(floor.regions||[]).forEach(unregisterRegionEnvironment);floor.base=base;floor.id=id;
+        var existing={};floor.regions.forEach(function(x){existing[x.id]=true;});objs.forEach(function(o){if(!existing[o.id])floor.regions.push({id:o.id,type:objectType(o),envRegistered:false});try{o.set('layer','gmlayer');}catch(ignore){}});syncFloorEnvironment(floor);var synced=syncTokensForFloor(floor);
+        gm('<b>Этаж '+esc(id)+'</b> зарегистрирован: зон '+floor.regions.length+', базовая высота <b>'+base+' фт</b>. Токенов синхронизировано: '+synced+'.');return floor;
+    }
+    function removeFloor(msg,id){
+        if(!playerIsGM(msg.playerid))throw new Error('Только GM.');var page=playerPageId(),floor=floorById(page,id);if(!floor)throw new Error('Этаж не найден на активной Page.');(floor.regions||[]).forEach(unregisterRegionEnvironment);delete root().floors[floor.key];
+        Object.keys(root().portals).slice().forEach(function(k){var p=root().portals[k];if(!p)return;var touches=(p.ends||[]).some(function(ep){return ep&&ep.floorKey===floor.key;});if(touches)removePortalRecord(k,true,null);});
+        Object.keys(root().tokenFloor).forEach(function(tid){if(root().tokenFloor[tid]===floor.key)delete root().tokenFloor[tid];});gm('Этаж <b>'+esc(floor.id)+'</b> удалён из AD5 Floors. Контрольные Path не удалены.');
+    }
+    function addPortal(msg,label){
+        if(!playerIsGM(msg.playerid))throw new Error('Создавать порталы может только GM.');
+        var selected=selectedObjects(msg),objs=selected.filter(isPortalObject);
+        if(objs.length!==2)throw new Error('Выделите ровно ДВА Graphic/Token/Path. Выбрано объектов: '+selected.length+', пригодных концов портала: '+objs.length+'.');
+        if(pageIdOf(objs[0])!==pageIdOf(objs[1]))throw new Error('Оба конца перехода должны быть на одной Page.');
+        var existing=objs.map(function(o){return portalByEndpointObjectId(o.id);}).filter(Boolean);if(existing.length)throw new Error('Один из выбранных объектов уже связан с порталом '+String(existing[0].portal.uid||existing[0].portal.name||'')+'. Сначала удалите старую связку.');
+        // Floors are OPTIONAL for endpoint creation. When floor zones exist, keep the
+        // logical floor binding; otherwise the pair is still a fully working 2-D portal.
+        var floors=objs.map(function(o){return floorAtPoint(pageIdOf(o),objLeft(o),objTop(o),null);});
+        var uid=nextPortalUid(),page=pageIdOf(objs[0]),key=page+'::portal::'+uid.toLowerCase(),name=String(label||'').trim()||('Переход '+uid),p={id:uid,uid:uid,name:name,page:page,ends:objs.map(function(o,i){return {id:o.id,type:objectType(o),floorKey:floors[i]?floors[i].key:'',portalId:uid,endId:uid+'-'+(i===0?'A':'B'),portalLayer:'map'};}),created:Date.now()};
+        root().portals[key]=p;
+        // Move both endpoint objects immediately. If Roll20 rejects either layer change,
+        // rollback the pair instead of reporting a portal that cannot actually work.
+        var moved=objs.map(function(o){return movePortalObjectToMapFront(o,false);});
+        if(!moved[0]||!moved[1]){delete root().portals[key];throw new Error('Roll20 не перевёл один из концов портала на слой map. Связка отменена; проверьте, что выбраны именно Graphic/Token/Path на обычной Page.');}
+        var leftLabel=floors[0]?floors[0].id:'без этажа',rightLabel=floors[1]?floors[1].id:'без этажа';
+        gm('<b>'+esc(uid)+'</b>: '+esc(leftLabel)+' ↔ '+esc(rightLabel)+'. ID концов: <b>'+esc(uid+'-A')+'</b> / <b>'+esc(uid+'-B')+'</b>. Оба endpoint находятся на <b>map</b>, сохраняют исходные координаты и подняты на передний план слоя MAP; боевой токен переносится при входе на их геометрию.');return p;
+    }
+    function removePortal(msg,ref){
+        if(!playerIsGM(msg.playerid))throw new Error('Только GM.');var selected=selectedObjects(msg).filter(isPortalObject),keys=[];
+        selected.forEach(function(o){var x=portalByEndpointObjectId(o.id);if(x&&keys.indexOf(x.key)<0)keys.push(x.key);});
+        if(!keys.length&&String(ref||'').trim()){
+            var wanted=norm(ref),page=playerPageId();Object.keys(root().portals).forEach(function(k){var p=root().portals[k];if(!p||p.page!==page)return;if(norm(p.uid)===wanted||norm(p.name)===wanted||norm(k)===wanted)keys.push(k);});
+        }
+        if(!keys.length)throw new Error('Выделите любой конец портала. Для совместимости также можно указать его ID.');
+        keys.forEach(function(k){removePortalRecord(k,true,'связка удалена командой.');});
+    }
+
+    function fullCover(label){return {tier:'full',label:label||'полное укрытие · другой этаж',ratio:1,percent:100,acBonus:0,dexBonus:0,full:true,solid:true,solidFraction:1,areas:[{id:'ad5-floor-boundary',name:'Другой этаж',height:Infinity,type:'floor',ratio:1,full:true}],samples:[]};}
+    function firstFloorExitFraction(page,startFloor,x0,y0,x1,y1){
+        if(!startFloor)return 1;var steps=96,prev=0;for(var i=1;i<=steps;i++){var t=i/steps,x=x0+(x1-x0)*t,y=y0+(y1-y0)*t,f=floorAtPoint(page,x,y,startFloor.key);if(!f||f.key!==startFloor.key){var lo=prev,hi=t;for(var n=0;n<20;n++){var m=(lo+hi)/2,mf=floorAtPoint(page,x0+(x1-x0)*m,y0+(y1-y0)*m,startFloor.key);if(mf&&mf.key===startFloor.key)lo=m;else hi=m;}return Math.max(0,Math.min(1,hi));}prev=t;}return 1;
+    }
+    function installPatches(){
+        if(patched)return true;var did=false;
+        try{
+            if(typeof AD5Environment!=='undefined'&&AD5Environment){
+                if(typeof AD5Environment.coverBetween==='function'){originals.coverBetween=AD5Environment.coverBetween;AD5Environment.coverBetween=function(a,b){if(isToken(a)&&isToken(b)&&!sameFloor(a,b))return fullCover();return originals.coverBetween.apply(this,arguments);};did=true;}
+                if(typeof AD5Environment.coverBetweenPoint==='function'){originals.coverBetweenPoint=AD5Environment.coverBetweenPoint;AD5Environment.coverBetweenPoint=function(page,sx,sy,sz,target){var tf=isToken(target)?floorRecordOf(target):null,sf=floorAtPoint(String(page||''),Number(sx)||0,Number(sy)||0,null);if(hasFloors(String(page||''))&&((sf||tf)&&!(sf&&tf&&sf.key===tf.key)))return fullCover();return originals.coverBetweenPoint.apply(this,arguments);};did=true;}
+                if(typeof AD5Environment.coverProfileFromPoint==='function'){originals.coverProfileFromPoint=AD5Environment.coverProfileFromPoint;AD5Environment.coverProfileFromPoint=function(page,sx,sy,sz,target){var tf=isToken(target)?floorRecordOf(target):null,sf=floorAtPoint(String(page||''),Number(sx)||0,Number(sy)||0,null);if(hasFloors(String(page||''))&&((sf||tf)&&!(sf&&tf&&sf.key===tf.key)))return fullCover();return originals.coverProfileFromPoint.apply(this,arguments);};did=true;}
+                if(typeof AD5Environment.areaExposure==='function'){originals.areaExposure=AD5Environment.areaExposure;AD5Environment.areaExposure=function(origin,target){origin=origin||{};var page=String(origin.pageId||origin.page||(target&&pageIdOf(target))||''),sf=floorAtPoint(page,Number(origin.left)||0,Number(origin.top)||0,null),tf=isToken(target)?floorRecordOf(target):null;if(hasFloors(page)&&((sf||tf)&&!(sf&&tf&&sf.key===tf.key))){var c=fullCover();return {blocked:true,cover:c,dexAdvantage:false,blockers:c.areas,reason:'другой этаж',propagation:{blocked:true,fraction:0,area:{id:'ad5-floor-boundary',name:'Другой этаж',type:'floor'}}};}return originals.areaExposure.apply(this,arguments);};did=true;}
+                if(typeof AD5Environment.propagationLimit==='function'){originals.propagationLimit=AD5Environment.propagationLimit;AD5Environment.propagationLimit=function(page,sx,sy,tx,ty){var base=originals.propagationLimit.apply(this,arguments),sf=floorAtPoint(String(page||''),Number(sx)||0,Number(sy)||0,null);if(!sf)return base;var ef=floorAtPoint(String(page||''),Number(tx)||0,Number(ty)||0,sf.key);if(ef&&ef.key===sf.key)return base;var ff=firstFloorExitFraction(String(page||''),sf,Number(sx)||0,Number(sy)||0,Number(tx)||0,Number(ty)||0);if(ff>=.9999)return base;var bf=base&&Number.isFinite(Number(base.fraction))?Number(base.fraction):1;if(bf<=ff)return base;return {blocked:true,fraction:ff,area:{id:'ad5-floor-boundary',name:'Граница этажа '+sf.id,height:Infinity,type:'floor',area:null}};};did=true;}
+                if(typeof AD5Environment.attackVisibility==='function'){originals.attackVisibility=AD5Environment.attackVisibility;AD5Environment.attackVisibility=function(a,b){if(isToken(a)&&isToken(b)&&!sameFloor(a,b))return {blocked:true,disadvantage:false,reasons:['другой этаж'],areas:[{id:'ad5-floor-boundary',name:'Другой этаж',type:'floor'}],distance:Infinity};return originals.attackVisibility.apply(this,arguments);};did=true;}
+            }
+        }catch(e){gm('Патч Environment: '+esc(e.message||e));}
+        try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.horizontalFeet==='function'){originals.heightHorizontal=AD5Height.horizontalFeet;AD5Height.horizontalFeet=function(a,b){if(isToken(a)&&isToken(b)&&!sameFloor(a,b))return Infinity;return originals.heightHorizontal.apply(this,arguments);};did=true;}}catch(e2){gm('Патч Height: '+esc(e2.message||e2));}
+        try{if(typeof AD5Movement!=='undefined'&&AD5Movement&&typeof AD5Movement.rangeFeet==='function'){originals.movementRange=AD5Movement.rangeFeet;AD5Movement.rangeFeet=function(a,b){if(isToken(a)&&isToken(b)&&!sameFloor(a,b))return Infinity;return originals.movementRange.apply(this,arguments);};did=true;}}catch(e3){gm('Патч Movement range: '+esc(e3.message||e3));}
+        try{if(typeof AD5!=='undefined'&&AD5&&AD5.conditionRules&&typeof AD5.conditionRules.rangeFeet==='function'){originals.conditionRange=AD5.conditionRules.rangeFeet;AD5.conditionRules.rangeFeet=function(a,b){if(isToken(a)&&isToken(b)&&!sameFloor(a,b))return Infinity;return originals.conditionRange.apply(this,arguments);};did=true;}}catch(e4){gm('Патч AD5 range: '+esc(e4.message||e4));}
+        patched=did;return did;
+    }
+
+    function status(msg){
+        var page=playerPageId(),floors=floorsOnPage(page),portals=Object.keys(root().portals).map(function(k){return root().portals[k];}).filter(function(p){return p&&p.page===page;}),lines=['<b>AD5 Floors '+VERSION+'</b>'];
+        lines.push('<b>Этажи:</b> '+(floors.length?floors.map(function(f){return esc(f.id)+' · base '+f.base+' фт · зон '+(f.regions||[]).length;}).join('<br>'):'нет'));
+        lines.push('<b>Переходы:</b> '+(portals.length?portals.map(function(p){var names=(p.ends||[]).map(function(ep){var o=endpointObject(ep),f=o&&floorAtPoint(pageIdOf(o),objLeft(o),objTop(o),null);return f?f.id:'?';});return '<b>'+esc(p.uid||p.id||'?')+'</b> · '+esc(names.join(' ↔ '))+' · '+esc((p.ends||[]).map(function(ep){var o=endpointObject(ep);return o?String(o.get('layer')||'?'):'удалён';}).join('/'));}).join('<br>'):'нет'));
+        var tokens=selectedObjects(msg).filter(isToken);if(tokens.length)lines.push('<b>Выбранные:</b><br>'+tokens.map(function(t){var f=floorRecordOf(t);return esc(t.get('name')||t.id)+' → '+esc(f?f.id:'вне этажей');}).join('<br>'));
+        lines.push('Связки: AD5 '+(typeof AD5!=='undefined'?esc(AD5.version):'нет')+' · Areas '+(typeof AD5Areas!=='undefined'?esc(AD5Areas.version):'нет')+' · Movement '+(typeof AD5Movement!=='undefined'?esc(AD5Movement.version):'нет')+' · Environment '+(typeof AD5Environment!=='undefined'?esc(AD5Environment.version):'нет')+' · Height '+(typeof AD5Height!=='undefined'?esc(AD5Height.version):'нет')+'.');gm(lines.join('<br>'));
+    }
+    function repair(){
+        installPatches();var r=root();enforceAllPortalLayers();
+        // Re-detect endpoint floors. This also upgrades portals created before floor
+        // regions existed and keeps moved/edited endpoints consistent.
+        portalEndpoints().forEach(function(x){var o=endpointObject(x.end);if(!o)return;var f=floorAtPoint(pageIdOf(o),objLeft(o),objTop(o),x.end&&x.end.floorKey||null);if(x.end)x.end.floorKey=f?f.key:'';});
+        floorsOnPage(playerPageId()).forEach(syncFloorEnvironment);
+        findObjs({_type:'graphic',_subtype:'token',_pageid:playerPageId()}).filter(function(t){return isTerrainCombatToken(t)&&!isPortalEndpointObjectId(t.id);}).forEach(function(t){var f=floorAtPoint(pageIdOf(t),Number(t.get('left'))||0,Number(t.get('top'))||0,root().tokenFloor[t.id]);if(f)setTokenFloor(t,f);syncTokenTerrain(t);});return true;
+    }
+
+    function ensureMacros(){
+        try{findObjs({_type:'player'}).forEach(function(pl){var gmPlayer=playerIsGM(pl.id),defs=gmPlayer?[
+            {name:'ЭТАЖ — Зона',action:'!ad5floor floor add ?{ID этажа|1} ?{Высота пола, фт|0}',token:false},
+            {name:'ЭТАЖ — Создать/обновить',action:'!ad5floor floor add ?{ID этажа|1} ?{Базовая высота пола, фт|0}',token:false},
+            {name:'ЭТАЖ — Удалить',action:'!ad5floor floor remove ?{ID этажа|1}',token:false},
+            {name:'ПОРТАЛ — Связать 2 токена',action:'!ad5floor portal add',token:false},
+            {name:'ПОРТАЛ — Удалить связку',action:'!ad5floor portal remove',token:false},
+            {name:'ПОРТАЛ — Удалить',action:'!ad5floor portal remove',token:false},
+            {name:'ЭТАЖ — Статус',action:'!ad5floor status',token:false},
+            {name:'ЭТАЖ — Repair',action:'!ad5floor repair',token:false},
+            {name:'ЭТАЖ — Ping',action:'!ad5floor ping',token:false},
+            {name:Array(21).join('\u200b')+'ПЕРЕЙТИ ЭТАЖ',plain:'ПЕРЕЙТИ ЭТАЖ',action:'!ad5floor use',token:true}
+        ]:[{name:Array(21).join('\u200b')+'ПЕРЕЙТИ ЭТАЖ',plain:'ПЕРЕЙТИ ЭТАЖ',action:'!ad5floor use',token:true}];
+        defs.forEach(function(def){var owned=findObjs({_type:'macro'}).filter(function(m){return String(m.get('_playerid')||m.get('playerid')||'')===String(pl.id)&&(String(m.get('action')||'').trim()===def.action||String(m.get('name')||'').replace(/^\u200b+/,'')===String(def.plain||def.name).replace(/^\u200b+/,''));}),m=owned[0],props={name:def.name,action:def.action,istokenaction:!!def.token,visibleto:''};if(m){var patch={},changed=false;Object.keys(props).forEach(function(k){if(String(m.get(k)==null?'':m.get(k))!==String(props[k]==null?'':props[k])){patch[k]=props[k];changed=true;}});if(changed)m.set(patch);}else createObj('macro',{name:def.name,playerid:pl.id,action:def.action,istokenaction:!!def.token,visibleto:''});owned.slice(1).forEach(function(x){try{x.remove();}catch(ignoreDup){}});});});}catch(e){gm('Макросы Floors: '+esc(e.message||e));}
+    }
+
+    function command(msg){
+        if(msg.type!=='api'||!/^!ad5floor(?:\s|$)/i.test(msg.content))return;var a=msg.content.trim().split(/\s+/),sub=norm(a[1]||'status');
+        try{
+            installPatches();
+            if(sub==='ping'){gm('<b>'+SCRIPT+' '+VERSION+'</b> активен.');return;}
+            if(sub==='status'||sub==='doctor'){status(msg);return;}
+            if(sub==='repair'){if(!playerIsGM(msg.playerid))throw new Error('Только GM.');repair();gm('AD5 Floors: зоны, bar4 и связи модулей пересинхронизированы.');return;}
+            if(sub==='floor'||sub==='этаж'){
+                var op=norm(a[2]||'add');if(op==='add'||op==='set'||op==='создать'){addFloor(msg,a[3],a[4]);return;}if(op==='remove'||op==='delete'||op==='удалить'){removeFloor(msg,a[3]);return;}throw new Error('Формат: !ad5floor floor add ID BASE или floor remove ID');
+            }
+            if(sub==='portal'||sub==='портал'){
+                var pop=norm(a[2]||'add'),legacyLabel=a.slice(3).join(' ');if(pop==='add'||pop==='link'||pop==='создать'){addPortal(msg,legacyLabel);return;}if(pop==='remove'||pop==='delete'||pop==='удалить'){removePortal(msg,legacyLabel);return;}throw new Error('Формат: !ad5floor portal add (2 выделенных объекта) или portal remove (любой выделенный конец)');
+            }
+            if(sub==='use'||sub==='перейти'){
+                var tokens=selectedObjects(msg).filter(function(o){return isToken(o)&&!isPortalEndpointObjectId(o.id);});if(!tokens.length)throw new Error('Выделите токен персонажа/NPC.');var moved=0;tokens.forEach(function(t){if(!canControl(t,msg.playerid))throw new Error('Нет управления токеном '+String(t.get('name')||t.id)+'.');if(usePortal(t,'manual'))moved++;});if(!moved)throw new Error('Центр выбранного токена должен находиться внутри зарегистрированного портала.');return;
+            }
+            throw new Error('Команды: floor add/remove, portal add/remove, use, status, repair, ping.');
+        }catch(e){sendChat(SCRIPT,'/w "'+String(msg.who||'gm').replace(/"/g,'')+'" <b>'+SCRIPT+'</b>: '+esc(e.message||e),null,{noarchive:true});}
+    }
+
+    function tokenMoved(token,prev){
+        try{
+            if(!isToken(token)||isPortalEndpointObjectId(token.id)||isTeleporting(token.id))return;var bx=Number(prev&&prev.left),by=Number(prev&&prev.top),nx=Number(token.get('left')),ny=Number(token.get('top'));if(!Number.isFinite(bx)||!Number.isFinite(by)||!Number.isFinite(nx)||!Number.isFinite(ny)||Math.abs(bx-nx)<.01&&Math.abs(by-ny)<.01)return;
+            var f=floorAtPoint(pageIdOf(token),nx,ny,root().tokenFloor[token.id]);if(f)setTokenFloor(token,f);clearLatchIfLeft(token);if(pending[token.id])return;var hit=portalEndpointAtToken(token),latch=String(root().portalLatch&&root().portalLatch[token.id]||'');if(!hit||(latch&&latch===hit.end.id))return;
+            pending[token.id]=true;setTimeout(function(){delete pending[token.id];var live=getObj('graphic',token.id);if(live&&!isTeleporting(live.id))try{usePortal(live,'auto');}catch(e){gm('<b>Переход:</b> '+esc(e.message||e));}},0);
+        }catch(e){gm('<b>Автопереход:</b> '+esc(e.message||e));}
+    }
+    function destroyed(o){
+        var r=root(),portalHit=portalByEndpointObjectId(o&&o.id),partner=null,portalUid='';
+        // Delete the portal record first. When partner.remove() emits its own destroy
+        // event, no portal record remains, so the cascade cannot recurse forever.
+        if(portalHit){
+            portalUid=String(portalHit.portal.uid||portalHit.portal.name||'портал');
+            var other=(portalHit.portal.ends||[]).filter(function(ep){return ep&&String(ep.id)!==String(o.id);})[0];partner=endpointObject(other);
+            removePortalRecord(portalHit.key,false,null);
+        }
+        Object.keys(r.floors).forEach(function(k){var f=r.floors[k];if(!f)return;f.regions=(f.regions||[]).filter(function(x){return x.id!==o.id;});});delete r.tokenFloor[o.id];if(r.portalLatch)delete r.portalLatch[o.id];delete teleporting[o.id];delete pending[o.id];delete portalLayerGuard[o.id];
+        if(partner){try{partner.remove();gm('<b>'+esc(portalUid)+'</b>: один конец был физически удалён — парный объект удалён автоматически, связка очищена.');}catch(e){gm('<b>'+esc(portalUid)+'</b>: связка очищена, но парный объект удалить не удалось: '+esc(e.message||e));}}
+    }
+
+    function portalObjectChanged(o){
+        try{
+            var hit=o&&portalByEndpointObjectId(o.id);if(!hit)return;
+            enforcePortalLayer(o);
+            var f=floorAtPoint(pageIdOf(o),objLeft(o),objTop(o),hit.end&&hit.end.floorKey||null);if(hit.end)hit.end.floorKey=f?f.key:'';
+        }catch(e){gm('<b>Портал:</b> не удалось синхронизировать конец: '+esc(e.message||e));}
+    }
+    on('change:graphic',tokenMoved);
+    on('change:graphic',portalObjectChanged);on('change:path',portalObjectChanged);on('change:pathv2',portalObjectChanged);
+    on('destroy:graphic',destroyed);on('destroy:path',destroyed);on('destroy:pathv2',destroyed);
+    on('chat:message',command);
+    on('ready',function(){root();ensureMacros();setTimeout(function(){installPatches();repair();},700);gm('<b>'+SCRIPT+' '+VERSION+'</b> запущен. Игроки могут переходить между этажами входом в парные порталы. Настройка: выделить Path этажа → <code>!ad5floor floor add ID BASE</code>; выделить два объекта портала → <code>!ad5floor portal add</code>. ID пары назначается автоматически; концы портала всегда находятся на слое map и на переднем плане этого слоя, при смене слоя их координаты сохраняются; удаление одного конца физически удаляет второй. Repair/этажи больше не трогают bar3/bar4 декоративных и MAP-токенов.');});
+
+    return {version:VERSION,isTeleporting:isTeleporting,isPortalEndpoint:isPortalEndpointObjectId,floorOf:floorOf,floorIdAt:floorIdAt,sameFloor:sameFloor,areaAllowsToken:areaAllowsToken,usePortal:usePortal,repair:repair,status:status,installPatches:installPatches,
+        _test:{containsObjectPoint:containsObjectPoint,objDims:objDims,objectShape:objectShape,pointInPolygon:pointInPolygon,floorAtPoint:floorAtPoint,floorForArea:floorForArea,firstFloorExitFraction:firstFloorExitFraction,portalEndpointAtToken:portalEndpointAtToken,portalByEndpointObjectId:portalByEndpointObjectId,isPortalEndpointObjectId:isPortalEndpointObjectId,isPortalObject:isPortalObject,enforcePortalLayer:enforcePortalLayer,enforceAllPortalLayers:enforceAllPortalLayers,movePortalObjectToMapFront:movePortalObjectToMapFront,movePortalObjectToBackground:movePortalObjectToBackground,portalTransformSnapshot:portalTransformSnapshot,restorePortalTransform:restorePortalTransform,isTerrainCombatToken:isTerrainCombatToken}};
+}());
+}
