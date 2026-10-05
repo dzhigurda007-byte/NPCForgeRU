@@ -1,0 +1,283 @@
+/* Installation guard: disable old unguarded versions before installing. */
+if(typeof AD5Phases!=='undefined'&&AD5Phases) {
+    log('AD5Phases: duplicate module skipped; keep one installed copy.');
+} else {
+/* AD5 Phases 1.1.4 — КАСТ, НАЧК/НАЧИ, НАЧТ, КНЦИ, КНЦТ, ОКОН, ОСВОБ, ВХОД, ВЫХОД, ОБЛН, ОБЛК, ПАСС, МУВ.
+ * 1.1.2: explicit НАЧТ overrides legacy «Каждый ход»; НАЧК is the preferred
+ * caster/source-start label, while НАЧИ remains a backwards-compatible alias.
+ * 1.1.4: МУВ is included in has(); a move-only phase now enters the phase/persistent-area pipeline correctly.
+ * Requires AD5 4.3.6+, Areas 2.16.0+, Effect Turns 1.2.0+.
+ * И = source turn, Т = affected target turn. ОСВОБ is a voluntary action check.
+ */
+var AD5Phases=(function(){
+    'use strict';
+    var VERSION='1.1.4',seq=0,ending={},boundaryQueues={};
+    var labels={cast:'КАСТ',sourceStart:'НАЧК',turn:'НАЧТ',sourceEnd:'КНЦИ',targetEnd:'КНЦТ',end:'ОКОН',entry:'ВХОД',exit:'ВЫХОД',areaStart:'ОБЛН',areaEnd:'ОБЛК',passive:'ПАСС',move:'МУВ',recovery:'ОСВОБ'};
+    function copy(x){return x==null?x:JSON.parse(JSON.stringify(x));}
+    function text(s){
+        return String(s||'').replace(/&#(x[0-9a-f]+|[0-9]+);/gi,function(all,n){
+            var code=n.charAt(0).toLowerCase()==='x'?parseInt(n.slice(1),16):Number(n);
+            return code>0&&code<=65535?String.fromCharCode(code):all;
+        }).replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&nbsp;/gi,' ')
+          .replace(/<br\s*\/?\s*>|<\/(?:p|div|li)>/gi,' ').replace(/<[^>]*>/g,' ')
+          .replace(/&amp;/gi,'&').replace(/[\u200b-\u200d\ufeff]/g,'').replace(/\s+/g,' ').trim();
+    }
+    function norm(s){return text(s).toLowerCase().replace(/ё/g,'е');}
+    function root(){state.AD5Phases=state.AD5Phases||{instances:{},sequence:0};return state.AD5Phases;}
+    function key(){return 'fx:'+Date.now().toString(36)+':'+(++root().sequence);}
+    function trim(s){return String(s||'').replace(/^[\s,;.]+|[\s,;.]+$/g,'');}
+    function branch(body){
+        var out={refs:[],extra:[],effects:[],multiplier:1},seen={};
+        trim(body).split(/[,;]/).map(trim).filter(Boolean).forEach(function(item){
+            var m=/^урон\s*(\d{1,3})$/i.exec(item);
+            if(m){var n=Number(m[1]);if(!n)throw new Error('Нумерация УронN начинается с 1.');if(!seen[n]){out.refs.push(n);seen[n]=true;}return;}
+            if(/^(нет эффекта|нет урона|без урона)$/i.test(item)){out.multiplier=0;return;}
+            if(/^(половина урона|half damage)$/i.test(item)){out.multiplier=0.5;return;}
+            if(/^(полный урон|full damage)$/i.test(item))return;
+            m=/^((?:\d*\s*[dдк]\s*\d+|\d+)(?:\s*[+\-]\s*\d+)?)\s+(.+)$/i.exec(item);
+            if(m){
+                var type=AD5.phaseBridge.effectType(m[2]);
+                if(type){out.extra.push({expression:m[1].replace(/[дк]/gi,'d'),type:type});return;}
+            }
+            if(out.effects.indexOf(item)<0)out.effects.push(item);
+        });
+        return out;
+    }
+    function phase(body){
+        var condition=null,m=/^\s*ЕСЛИ\s+([^:]+):\s*/i.exec(body);
+        if(m){condition=trim(m[1]);body=body.slice(m[0].length);}
+        var marks=[],re=/(^|[\s,;])(?:УСП|ПРВ)\s*[:：]?\s*/ig;
+        while((m=re.exec(body)))marks.push({kind:/УСП/i.test(m[0])?'success':'failure',start:m.index,end:re.lastIndex});
+        var p={v2:true,raw:body,condition:condition,branches:null,refs:[],description:''};
+        if(marks.length){
+            if(trim(body.slice(0,marks[0].start)))throw new Error('Перед УСП/ПРВ внутри фазы не должно быть неразмеченных эффектов.');
+            var groups={success:[],failure:[]};
+            marks.forEach(function(x,i){groups[x.kind].push(body.slice(x.end,i+1<marks.length?marks[i+1].start:body.length));});
+            p.branches={success:branch(groups.success.join(',')),failure:branch(groups.failure.join(','))};
+        }else p.direct=branch(body);
+        [p.direct,p.branches&&p.branches.success,p.branches&&p.branches.failure].filter(Boolean).forEach(function(b){b.refs.forEach(function(n){if(p.refs.indexOf(n)<0)p.refs.push(n);});});
+        return p;
+    }
+    function parse(description){
+        var s=text(description),marks=[],m,
+            re=/(^|[\s,;.])(КАСТ|НАЧК|НАЧИ|НАЧТ|КНЦИ|КНЦТ|КОНИ|КОНТ|ОКОН|ОСВОБ|ВХОД|ВЫХОД|ОБЛН|ОБЛК|ПАСС|При\s+входе|Каждый\s+ход|МУВ)\s*[:：—–-]\s*/ig;
+        var names={'вход':'entry','выход':'exit','облн':'areaStart','облк':'areaEnd','пасс':'passive','каст':'cast',
+            'начк':'sourceStart','начи':'sourceStart','начт':'turn','кнци':'sourceEnd','кони':'sourceEnd','кнцт':'targetEnd','конт':'targetEnd','окон':'end','освоб':'recovery',
+            'при входе':'entry','каждый ход':'turn','мув':'move'};
+        while((m=re.exec(s))){
+            var rawName=norm(m[2]),kind=names[rawName];
+            marks.push({
+                kind:kind,start:m.index,end:re.lastIndex,rawName:rawName,
+                legacyTurn:rawName==='каждый ход',
+                legacySourceStart:rawName==='начи'
+            });
+        }
+        var out={cast:null,entry:null,exit:null,areaStart:null,areaEnd:null,passive:null,turn:null,sourceStart:null,sourceEnd:null,targetEnd:null,end:null,move:null,recovery:null,persistent:false,source:s,phased:marks.length>0};
+        var meta={};
+        marks.forEach(function(x,i){
+            var body=trim(s.slice(x.end,i+1<marks.length?marks[i+1].start:s.length));
+
+            // New explicit phase syntax has priority over the legacy aliases.
+            // «Каждый ход» == legacy НАЧТ. If an explicit НАЧТ exists anywhere
+            // in the same description, ignore «Каждый ход» instead of treating
+            // it as a duplicate declaration. Likewise НАЧК supersedes old НАЧИ.
+            if(x.legacyTurn && marks.some(function(y){return y.kind==='turn'&&!y.legacyTurn;}))return;
+            if(x.legacySourceStart && marks.some(function(y){return y.kind==='sourceStart'&&!y.legacySourceStart;}))return;
+            if(out[x.kind]){
+                // If a preferred form comes after a legacy alias, replace it.
+                if(x.kind==='turn'&&!x.legacyTurn&&meta.turn&&meta.turn.legacyTurn){out.turn=null;}
+                else if(x.kind==='sourceStart'&&!x.legacySourceStart&&meta.sourceStart&&meta.sourceStart.legacySourceStart){out.sourceStart=null;}
+                else throw new Error('Фаза '+labels[x.kind]+' указана дважды.');
+            }
+            if(x.kind==='move'){
+                var b=branch(body);if(b.extra.length===1&&!b.refs.length&&!b.effects.length)out.move={formula:b.extra[0].expression,damageType:b.extra[0].type,raw:body};
+                else if(/^[0-9dдк+*\/().\s-]+$/i.test(body))out.move={formula:body.replace(/[кд]/gi,'d'),raw:body};
+                else throw new Error('МУВ: ожидается формула, например 1д4 колющий.');
+            }else if(x.kind==='recovery'){
+                var rm=/^(.+?)\s*[,;]\s*ПРОВЕРКА\s+(?:(СИЛ|ЛОВ|ТЕЛ|ИНТ|МДР|ХАР)\s*(\d{1,2})|(\d{1,2})\s*(СИЛ|ЛОВ|ТЕЛ|ИНТ|МДР|ХАР))\s*[,;]\s*(.*)$/i.exec(body);
+                if(!rm)throw new Error('ОСВОБ: опутан, ПРОВЕРКА СИЛ19, ПРВ: 1д6 колющий');
+                var abilities={'сил':'strength','лов':'dexterity','тел':'constitution','инт':'intelligence','мдр':'wisdom','хар':'charisma'},short=(rm[2]||rm[5]).toUpperCase(),dc=Number(rm[3]||rm[4]);
+                if(dc<1)throw new Error('Сложность ОСВОБ должна быть от 1 до 99.');
+                out.recovery={condition:norm(rm[1]),ability:abilities[short.toLowerCase()],short:short,dc:dc,check:true,action:true,attempted:false,phase:phase(rm[6])};
+            }else out[x.kind]=phase(body);
+            meta[x.kind]=x;
+        });
+        out.persistent=!!(out.entry||out.exit||out.areaStart||out.areaEnd||out.passive||out.turn||out.sourceStart||out.sourceEnd||out.targetEnd||out.end||out.move||out.recovery);
+        return out;
+    }
+    function has(description){return /(?:^|[\s,;.])(?:КАСТ|НАЧК|НАЧИ|НАЧТ|КНЦИ|КНЦТ|КОНИ|КОНТ|ОКОН|ОСВОБ|ВХОД|ВЫХОД|ОБЛН|ОБЛК|ПАСС|МУВ|При\s+входе|Каждый\s+ход)\s*[:：—–-]/i.test(text(description));}
+    function validate(snapshot,rules){
+        Object.keys(labels).forEach(function(k){
+            var p=k==='recovery'?(rules.recovery&&rules.recovery.phase):rules[k];if(!p||!p.v2)return;
+            (p.refs||[]).forEach(function(n){if(!snapshot.components[String(n)])throw new Error(labels[k]+': нет Урон'+n+' в карточке.');});
+            if(p.branches&&k!=='recovery'&&!snapshot.save)throw new Error(labels[k]+': УСП/ПРВ требуют настроенный спасбросок способности.');
+        });
+        if(rules.passive){
+            var pass=rules.passive,branchRule=pass.direct;
+            if(pass.branches)throw new Error('ПАСС не использует УСП/ПРВ: это постоянный эффект нахождения в области.');
+            if(!branchRule)throw new Error('ПАСС: укажите хотя бы один пассивный модификатор.');
+            if((branchRule.refs||[]).length||(branchRule.extra||[]).length)
+                throw new Error('ПАСС не наносит урон. Используйте модификаторы, например «ПАСС: +2 КД, +2 Атака, +2 Урон».');
+            if(!(branchRule.effects||[]).length)throw new Error('ПАСС: укажите хотя бы один пассивный модификатор.');
+        }
+    }
+    function conditionPresent(tokenId,label,scope){
+        if(typeof AD5EffectTurns==='undefined'||!AD5EffectTurns||typeof AD5EffectTurns.snapshot!=='function')return false;
+        var rec=AD5EffectTurns.snapshot(tokenId),key=AD5EffectTurns.conditionKey(label);
+        if(!key||!rec||!rec.effects)return false;
+        scope=String(scope||'');
+        return Object.keys(rec.effects).some(function(k){
+            var e=rec.effects[k],src=e&&e.source;
+            // ЕСЛИ in an area lifecycle is deliberately scope-local: an
+            // unrelated manual/restrained marker must not activate thorn damage.
+            return !!(e&&e.condition===key&&(!scope||(src&&String(src.phaseScope||'')===scope)));
+        });
+    }
+    function mayRun(p,tokenId,scope){return !p.condition||conditionPresent(tokenId,p.condition,scope);}
+    function isActive(scope){return !scope||!!root().instances[scope]||!!(state.AD5Areas&&state.AD5Areas.persistent&&state.AD5Areas.persistent[scope]);}
+    function run(snapshot,p,tokenId,label,scope,rules,context){
+        if(!p||!mayRun(p,tokenId,scope))return;
+        context=copy(context)||{};context.phaseScope=scope||null;context.phaseRecovery=rules&&rules.recovery||null;
+        context.areaResolutionId=context.areaResolutionId||key()+':'+tokenId;
+        return AD5.area.trigger(snapshot,p,tokenId,label,context);
+    }
+    function drainBoundary(tokenId){
+        var queue=boundaryQueues[tokenId];if(!queue||queue.busy)return;
+        while(queue.items.length){
+            var item=queue.items[0];
+            if(!isActive(item.scope)||!getObj('graphic',tokenId)||!mayRun(item.phase,tokenId,item.scope)){queue.items.shift();continue;}
+            queue.busy=true;queue.ticket=item.context.areaResolutionId;
+            // Saving throws and NPC resistance reads may finish later. Serialize
+            // all area phases on this token, including cast and turn events.
+            var ticket=queue.ticket;
+            queue.watchdog=setTimeout(function(){
+                var live=boundaryQueues[tokenId];
+                if(live&&live.ticket===ticket){
+                    delete boundaryQueues[tokenId];
+                    sendChat('AD5 Phases','/w gm Последующие фазы области отменены: предыдущее срабатывание не завершилось за 3 минуты.');
+                }
+            },180000);
+            try{
+                var dispatched=run(item.snapshot,item.phase,tokenId,item.label,item.scope,item.rules,item.context);
+                if(dispatched===false||dispatched===undefined){clearTimeout(queue.watchdog);queue.items.shift();queue.busy=false;queue.ticket=null;continue;}
+            }
+            catch(e){clearTimeout(queue.watchdog);queue.items.shift();queue.busy=false;queue.ticket=null;sendChat('AD5 Phases','/w gm '+String(e.message).replace(/[<>]/g,''));continue;}
+            return;
+        }
+        delete boundaryQueues[tokenId];
+    }
+    function enqueueBoundary(snapshot,phase,tokenId,label,scope,rules,context){
+        var queue=boundaryQueues[tokenId]||(boundaryQueues[tokenId]={items:[],busy:false});
+        context=copy(context)||{};context.areaResolutionId=context.areaResolutionId||key()+':boundary:'+tokenId;
+        queue.items.push({snapshot:copy(snapshot),phase:copy(phase),label:label,scope:scope,rules:copy(rules),context:context});
+        drainBoundary(tokenId);
+    }
+    function boundaryApplied(p,token){
+        var queue=boundaryQueues[token.id];if(!queue||!queue.busy||queue.ticket!==p.areaResolutionId)return;
+        clearTimeout(queue.watchdog);queue.items.shift();queue.busy=false;queue.ticket=null;
+        setTimeout(function(){drainBoundary(token.id);},0);
+    }
+    function standalone(msg,f,p,snapshot){
+        var rules=parse(f.description||f.desc);validate(snapshot,rules);
+        if(rules.entry||rules.exit||rules.areaStart||rules.areaEnd||rules.passive)throw new Error('ВХОД, ВЫХОД, ОБЛН, ОБЛК и ПАСС требуют область или ауру: укажите форму/размер и «обл»/«обл N», либо «аура N фт» в Дистанции.');
+        var id=key(),rec={id:id,page:getObj('graphic',p.target).get('_pageid'),snapshot:snapshot,rules:rules,targets:[p.target],seen:{},created:Date.now()};
+        // Optional explicit lifecycle for non-area abilities: ЭФФ 3 in Range.
+        var dm=/(?:^|[\s,;.])ЭФФ\s+(\d{1,3})(?=$|[\s,;.])/i.exec(f.range||f.distance||'');
+        rec.remaining=dm?Number(dm[1]):null;
+        rec.castOnly=!rules.persistent&&!snapshot.concentrationId&&!rec.remaining;
+        root().instances[id]=rec;
+        try{
+            if(rules.cast)run(snapshot,rules.cast,p.target,'КАСТ',id,rules,{originalAction:p});
+            else if(p.batch&&AD5.phaseBridge.complete)AD5.phaseBridge.complete(p.batch,p.target,'эффект зарегистрирован');
+        }catch(e){delete root().instances[id];throw e;}
+
+        return id;
+    }
+    function applied(p,token){
+        boundaryApplied(p,token);
+        var rec=p.phaseScope&&root().instances[p.phaseScope];
+        if(rec){rec.seen[token.id]=true;var saved=copy(rec);if(rec.castOnly)delete root().instances[p.phaseScope];return saved;}
+    }
+    function removeScope(scope){
+        if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns.removeByScope)AD5EffectTurns.removeByScope(scope);
+    }
+    function cancelQueuedScope(scope){
+        Object.keys(boundaryQueues).forEach(function(tokenId){
+            var queue=boundaryQueues[tokenId],active=queue.items[0],cancelActive=active&&active.scope===scope;
+            queue.items=queue.items.filter(function(item){return item.scope!==scope;});
+            if(cancelActive){clearTimeout(queue.watchdog);queue.busy=false;queue.ticket=null;}
+            if(!queue.items.length)delete boundaryQueues[tokenId];
+            else if(!queue.busy)setTimeout(function(){drainBoundary(tokenId);},0);
+        });
+    }
+    function endingPhase(scope,snapshot,rules,ids){
+        if(ending[scope])return;ending[scope]=true;
+        cancelQueuedScope(scope);
+        try{
+            ids.forEach(function(id){
+                var token=getObj('graphic',id);if(!token)return;
+                try{run(snapshot,rules.end,id,'ОКОН',scope,rules,{phaseEnding:true});}
+                catch(e){sendChat('AD5 Phases','/w gm ОКОН: '+String(e.message).replace(/[<>]/g,''));}
+            });
+            removeScope(scope);
+        }finally{delete ending[scope];}
+    }
+    function end(id){
+        var rec=root().instances[id];if(!rec)return;
+        delete root().instances[id];
+        endingPhase(id,rec.snapshot,rec.rules,rec.targets);
+    }
+    function endConcentration(id){
+        Object.keys(root().instances).forEach(function(k){var r=root().instances[k];if(r.snapshot.concentrationId===id)end(k);});
+    }
+    function group(token){return token&&typeof AD5EffectTurns!=='undefined'?AD5EffectTurns.groupKey(token):(token&&token.id);}
+    function matches(rec,token){
+        var source=getObj('graphic',rec.snapshot.sourceToken);return source?group(source)===group(token):token&&token.get('represents')===rec.snapshot.actor;
+    }
+    function rows(raw){try{return JSON.parse(raw||'[]');}catch(e){return [];}}
+    function turnChanged(campaign,prev){
+        var page=Campaign().get('playerpageid'),a=rows(Campaign().get('turnorder')),b=rows(prev&&prev.turnorder);
+        if(!a.length||!b.length||String(a[0].id)===String(b[0].id))return;
+        var before=getObj('graphic',b[0].id),after=getObj('graphic',a[0].id);
+        Object.keys(root().instances).forEach(function(id){
+            var r=root().instances[id];if(!r||r.page!==page)return;
+            function dispatch(token,targetPhase,sourcePhase){
+                if(!token||token.get('_pageid')!==page)return;
+                r.targets.slice().forEach(function(tid){
+                    var target=getObj('graphic',tid);if(!target||target.get('_pageid')!==page)return;
+                    if(group(target)===group(token))run(r.snapshot,r.rules[targetPhase],tid,labels[targetPhase],id,r.rules);
+                    if(matches(r,token))run(r.snapshot,r.rules[sourcePhase],tid,labels[sourcePhase],id,r.rules);
+                });
+            }
+            if(before&&after&&group(before)===group(after))return;
+            dispatch(before,'targetEnd','sourceEnd');dispatch(after,'turn','sourceStart');
+            if(root().instances[id]&&after&&matches(r,after)&&r.remaining!==null){r.remaining--;if(r.remaining<=0)end(id);}
+        });
+    }
+    function effectsChanged(token,oldRec,newRec){
+        // If all conditions owned by a targeted instance disappear, its lifecycle ends.
+        Object.keys(root().instances).forEach(function(id){
+            var r=root().instances[id];if(r.targets.indexOf(token.id)<0)return;
+            function owned(rec){return !!(rec&&Object.keys(rec.effects||{}).some(function(k){var e=rec.effects[k];return e.source&&e.source.phaseScope===id;}));}
+            if(owned(oldRec)&&!owned(newRec))setTimeout(function(){var live=root().instances[id];if(live&&!owned(AD5EffectTurns.snapshot(token.id)))end(id);},0);
+        });
+    }
+    on('change:campaign:turnorder',function(c,p){try{turnChanged(c,p);}catch(e){sendChat('AD5 Phases','/w gm '+String(e.message).replace(/[<>]/g,''));}});
+    on('chat:message',function(msg){
+        if(msg.type!=='api'||!/^!ad5phase\s/.test(msg.content))return;
+        try{
+            var a=msg.content.trim().split(/\s+/);
+            if(a[1]==='end'){
+                var r=root().instances[a[2]];if(!r)throw new Error('Эффект не найден.');
+                if(!playerIsGM(msg.playerid)&&r.snapshot.owner!==msg.playerid)throw new Error('Нет прав завершить эффект.');
+                end(a[2]);
+            }else if(a[1]==='status'){
+                var list=Object.keys(root().instances).filter(function(id){return playerIsGM(msg.playerid)||root().instances[id].snapshot.owner===msg.playerid;});
+                var player=getObj('player',msg.playerid);if(player)sendChat('AD5 Phases','/w "'+String(player.get('_displayname')).replace(/["\r\n]/g,'')+'" '+(list.map(function(id){return id+' [Завершить](!ad5phase end '+id+')';}).join('<br>')||'Нет активных эффектов.'));
+            }
+        }catch(e){sendChat('AD5 Phases','/w gm '+String(e.message).replace(/[<>]/g,''));}
+    });
+    on('ready',function(){root();log('AD5 Phases '+VERSION+' ready');});
+    return {version:VERSION,historyChange:function(rec,redo){if(redo&&!rec.castOnly)root().instances[rec.id]=copy(rec);else delete root().instances[rec.id];},parse:parse,has:has,validate:validate,run:run,enqueueBoundary:enqueueBoundary,standalone:standalone,applied:applied,failed:boundaryApplied,isActive:isActive,end:end,endConcentration:endConcentration,endingPhase:endingPhase,effectsChanged:effectsChanged,conditionPresent:conditionPresent,labels:labels,_test:{branch:branch,phase:phase,turnChanged:turnChanged}};
+}());
+}
