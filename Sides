@@ -1,0 +1,247 @@
+/* Installation guard: disable old unguarded versions before installing. */
+if(typeof AD5Sides!=='undefined'&&AD5Sides) {
+    log('AD5Sides: duplicate module skipped; keep one installed copy.');
+} else {
+/* AD5 Sides 1.1.0 — spell target semantics + automatic allegiance.
+ * Player side: player-controlled character/token, or native green marker.
+ * Positive effects: same side. Negative effects: opposite side, plus player
+ * allies bearing 001-karma-on or the GM-only hidden karma flag.
+ * Direct damage remains unchanged. Individual targeted spells remain unchanged.
+ * GM, selected tokens: !ad5-side karma on|off|toggle|status
+ * !ad5-side status / !ad5-side refresh
+ */
+var AD5Sides=(function(){
+    'use strict';
+    var VERSION='1.1.0',markerRaw=null,karmaTags={},refreshPending={},refreshTimer=null;
+    function root(){state.AD5Sides=state.AD5Sides||{};state.AD5Sides.karma=state.AD5Sides.karma||{};return state.AD5Sides;}
+    function esc(s){return String(s).replace(/[&<>"'\r\n]/g,function(c){return '&#'+c.charCodeAt(0)+';';});}
+    function gm(s){sendChat('AD5 стороны','/w gm '+s,null,{noarchive:true});}
+    function copy(x){return JSON.parse(JSON.stringify(x));}
+    function markers(token){return String(token&&token.get('statusmarkers')||'').split(',').map(function(s){return s.replace(/@\d+$/,'').trim();}).filter(Boolean);}
+    function isKarmaMarker(tag){
+        var raw=String(Campaign().get('token_markers')||''),aliases={'001-karma-on':true,'carma':true,'karma':true};
+        if(raw!==markerRaw){
+            markerRaw=raw;karmaTags={};
+            try{
+                JSON.parse(raw||'[]').forEach(function(m){
+                    var name=String(m&&m.name||'').trim().toLowerCase().replace(/ё/g,'е');
+                    var markerTag=String(m&&m.tag||'').trim();
+                    if(aliases[name]&&markerTag)karmaTags[markerTag]=true;
+                });
+            }catch(ignore){}
+        }
+        tag=String(tag||'').trim();
+        return !!karmaTags[tag]||!!aliases[String(tag).split('::')[0].toLowerCase().replace(/ё/g,'е')];
+    }
+    function green(token){return markers(token).indexOf('green')>=0;}
+    function karma(token){return !!(token&&(root().karma[token.id]||markers(token).some(isKarmaMarker)));}
+    function hasPlayer(ids){return String(ids||'').split(',').some(function(id){id=id.trim();return id==='all'||(!!getObj('player',id)&&!playerIsGM(id));});}
+    function originalCharacter(token){
+        if(!token)return null;
+        try{if(typeof AD5Transform!=='undefined'&&AD5Transform.originalActorId)return getObj('character',AD5Transform.originalActorId(token));}catch(ignore){}
+        return null;
+    }
+    function controlled(token){
+        if(!token)return false;
+        var c=getObj('character',token.get('represents')),original=originalCharacter(token);
+        // Roll20 uses character permissions for represented tokens. The original
+        // player character remains authoritative while a temporary form is used.
+        return hasPlayer(c?c.get('controlledby'):token.get('controlledby'))||!!(original&&hasPlayer(original.get('controlledby')));
+    }
+    function side(token){return green(token)||controlled(token)?'players':'npcs';}
+    function sourceToken(source){
+        source=source||{};
+        return getObj('graphic',String(source.sourceToken||source.source||''));
+    }
+    function sourceSide(source){
+        source=source||{};
+        var t=sourceToken(source);
+        if(t)return side(t);
+        var c=getObj('character',source.actor||'');return c&&hasPlayer(c.get('controlledby'))?'players':'npcs';
+    }
+    function targetModeText(value){
+        var text=String(value==null?'':value)
+            .replace(/<br\s*\/?>/gi,' ')
+            .replace(/<[^>]*>/g,' ')
+            .replace(/&nbsp;|&#160;/gi,' ')
+            .replace(/[‐‑‒–—―]/g,'-')
+            .replace(/\s+/g,' ')
+            .trim().toLowerCase().replace(/ё/g,'е');
+        if(!text)return 'default';
+
+        // Explicit creature allegiance wording has priority.
+        if(/(?:союзн[а-я]*|дружественн[а-я]*)\s+существ[а-я]*|союзник[а-я]*|(?:allied|friendly)\s+creatures?/.test(text))return 'allies';
+        if(/враждебн[а-я]*\s+существ[а-я]*|противник[а-я]*|(?:hostile|enemy)\s+creatures?|enemies/.test(text))return 'enemies';
+        if(/кажд[а-я]*\s+существ[а-я]*|все\s+существ[а-я]*|всех\s+существ[а-я]*|(?:each|every|all)\s+creatures?/.test(text))return 'all';
+        return 'default';
+    }
+    function targetModeFor(value){
+        if(typeof value==='string')return targetModeText(value);
+        value=value&&typeof value==='object'?value:{};
+        var explicit=String(value.targetMode||'').toLowerCase();
+        if(['all','allies','enemies'].indexOf(explicit)>=0)return explicit;
+
+        var targetCandidates=[
+            value.target,value.spellTarget,value.targetText,
+            value.f&&value.f.target,
+            value.spellMeta&&value.spellMeta.target
+        ];
+        for(var i=0;i<targetCandidates.length;i++){
+            var mode=targetModeText(targetCandidates[i]);
+            if(mode!=='default')return mode;
+        }
+
+        var descCandidates=[
+            value.description,value.desc,
+            value.f&&value.f.description,value.f&&value.f.desc,
+            value.spellMeta&&value.spellMeta.description
+        ];
+        for(var j=0;j<descCandidates.length;j++){
+            var dmode=targetModeText(descCandidates[j]);
+            if(dmode!=='default')return dmode;
+        }
+        return 'default';
+    }
+    function relation(source,token){
+        if(!token)return 'none';
+        var from=sourceToken(source);
+        if(from&&String(from.id)===String(token.id))return 'self';
+
+        // Carma makes the relationship hostile in both directions.
+        if((from&&karma(from))||karma(token))return 'hostile';
+
+        return sourceSide(source)===side(token)?'ally':'hostile';
+    }
+    function targetAllowed(source,token,mode){
+        if(!token)return false;
+        mode=mode||targetModeFor(source);
+        if(mode==='default'||mode==='all')return true;
+        var rel=relation(source,token);
+        if(mode==='allies')return rel==='ally'||rel==='self';
+        if(mode==='enemies')return rel==='hostile';
+        return true;
+    }
+    function sourceWithTargetMode(source,fields){
+        var out={};source=source&&typeof source==='object'?source:{};
+        Object.keys(source).forEach(function(k){out[k]=source[k];});
+        var mode=targetModeFor(out);
+        if(mode==='default')mode=targetModeFor(fields);
+        out.targetMode=mode;
+        return out;
+    }
+    function allow(source,token,kind){
+        if(!token)return false;
+        var mode=targetModeFor(source);
+        if(mode!=='default')return targetAllowed(source,token,mode);
+        if(kind!=='buff'&&kind!=='debuff')return true;
+        var rel=relation(source,token);
+        return kind==='buff'?(rel==='ally'||rel==='self'):rel==='hostile';
+    }
+    function polarity(item){
+        return typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns.polarity?AD5EffectTurns.polarity(item):'neutral';
+    }
+    function componentKind(type){
+        var t=typeof AD5!=='undefined'&&AD5.phaseBridge?AD5.phaseBridge.effectType(type):String(type||'').toLowerCase();
+        return ['лечение','временное хп','атака'].indexOf(t)>=0?'buff':'neutral';
+    }
+    function filterItems(items,source,token){return (items||[]).filter(function(item){return allow(source,token,polarity(item));});}
+    function isDirective(item){return /^(?:полный урон|половина урона|нет урона|без урона|нет эффекта|full damage|half damage|no damage|no effect)$/i.test(String(item).trim());}
+    function trim(s){return String(s||'').replace(/^[\s,;.]+|[\s,;.]+$/g,'');}
+    function filterText(text,source,token){
+        text=String(text||'');var re=/(^|[\s,;])(?:УСП|ПРВ)\s*[:：—–-]?\s*/ig,m,marks=[],any=false;
+        while((m=re.exec(text)))marks.push({kind:/УСП/i.test(m[0])?'success':'failure',start:m.index,end:re.lastIndex});
+        function body(s){return filterItems(trim(s).split(/[,;]/).map(trim).filter(Boolean),source,token).filter(function(x){if(!isDirective(x))any=true;return true;}).join(', ');}
+        if(!marks.length)return {text:body(text),payload:any};
+        var head=body(text.slice(0,marks[0].start)),out=head?[head]:[];
+        marks.forEach(function(mark,i){
+            var part=body(text.slice(mark.end,i+1<marks.length?marks[i+1].start:text.length));
+            if(!part){var mode=AD5EffectTurns.damageMode(text,mark.kind);part=mode==='half'?'половина урона':mode==='full'?'полный урон':'нет эффекта';}
+            out.push((mark.kind==='success'?'УСП: ':'ПРВ: ')+part);
+        });
+        return {text:out.join(' '),payload:any};
+    }
+    function filterPhase(snapshot,phase,token){
+        var p=copy(phase),mode=targetModeFor(snapshot),any=false;
+        if(mode!=='default')return targetAllowed(snapshot,token,mode)?p:null;
+        function refs(list){return (list||[]).filter(function(i){return allow(snapshot,token,componentKind(snapshot.components&&snapshot.components[String(i)]&&snapshot.components[String(i)].type));});}
+        function branch(b){
+            if(!b)return;
+            b.refs=refs(b.refs);b.extra=(b.extra||[]).filter(function(c){return allow(snapshot,token,componentKind(c.type));});
+            b.effects=filterItems(b.effects,snapshot,token);
+            if(b.multiplier!==0&&(b.refs.length||b.extra.length||b.effects.some(function(x){return !isDirective(x);})))any=true;
+        }
+        if(p.v2){if(p.branches){branch(p.branches.success);branch(p.branches.failure);}else branch(p.direct);}
+        else {p.refs=refs(p.refs);var text=filterText(p.description,snapshot,token);p.description=text.text;any=p.refs.length>0||text.payload;}
+        return any?p:null;
+    }
+    function filterCard(fields,source,token){
+        var f=copy(fields),payload=false;
+        source=sourceWithTargetMode(source,fields);
+        var mode=targetModeFor(source);
+        if(mode!=='default')return {fields:f,payload:targetAllowed(source,token,mode),targetMode:mode};
+        Object.keys(f).forEach(function(k){
+            var m=/^dmg(\d+)$/.exec(k);if(!m||String(f[k]||'').trim()==='')return;
+            if(!allow(source,token,componentKind(f[k+'type']))){delete f[k];delete f[k+'flag'];delete f[k+'type'];delete f['crit'+m[1]];}
+            else payload=true;
+        });
+        var text=filterText(f.description||f.desc||'',source,token);f.description=text.text;f.desc=text.text;
+        return {fields:f,payload:payload||text.payload};
+    }
+    function passiveText(text,source,token){
+        var mode=targetModeFor(source);
+        if(mode!=='default')return targetAllowed(source,token,mode)?String(text||''):'';
+        return filterItems(String(text||'').split(/[,;]/).map(trim).filter(Boolean),source,token).join(', ');
+    }
+    function refresh(token){
+        if(!token)return;refreshPending[token.id]=true;
+        if(refreshTimer)return;
+        refreshTimer=setTimeout(function(){
+            refreshTimer=null;var ids=Object.keys(refreshPending);refreshPending={};
+            if(typeof AD5Areas!=='undefined'&&AD5Areas.reconcileSides)AD5Areas.reconcileSides(ids);
+        },20);
+    }
+    function signature(token){return [side(token),karma(token)?1:0,String(token.get('represents')||'')].join('|');}
+    var observed={};
+    function changed(token,prev){
+        if(!token||token.get('_subtype')!=='token')return;
+        // Ignore HP, tooltip and unrelated status changes. Cache only an observed
+        // signature, never the authorization decision used by filter functions.
+        var next=signature(token),old=observed[token.id];observed[token.id]=next;
+        if(old!==undefined&&next===old)return;
+        if(old===undefined&&prev&&prev.statusmarkers===token.get('statusmarkers')&&prev.controlledby===token.get('controlledby')&&prev.represents===token.get('represents'))return;
+        refresh(token);
+    }
+    function characterChanged(c){
+        findObjs({_type:'graphic',_subtype:'token'}).forEach(function(t){var original=originalCharacter(t);if(t.get('represents')===c.id||(original&&original.id===c.id)){observed[t.id]=signature(t);refresh(t);}});
+    }
+    function setKarma(token,value){
+        if(value)root().karma[token.id]=true;else delete root().karma[token.id];
+        // Explicit GM command converts any visible karma marker into hidden state.
+        var old=String(token.get('statusmarkers')||''),next=old.split(',').filter(function(s){return !isKarmaMarker(s.replace(/@\d+$/,''));}).join(',');
+        if(next!==old)token.set('statusmarkers',next);
+        observed[token.id]=signature(token);refresh(token);
+    }
+    on('chat:message',function(msg){
+        if(msg.type!=='api'||!/^!ad5-side(?:\s|$)/i.test(msg.content)||!playerIsGM(msg.playerid))return;
+        try{
+            var args=msg.content.trim().split(/\s+/),action=String(args[1]||'status').toLowerCase(),mode=String(args[2]||'status').toLowerCase();
+            if(['status','refresh','karma'].indexOf(action)<0||(action==='karma'&&['on','off','toggle','status'].indexOf(mode)<0))throw new Error('Команды: !ad5-side status | refresh | karma on/off/toggle/status');
+            var tokens=[],seen={};(msg.selected||[]).forEach(function(x){var t=getObj('graphic',x._id);if(t&&t.get('_subtype')==='token'&&!seen[t.id]){seen[t.id]=true;tokens.push(t);}});
+            if(action==='refresh'){if(typeof AD5Areas!=='undefined'&&AD5Areas.reconcileSides)AD5Areas.reconcileSides(null);gm('Пассивные эффекты областей пересчитаны.');return;}
+            if(!tokens.length)throw new Error('Выделите токены.');
+            tokens.forEach(function(t){if(action==='karma'&&mode!=='status')setKarma(t,mode==='on'||(mode==='toggle'&&!karma(t)));});
+            gm(tokens.map(function(t){return '<b>'+esc(t.get('name')||t.id)+'</b>: '+(side(t)==='players'?'сторона игроков':'сторона NPC')+'; green '+(green(t)?'да':'нет')+'; карма '+(karma(t)?'ВКЛ':'выкл')+(root().karma[t.id]?' (скрытая)':'');}).join('<br>'));
+        }catch(e){gm(esc(e.message));}
+    });
+    on('change:graphic',changed);on('change:character:controlledby',characterChanged);
+    on('destroy:graphic',function(t){delete root().karma[t.id];delete observed[t.id];});
+    on('ready',function(){
+        root();Object.keys(root().karma).forEach(function(id){if(!getObj('graphic',id))delete root().karma[id];});
+        findObjs({_type:'graphic',_subtype:'token'}).forEach(function(t){observed[t.id]=signature(t);});
+        if(typeof TokenMod!=='undefined'&&TokenMod.ObserveTokenChange)TokenMod.ObserveTokenChange(changed);
+        setTimeout(function(){if(typeof AD5Areas!=='undefined'&&AD5Areas.reconcileSides)AD5Areas.reconcileSides(null);},0);
+        log('AD5 Sides '+VERSION+' ready');
+    });
+    return {version:VERSION,side:side,sourceSide:sourceSide,karma:karma,relation:relation,targetMode:targetModeText,targetModeFor:targetModeFor,targetAllowed:targetAllowed,allow:allow,filterPhase:filterPhase,filterCard:filterCard,passiveText:passiveText,changed:changed};
+}());
+}
