@@ -1,0 +1,622 @@
+/* Installation guard: disable old unguarded versions before installing. */
+if(typeof NPCGroupInitiative!=='undefined'&&NPCGroupInitiative) {
+    log('NPCGroupInitiative: duplicate module skipped; keep one installed copy.');
+} else {
+/*
+ * NPC Group Initiative for Roll20
+ * Version 1.3.2
+ *
+ * Main command:
+ *   !npc-init
+ *
+ * Group rules:
+ * - NPCs are grouped by TOKEN NAME.
+ * - 1–5 tokens in a group:
+ *     (sum of one d20 roll for each NPC / NPC count) + DEX modifier.
+ * - 6+ tokens in a group:
+ *     roll 2d20, take the higher result + DEX modifier.
+ * - Only ONE real representative token is placed into Roll20 Turn Tracker.
+ * - Player-controlled characters/tokens are never rolled automatically.
+ * - Existing player turns on the current Player Page are preserved.
+ *
+ * Roll20 Turn Tracker format intentionally kept minimal:
+ *   { id: TOKEN_ID, pr: "15", custom: "", _pageid: PAGE_ID }
+ */
+
+var NPCGroupInitiative = NPCGroupInitiative || (function () {
+    'use strict';
+
+    var SCRIPT = 'NPC Group Initiative';
+    var VERSION = '1.3.3';
+    var STATE_KEY = 'NPCGroupInitiative';
+
+    function stateData() {
+        if (!state[STATE_KEY]) {
+            state[STATE_KEY] = {
+                version: VERSION,
+                managedTokenIds: [],
+                createdInitiativeAbilityIds: []
+            };
+        }
+        state[STATE_KEY].version = VERSION;
+        if (!Array.isArray(state[STATE_KEY].managedTokenIds)) {
+            state[STATE_KEY].managedTokenIds = [];
+        }
+        if (!Array.isArray(state[STATE_KEY].createdInitiativeAbilityIds)) {
+            state[STATE_KEY].createdInitiativeAbilityIds = [];
+        }
+        return state[STATE_KEY];
+    }
+
+    function normalizeUserText(value) {
+        return String(value == null ? '' : value)
+            .replace(/&nbsp;|&#160;/gi,' ')
+            .replace(/[‐‑‒–—―]/g,'-')
+            .replace(/\s+/g,' ')
+            .trim()
+            .toLocaleLowerCase('ru-RU')
+            .replace(/ё/g,'е');
+    }
+
+    function esc(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    function gm(html) {
+        sendChat(SCRIPT, '/w gm ' + html);
+    }
+
+    function pageId() {
+        return Campaign().get('playerpageid');
+    }
+
+    function getAttrs(cid, name) {
+        var needle = String(name || '').toLowerCase();
+        return findObjs({
+            _type: 'attribute',
+            _characterid: cid
+        }).filter(function (a) {
+            return String(a.get('name') || '').toLowerCase() === needle;
+        });
+    }
+
+    function attrValue(cid, name) {
+        var list = getAttrs(cid, name);
+        for (var i = 0; i < list.length; i++) {
+            var v = String(list[i].get('current') == null ? '' : list[i].get('current')).trim();
+            if (v !== '') return v;
+        }
+        return null;
+    }
+
+    function numberValue(v) {
+        if (v === null || v === undefined) return null;
+        var s = String(v).trim().replace(',', '.');
+        if (!s) return null;
+
+        var n = Number(s);
+        if (Number.isFinite(n)) return n;
+
+        var m = s.match(/[+-]?\d+(?:\.\d+)?/);
+        return m ? Number(m[0]) : null;
+    }
+
+    function dexMod(cid) {
+        var direct = numberValue(attrValue(cid, 'dexterity_mod'));
+        if (direct !== null) return direct;
+
+        var score = numberValue(attrValue(cid, 'dexterity'));
+        if (score !== null) return Math.floor((score - 10) / 2);
+
+        return 0;
+    }
+
+    function isNpc(cid) {
+        return /^(?:1|on|true|yes|да)$/i.test(String(attrValue(cid, 'npc') || '').trim());
+    }
+
+    function initiativeAbilities(cid) {
+        return findObjs({
+            _type: 'ability',
+            _characterid: cid
+        }).filter(function (a) {
+            return normalizeUserText(String(a.get('name') || '').replace(/^\u200b+/,'')) === 'инициатива' ||
+                String(a.get('description') || '') === 'NPCGroupInitiative:system:initiative' ||
+                String(a.get('description') || '') === 'NPCForge:system:initiative';
+        });
+    }
+
+    function rememberCreatedAbility(id) {
+        if (!id) return;
+        var data = stateData();
+        id = String(id);
+        if (data.createdInitiativeAbilityIds.indexOf(id) < 0) {
+            data.createdInitiativeAbilityIds.push(id);
+        }
+    }
+
+    function ensureInitiativeTokenAction(cid) {
+        if (!cid || !isNpc(cid) || !getObj('character', cid)) return null;
+
+        var list = initiativeAbilities(cid);
+        var ability = list[0];
+
+        if (!ability) {
+            ability = createObj('ability', {
+                characterid: cid,
+                name: Array(21).join('\u200b')+'Инициатива',
+                action: '%{selected|npc_init}',
+                description: 'NPCGroupInitiative:system:initiative',
+                istokenaction: true
+            });
+            if (ability) rememberCreatedAbility(ability.id);
+            return ability;
+        }
+
+        var marker = String(ability.get('description') || '');
+        // NPC Forge owns its own initiative button. Avoid two modules rewriting
+        // the same Ability during startup.
+        if(marker==='NPCForge:system:initiative')return ability;
+        var props = { istokenaction: true, name: Array(21).join('\u200b')+String(ability.get('name')||'Инициатива').replace(/^\u200b+/,'') };
+
+        // If the ability was created by this script, keep it on the native
+        // Roll20 D&D 5E NPC initiative roll. A pre-existing user ability named
+        // "Инициатива" is preserved; only Token Action is enabled.
+        if (marker === 'NPCGroupInitiative:system:initiative' ||
+            !String(ability.get('action') || '').trim()) {
+            props.name = Array(21).join('\u200b')+'Инициатива';
+            props.action = '%{selected|npc_init}';
+            if (!marker) props.description = 'NPCGroupInitiative:system:initiative';
+        }
+
+        var patch={},changed=false;
+        Object.keys(props).forEach(function(k){
+            if(String(ability.get(k)==null?'':ability.get(k))!==String(props[k]==null?'':props[k])){patch[k]=props[k];changed=true;}
+        });
+        if(changed)ability.set(patch);
+        return ability;
+    }
+
+    function syncInitiativeButtons() {
+        var seen = {};
+        var count = 0;
+
+        findObjs({_type: 'attribute'}).forEach(function (a) {
+            if (normalizeUserText(a.get('name') || '') !== 'npc') return;
+            if (!/^(?:1|on|true|yes|да)$/i.test(String(a.get('current') || '').trim())) return;
+
+            var cid = a.get('_characterid');
+            if (!cid || seen[cid]) return;
+            seen[cid] = true;
+
+            if (ensureInitiativeTokenAction(cid)) count++;
+        });
+
+        return count;
+    }
+
+    function playerControlled(token, character) {
+        var ids = [];
+
+        function add(raw) {
+            String(raw || '').split(',').forEach(function (id) {
+                id = id.trim();
+                if (id) ids.push(id);
+            });
+        }
+
+        add(character ? character.get('controlledby') : '');
+        add(token ? token.get('controlledby') : '');
+
+        return ids.some(function (id) {
+            return id === 'all' || (!!getObj('player', id) && !playerIsGM(id));
+        });
+    }
+
+    function tokenDisplayName(token, character) {
+        var n = String(token.get('name') || '').trim();
+        if (!n && character) n = String(character.get('name') || '').trim();
+        return n;
+    }
+
+    function normalizedName(name) {
+        return normalizeUserText(name);
+    }
+
+    function collectNpcTokens(pid) {
+        return findObjs({
+            _type: 'graphic',
+            _subtype: 'token',
+            _pageid: pid
+        }).filter(function (token) {
+            if (token.get('isdrawing')) return false;
+            if (String(token.get('layer')) !== 'objects') return false;
+
+            var cid = token.get('represents');
+            if (!cid) return false;
+
+            var character = getObj('character', cid);
+            if (!character) return false;
+            if (!isNpc(cid)) return false;
+            if (playerControlled(token, character)) return false;
+            if (!tokenDisplayName(token, character)) return false;
+
+            return true;
+        });
+    }
+
+    function groupKey(token){
+        if(!token)return '';
+        var cid=token.get('represents'),c=cid&&getObj('character',cid);
+        if(!c||!isNpc(cid)||playerControlled(token,c))return 'token:'+token.id;
+        return 'npc:'+normalizedName(tokenDisplayName(token,c)||token.id);
+    }
+    function makeGroups(tokens) {
+        var byName = Object.create(null);
+
+        tokens.forEach(function (token) {
+            var character = getObj('character', token.get('represents'));
+            var name = tokenDisplayName(token, character);
+            var key = normalizedName(name);
+
+            if (!byName[key]) {
+                byName[key] = {
+                    key: key,
+                    name: name,
+                    tokens: [],
+                    representative: token
+                };
+            }
+
+            byName[key].tokens.push(token);
+        });
+
+        return Object.keys(byName).map(function (key) {
+            return byName[key];
+        });
+    }
+
+    function round2(n) {
+        return Math.round((n + Number.EPSILON) * 100) / 100;
+    }
+
+    function rollGroup(group) {
+        var modifier = dexMod(group.representative.get('represents'));
+        var count = group.tokens.length;
+
+        if (count <= 5) {
+            var rolls = [];
+            var sum = 0;
+
+            for (var i = 0; i < count; i++) {
+                var r = randomInteger(20);
+                rolls.push(r);
+                sum += r;
+            }
+
+            var avg = sum / count;
+            return {
+                mode: 'average',
+                rolls: rolls,
+                average: round2(avg),
+                modifier: modifier,
+                total: round2(avg + modifier)
+            };
+        }
+
+        var r1 = randomInteger(20);
+        var r2 = randomInteger(20);
+        var best = Math.max(r1, r2);
+
+        return {
+            mode: 'advantage',
+            rolls: [r1, r2],
+            best: best,
+            modifier: modifier,
+            total: best + modifier
+        };
+    }
+
+    function readTurnOrder() {
+        var raw = Campaign().get('turnorder');
+        if (!raw) return [];
+
+        try {
+            var parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function tokenIsOnPage(tokenId, pid) {
+        var token = getObj('graphic', tokenId);
+        return !!token && String(token.get('_pageid')) === String(pid);
+    }
+
+    function existingTurnsForCurrentPage(pid) {
+        var managed = {};
+        stateData().managedTokenIds.forEach(function (id) {
+            managed[String(id)] = true;
+        });
+
+        return readTurnOrder().filter(function (turn) {
+            var id = String(turn.id || '');
+
+            // Remove entries previously created by this script.
+            if (managed[id]) return false;
+
+            // Preserve custom GM items.
+            if (id === '-1') return true;
+
+            // Preserve existing turns only for real tokens on current Player Page.
+            return tokenIsOnPage(id, pid);
+        }).map(function (turn) {
+            return {
+                id: String(turn.id),
+                pr: String(turn.pr == null ? '' : turn.pr),
+                custom: String(turn.custom || ''),
+                _pageid: pid
+            };
+        });
+    }
+
+    function sortTurns(turns) {
+        turns.sort(function (a, b) {
+            var av = parseFloat(a.pr);
+            var bv = parseFloat(b.pr);
+
+            if (!Number.isFinite(av)) av = -999999;
+            if (!Number.isFinite(bv)) bv = -999999;
+
+            return bv - av;
+        });
+        return turns;
+    }
+
+    function verify(groupEntries) {
+        var turns = readTurnOrder();
+        var found = 0;
+
+        groupEntries.forEach(function (entry) {
+            if (turns.some(function (t) {
+                return String(t.id) === String(entry.id) &&
+                    String(t.pr) === String(entry.pr);
+            })) {
+                found++;
+            }
+        });
+
+        return found;
+    }
+
+
+    function onlineNonGmPlayersOnPage(pid) {
+        var specific = Campaign().get('playerspecificpages') || {};
+        var playerPage = Campaign().get('playerpageid');
+        return findObjs({_type: 'player'}).filter(function (p) {
+            if (playerIsGM(p.id)) return false;
+            if (!p.get('_online')) return false;
+            var actualPage = specific && specific[p.id] ? specific[p.id] : playerPage;
+            return String(actualPage || '') === String(pid);
+        });
+    }
+
+    function writeTracker(pid, preserved, newEntries, callback) {
+        var finalOrder = sortTurns(preserved.concat(newEntries)).map(function (turn) {
+            return {
+                id: String(turn.id),
+                pr: String(turn.pr),
+                custom: String(turn.custom || ''),
+                _pageid: pid
+            };
+        });
+
+        // Roll20 documentation requires initiativepage and every turn item's
+        // _pageid to point to the same page. Set both properties atomically so
+        // opening/switching the tracker cannot clear the newly written order.
+        Campaign().set({
+            initiativepage: pid,
+            turnorder: JSON.stringify(finalOrder)
+        });
+
+        // Let Roll20 commit, then verify the exact token rows were retained.
+        setTimeout(function () {
+            callback(verify(newEntries), finalOrder);
+        }, 150);
+    }
+
+    function run() {
+        var pid = pageId();
+
+        if (!pid) {
+            gm('<b>Ошибка:</b> Player Page не определена.');
+            return;
+        }
+
+        var tokens = collectNpcTokens(pid);
+        var groups = makeGroups(tokens);
+
+        if (!groups.length) {
+            gm('На текущей Player Page не найдено NPC для инициативы.');
+            return;
+        }
+
+        var preserved = existingTurnsForCurrentPage(pid);
+        var newEntries = [];
+        var managedIds = [];
+        var report = [];
+
+        groups.forEach(function (group) {
+            var result = rollGroup(group);
+            var token = group.representative;
+
+            // This is a REAL tabletop token ID, same kind of ID Roll20 places
+            // into the tracker when a selected token rolls &{tracker}.
+            newEntries.push({
+                id: String(token.id),
+                pr: String(result.total),
+                custom: '',
+                _pageid: pid
+            });
+            managedIds.push(String(token.id));
+
+            if (result.mode === 'average') {
+                report.push(
+                    '<b>' + esc(group.name) + '</b> ×' + group.tokens.length +
+                    ': [' + result.rolls.join(', ') + ']' +
+                    ' → среднее ' + result.average +
+                    (result.modifier >= 0 ? ' +' : ' ') + result.modifier +
+                    ' ЛОВ = <b>' + result.total + '</b>'
+                );
+            } else {
+                report.push(
+                    '<b>' + esc(group.name) + '</b> ×' + group.tokens.length +
+                    ': преимущество [' + result.rolls.join(', ') + ']' +
+                    ' → ' + result.best +
+                    (result.modifier >= 0 ? ' +' : ' ') + result.modifier +
+                    ' ЛОВ = <b>' + result.total + '</b>'
+                );
+            }
+        });
+
+        // Store only after we know what tokens this run owns.
+        stateData().managedTokenIds = managedIds;
+
+        writeTracker(pid, preserved, newEntries, function (saved) {
+            var total = newEntries.length;
+            var apiConfirmed = saved === total;
+
+            gm(
+                '<b>Групповая инициатива NPC</b><br>' +
+                report.join('<br>') +
+                '<br><br><b>Turn Tracker:</b> сохранено ' + saved +
+                ' из ' + total + ' групп.' +
+                (apiConfirmed
+                    ? '<br><b>Campaign.turnorder подтверждает запись.</b>'
+                    : '<br><b style="color:#b00">Roll20 не подтвердил часть записей.<br>' +
+                      'Player Page: ' + esc(pid) + '.<br>' +
+                      'initiativepage: ' + esc(Campaign().get('initiativepage')) + '.<br>' +
+                      'turnorder: <code>' + esc(Campaign().get('turnorder')) + '</code></b>')
+            );
+        });
+    }
+
+    function clear() {
+        var pid = pageId();
+        var managed = {};
+
+        stateData().managedTokenIds.forEach(function (id) {
+            managed[String(id)] = true;
+        });
+
+        var turns = readTurnOrder().filter(function (turn) {
+            return !managed[String(turn.id || '')];
+        }).map(function (turn) {
+            return {
+                id: String(turn.id),
+                pr: String(turn.pr == null ? '' : turn.pr),
+                custom: String(turn.custom || ''),
+                _pageid: pid
+            };
+        });
+
+        stateData().managedTokenIds = [];
+
+        Campaign().set({
+            initiativepage: pid,
+            turnorder: JSON.stringify(turns)
+        });
+        gm('NPC-записи этого скрипта удалены из Turn Tracker.');
+    }
+
+    function help() {
+        gm(
+            '<b>' + SCRIPT + ' v' + VERSION + '</b><br>' +
+            '<code>!npc-init</code> — бросить групповую инициативу NPC.<br>' +
+            '<code>!npc-init buttons</code> — пересоздать/включить Token Action «Инициатива» у NPC.<br>' +
+            '<code>!npc-init clear</code> — удалить NPC-записи этого скрипта.<br><br>' +
+            '1–5 одинаковых NPC: среднее отдельных d20 + модификатор Ловкости.<br>' +
+            '6+ одинаковых NPC: d20 с преимуществом + модификатор Ловкости.<br>' +
+            'Игроки автоматически не бросаются.'
+        );
+    }
+
+    function syncInitiativeButtonsBatched(done){
+        var seen={},ids=[];
+        (findObjs({_type:'attribute',name:'npc'})||[]).forEach(function(a){
+            var cid=String(a.get('_characterid')||'');
+            if(cid&&!seen[cid]&&/^(?:1|on|true|yes|да)$/i.test(String(a.get('current')||'').trim())){seen[cid]=true;ids.push(cid);}
+        });
+        var i=0,count=0;
+        function batch(){
+            var stop=Math.min(i+10,ids.length);
+            for(;i<stop;i++){
+                try{if(ensureInitiativeTokenAction(ids[i]))count++;}
+                catch(e){log(SCRIPT+' initiative sync '+ids[i]+': '+e.message);}
+            }
+            if(i<ids.length){setTimeout(batch,25);return;}
+            if(typeof done==='function')done(count);
+        }
+        if(ids.length)setTimeout(batch,0);else if(typeof done==='function')done(0);
+    }
+
+    function onChat(msg) {
+        if (msg.type !== 'api') return;
+        if (!/^!npc-init\b/i.test(String(msg.content || ''))) return;
+        if (!playerIsGM(msg.playerid)) return;
+
+        var parts = String(msg.content).trim().split(/\s+/);
+        var sub = normalizeUserText(parts[1] || '');
+
+        if (!sub) {
+            run();
+            return;
+        }
+
+        if (sub === 'clear') {
+            clear();
+            return;
+        }
+
+        if (sub === 'buttons' || sub === 'button' || sub === 'кнопки' || sub === 'кнопка') {
+            var count = syncInitiativeButtons();
+            gm('Token Action <b>«Инициатива»</b> синхронизирован у <b>' + count + '</b> NPC.');
+            return;
+        }
+
+        help();
+    }
+
+    function onNpcAttributeChanged(attr) {
+        if (!attr || normalizeUserText(attr.get('name') || '') !== 'npc') return;
+        var cid = attr.get('_characterid');
+        if (!cid) return;
+        setTimeout(function () {
+            ensureInitiativeTokenAction(cid);
+        }, 50);
+    }
+
+    function ready() {
+        stateData();
+        syncInitiativeButtonsBatched(function(synced){log(SCRIPT+' v'+VERSION+' ready. Initiative Token Actions: '+synced+'.');});
+        on('chat:message', onChat);
+        on('add:attribute', onNpcAttributeChanged);
+        on('change:attribute', onNpcAttributeChanged);
+    }
+
+    return {
+        version:VERSION,groupKey:groupKey,
+        ready: ready,
+        run: run,
+        syncInitiativeButtons: syncInitiativeButtons,
+        syncInitiativeButtonsBatched: syncInitiativeButtonsBatched
+    };
+}());
+
+on('ready', NPCGroupInitiative.ready);
+}
