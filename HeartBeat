@@ -1,0 +1,22 @@
+/* Installation guard: disable old unguarded versions before installing. */
+if(typeof Roll20APIHeartbeat!=='undefined'&&Roll20APIHeartbeat) {
+    log('Roll20APIHeartbeat: duplicate module skipped; keep one installed copy.');
+} else {
+/* Roll20 API Heartbeat 1.0.1. Read-only diagnostic: !apitest */
+var Roll20APIHeartbeat=Roll20APIHeartbeat||(function(){
+    'use strict';
+    var VERSION='1.0.1';
+    function onChat(msg){
+        if(!msg||msg.type!=='api'||String(msg.content||'').trim()!=='!apitest'||msg.playerid==='API')return;
+        var pid=String(msg.playerid||''),isGM=playerIsGM(pid),p=getObj('player',pid);
+        if(!p&&!isGM)return;
+        var name=p?String(p.get('_displayname')||'').replace(/["\r\n]/g,''):'';
+        if(!isGM&&!name)return;
+        log('API Heartbeat '+VERSION+': !apitest received; playerid='+pid);
+        sendChat('API Heartbeat',(isGM?'/w gm ':'/w "'+name+'" ')+'<b>API HEARTBEAT OK</b> v'+VERSION,null,{noarchive:true});
+    }
+    on('ready',function(){log('API Heartbeat '+VERSION+' ready; chat:message registered.');on('chat:message',onChat);});
+    return {version:VERSION};
+}());
+
+}
