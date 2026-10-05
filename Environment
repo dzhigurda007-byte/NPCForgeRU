@@ -1,0 +1,980 @@
+/* Installation guard: disable old unguarded versions before installing. */
+if(typeof AD5Environment!=='undefined'&&AD5Environment) {
+    log('AD5Environment: duplicate module skipped; keep one installed copy.');
+} else {
+/*
+ * AD5 Environment 1.6.6
+ * Static and spell-created combat-map environment for Roll20 AD5.
+ *
+ * Environment types (case-insensitive in spell/range syntax):
+ *   ФИЗ    / PHYS    — physical cover + standable support surface.
+ *   ЗАСЛОУ / ZASLOW  — obscured area; attacks crossing it have disadvantage.
+ *   ЗАСХАЙ / ZASHIGH — heavily obscured area; if tall enough to cover the target,
+ *                       the target cannot be selected through it. At <=5 ft the
+ *                       attack is allowed, but with disadvantage.
+ *   СОЛИД  / SOLID   — absolute-height impassable volume. Tokens cannot enter or
+ *                       cross it at any elevation; movement stops before the entry edge.
+ *
+ * GM map workflow:
+ *   !ad5env create circle 20 phys 10
+ *   !ad5env create square 15 zaslow 8
+ *   !ad5env set-height 25       (selected area; overwrites height)
+ *
+ * Manual areas created by the macro/command are brown. Spell areas keep the
+ * visual style owned by AD5 Areas, but may register as environment when their
+ * syntax contains ФИЗ / ЗАСЛОУ / ЗАСХАЙ.
+ *
+ * 1.2.2: static height/support zones (ФИЗ and pits) are kept on Roll20's
+ * GM Layer (`gmlayer`) so players cannot see the technical height geometry.
+ * Geometry calculations are layer-independent, so bar4/support/fall logic
+ * continues to use those hidden zones. External AD5 Areas keep their layer.
+ * 1.3.0: СОЛИД / SOLID is an absolute-height impassable volume. AD5 Movement
+ * clips a route at the first SOLID boundary, so the token is pushed back toward
+ * the side from which its latest movement segment entered the area.
+ * 1.4.0: СОЛИД also grants unconditional full cover to attacks/direct effects.
+ * Area effects use line-of-effect from the template centre: SOLID always blocks;
+ * ФИЗ blocks propagation when its height is >= the area's height. Partial cover
+ * can grant advantage on Dexterity saves. Exposes areaExposure/propagationLimit.
+ * 1.5.0: cover uses a pseudo-3D silhouette profile. Rays start at the attacker's
+ * effective eye/weapon height and sample the target width; flat-topped PHYS prisms
+ * hide an exact lower fraction of each vertical slice. Platform edges can therefore
+ * protect creatures above/below them. SOLID is vertically absolute per intersected
+ * ray. Token Actions «Сесть» and «Лечь» reduce effective body height to 1/2
+ * and 1/4 and use markers 027-Blindsiding / 302-ambushing.
+ * 1.5.1: attempted native bar4 synchronization (removed in 1.5.2).
+ * 1.5.2: temporary virtual-only terrain storage.
+ * 1.5.3: restores Roll20 native bar4_value/bar4_link support (current Graphic API
+ * exposes bar1..bar4) while keeping state.AD5Environment.terrain as a mirror/fallback.
+ * Support detection is hardened: native PathV2 rec/eli shapes override stale shape
+ * metadata, and a token can stand on a surface when its centre is inside OR a
+ * majority of footprint samples overlap the PHYS/pit area. !ad5env terrain shows
+ * per-area geometry diagnostics for the selected token.
+ * 1.5.5: scripted ТЯГ/ТОЛЧ uses an explicit forced-movement terrain transaction.
+ * The starting terrain/flight height is captured before movement; after grid snapping
+ * and SOLID clipping the final surface is applied exactly once. A lower destination
+ * invokes AD5 Height terrainFall, including the normal Падение перышком reaction.
+ * 1.5.6: GM macro «Сделать СОЛИД» converts selected map graphics/paths to SOLID
+ * in one click; existing Environment height is preserved, new objects use a service 5-ft height.
+ * 1.5.7: leaving a positive PHYS support is detected from the token's PRE-MOVE
+ * coordinates, not only from bar4/state. This makes manual player movement off an
+ * elevated PHYS edge reliably call AD5 Height terrainFall even if bar4 was stale or
+ * another movement handler ran first. Forced ТЯГ/ТОЛЧ keeps its explicit transaction.
+ * 1.5.9: external/manual decreases of bar4 are real terrain drops. Internal bar4
+ * writes are identified through the state mirror and never double-trigger falling.
+ * 1.5.8: area propagation accepts an absolute source/base elevation. Elevated spell
+ * templates no longer treat lower PHYS floors as walls; PHYS blocking compares the
+ * obstacle top with baseElevation + effectHeight. Existing callers remain compatible.
+ * 1.6.2: existing «Встать» Token Action now also ends AD5 Condition Engine Prone and spends half effective speed while movement is tracked.
+ * 1.6.3: automatic terrain/bar4 synchronization is restricted to real represented combat tokens on the Objects layer. Decorative/map/portal/token graphics keep their existing bar3/bar4 values across Mod Sandbox restarts and script updates.
+ * 1.6.0: hardened live Roll20/Jumpgate integration: PathV2 selection fallback,
+ * dual release detection, immediate PHYS/support resync, visible Height bridge errors,
+ * and !ad5env doctor / !ad5env repair diagnostics.
+ */
+var AD5Environment=(function(){
+    'use strict';
+    var VERSION='1.6.6',SCRIPT='AD5 Environment',HEIGHT_HOOKED=false,BROWN='#8b4513',HEIGHT_LAYER='gmlayer',pendingTokenMoves=Object.create(null),forcedMoveGuards=Object.create(null),forcedMoveSequence=0;
+    var COVER_RULES={quarter:{key:'quarter',label:'1/4 укрытия',ac:1,dex:1},half:{key:'half',label:'1/2 укрытия',ac:2,dex:2},threeQuarter:{key:'threeQuarter',label:'3/4 укрытия',ac:5,dex:5},full:{key:'full',label:'полное укрытие',ac:0,dex:0,full:true}};
+    var TYPE_LABELS={phys:'ФИЗ',zaslow:'ЗАСЛОУ',zashigh:'ЗАСХАЙ',solid:'СОЛИД'};
+    var POSTURE_MARKERS={crouch:'027-Blindsiding',lie:'302-Ambushing'};
+    var COVER_LATERAL_SAMPLES=[-0.9,-0.45,0,0.45,0.9],SOURCE_AIM_FRACTION=0.75;
+
+    function root(){
+        if(!state.AD5Environment||typeof state.AD5Environment!=='object')state.AD5Environment={};
+        var r=state.AD5Environment;r.version=VERSION;
+        r.areas=r.areas&&typeof r.areas==='object'?r.areas:{};
+        r.supports=r.supports&&typeof r.supports==='object'?r.supports:{};
+        // Terrain is mirrored in state so movement/fall code always has a stable
+        // pre-move snapshot. Roll20 bar4_value remains the visible/native value.
+        r.terrain=r.terrain&&typeof r.terrain==='object'?r.terrain:{};
+        Object.keys(r.areas).forEach(function(id){var rec=r.areas[id];if(!rec)return;rec.properties=rec.properties&&typeof rec.properties==='object'?rec.properties:{};if(!rec.properties.type)rec.properties.type='phys';delete rec.properties.pixelWidth;delete rec.properties.pixelHeight;});
+        return r;
+    }
+    function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+    function norm(s){try{if(typeof AD5Syntax!=='undefined'&&AD5Syntax&&typeof AD5Syntax.normalize==='function')return AD5Syntax.normalize(s);}catch(ignore){}return String(s==null?'':s).replace(/&nbsp;|&#160;/gi,' ').replace(/<br\s*\/?\s*>|<\/p>|<\/div>/gi,'\n').replace(/<[^>]*>/g,'').replace(/\s+/g,' ').trim().toLocaleLowerCase('ru-RU').replace(/ё/g,'е');}
+    function number(v){var m=String(v==null?'':v).replace(',','.').match(/[-+]?\d+(?:\.\d+)?/),n=m?Number(m[0]):NaN;return Number.isFinite(n)?n:NaN;}
+    function pageIdOf(o){return String(o&&o.get&&(o.get('_pageid')||o.get('pageid'))||'');}
+    function objectType(o){return String(o&&o.get&&(o.get('_type')||o.get('type'))||'').toLowerCase();}
+    function isToken(t){return !!(t&&t.get&&objectType(t)==='graphic'&&t.get('_subtype')==='token'&&!t.get('isdrawing'));}
+    // Only real combat creatures are owned by the automatic terrain mirror.
+    // Roll20 also represents many map props/portal graphics as subtype=token. Older
+    // builds treated every such object as a creature on startup and wrote bar4=0
+    // whenever no PHYS surface was under it. That erased manually assigned object
+    // heights each time the Mod Sandbox restarted.
+    function isTerrainManagedToken(t){
+        return !!(isToken(t)&&String(t.get('layer')||'')==='objects'&&String(t.get('represents')||'').trim());
+    }
+    function envObject(id,type){return (type&&getObj(type,id))||getObj('graphic',id)||getObj('pathv2',id)||getObj('path',id)||null;}
+    function isEnvDrawable(o){if(!o||!o.get)return false;var ty=objectType(o);if(ty==='path'||ty==='pathv2')return true;if(ty!=='graphic')return false;if(isToken(o)&&o.get('represents'))return false;return true;}
+    function objectName(o,rec){return String((o&&o.get&&o.get('name'))||(rec&&rec.name)||'Окружение');}
+    function areaRecord(id){
+        var rec=root().areas[String(id||'')];if(!rec)return null;var o=envObject(rec.objectId||id,rec.objectType);
+        if(!o){delete root().areas[String(id||'')];return null;}
+        // Repair stale metadata left by older Path/PathV2 versions. Geometry always
+        // follows the live Roll20 object, including objects moved to GM Layer.
+        rec.objectId=o.id;rec.objectType=objectType(o);rec.pageId=pageIdOf(o);rec.properties=rec.properties&&typeof rec.properties==='object'?rec.properties:{};
+        var ty=objectType(o),nativeShape=ty==='pathv2'?norm(o.get('shape')||''):'';
+        if(nativeShape==='rec'||nativeShape==='rect'||nativeShape==='rectangle')rec.properties.shape='square';
+        else if(nativeShape==='eli'||nativeShape==='ellipse'||nativeShape==='circle')rec.properties.shape='circle';
+        return {rec:rec,obj:o};
+    }
+    function areaHeight(rec){var n=Number(rec&&rec.properties&&rec.properties.height);return Number.isFinite(n)?n:0;}
+    function areaType(rec){var t=norm(rec&&rec.properties&&rec.properties.type||'phys').replace(/\s+/g,'');if(t==='физ'||t==='physical'||t==='phys')return 'phys';if(t==='заслоу'||t==='low'||t==='zaslow')return 'zaslow';if(t==='засхай'||t==='high'||t==='zashigh')return 'zashigh';if(t==='солид'||t==='solid')return 'solid';return 'phys';}
+    function areaShape(rec){var s=norm(rec&&rec.properties&&rec.properties.shape||'square');if(/^(?:circle|круг)$/.test(s))return 'circle';if(/^(?:polygon|poly|freeform|произвольн)/.test(s))return 'polygon';return 'square';}
+    function typeFromInput(v){var t=norm(v).replace(/[\s_-]+/g,'');if(t==='физ'||t==='phys'||t==='physical')return 'phys';if(t==='заслоу'||t==='zaslow'||t==='low')return 'zaslow';if(t==='засхай'||t==='zashigh'||t==='high')return 'zashigh';if(t==='солид'||t==='solid')return 'solid';return null;}
+    function selectedObjects(msg){return (msg.selected||[]).map(function(s){var id=String((s&&(s._id||s.id))||''),ty=String((s&&(s._type||s.type))||'');if(!id)return null;var o=null;try{if(ty)o=getObj(ty,id);}catch(ignoreSelectedType){}if(!o)o=envObject(id);if(!o){try{o=getObj('text',id);}catch(ignoreSelectedText){}}return o;}).filter(function(o){return !!o;});}
+    function selectedTokens(msg){return selectedObjects(msg).filter(isToken);}
+    function canControlToken(token,pid){if(playerIsGM(pid))return true;var direct=String(token.get('controlledby')||'').split(',');if(direct.indexOf(pid)>=0||direct.indexOf('all')>=0)return true;var cid=token.get('represents'),c=cid&&getObj('character',cid);if(!c)return false;var a=String(c.get('controlledby')||'').split(',');return a.indexOf(pid)>=0||a.indexOf('all')>=0;}
+    function playerPageId(pid){var p=getObj('player',pid),last=p&&p.get('_lastpage');return String(last||Campaign().get('playerpageid')||'');}
+
+    // ---------- Character physical height ----------
+    function decodeText(raw){var text=String(raw||'');for(var i=0;i<2;i++){text=text.replace(/%u([0-9a-f]{4})/gi,function(_,h){return String.fromCharCode(parseInt(h,16));});if(/%[0-9a-f]{2}/i.test(text)){try{text=decodeURIComponent(text);}catch(ignore){}}}return text.replace(/<br\s*\/?\s*>|<\/p>|<\/div>/gi,'\n').replace(/<[^>]*>/g,'').replace(/&nbsp;|&#160;/gi,' ').replace(/&amp;/g,'&').replace(/[−–—]/g,'-');}
+    function attrValue(cid,names){if(!cid)return '';for(var i=0;i<names.length;i++){try{if(typeof getAttrByName==='function'){var v=getAttrByName(cid,names[i]);if(String(v||'').trim())return String(v);}}catch(ignore){}var a=findObjs({_type:'attribute',_characterid:cid,name:names[i]})[0];if(a&&String(a.get('current')||'').trim())return String(a.get('current'));}return '';}
+    // Custom Roll20 token markers are referenced in statusmarkers by their TAG,
+    // not by the display name.  Earthdawn markers therefore look like
+    // "302-Ambushing::<id>" in statusmarkers even though the Marketplace name is
+    // "302-Ambushing". Resolve tags dynamically so the script works with the
+    // marker IDs assigned to this particular campaign.
+    function markerBase(value){return String(value||'').replace(/@\d+$/,'');}
+    function tokenMarkers(token){return String(token&&token.get&&token.get('statusmarkers')||'').split(',').map(function(x){return x.trim();}).filter(Boolean);}
+    function markerCatalog(){
+        var raw='[]',list=[];try{raw=Campaign().get('token_markers')||'[]';list=JSON.parse(raw)||[];}catch(ignore){list=[];}
+        return Array.isArray(list)?list:[];
+    }
+    function markerRecord(name){
+        var wanted=String(name||'').trim().toLowerCase(),found=null;if(!wanted)return null;
+        markerCatalog().some(function(m){if(String(m&&m.name||'').trim().toLowerCase()===wanted){found=m;return true;}return false;});
+        return found;
+    }
+    function markerTag(name){var rec=markerRecord(name);return rec&&String(rec.tag||'').trim()?String(rec.tag).trim():null;}
+    function markerAliases(name){
+        var out={},n=String(name||'').trim().toLowerCase(),tag=markerTag(name);if(n)out[n]=true;if(tag)out[String(tag).toLowerCase()]=true;
+        // Clean up values written by Environment <=1.5.3, which incorrectly put
+        // the display name itself into statusmarkers instead of the custom tag.
+        if(n==='302-ambushing')out['302-ambushing']=true;if(n==='027-blindsiding')out['027-blindsiding']=true;
+        return out;
+    }
+    function hasTokenMarker(token,name){
+        var aliases=markerAliases(name);return tokenMarkers(token).some(function(x){return !!aliases[markerBase(x).toLowerCase()];});
+    }
+    function setTokenMarker(token,name,on){
+        if(!isToken(token))return {ok:false,error:'token'};
+        var tag=markerTag(name),aliases=markerAliases(name),parts=tokenMarkers(token),next=[],found=false;
+        parts.forEach(function(x){
+            if(aliases[markerBase(x).toLowerCase()]){if(on&&!found&&tag){next.push(tag);found=true;}return;}
+            next.push(x);
+        });
+        if(on&&!tag)return {ok:false,error:'missing-marker',name:String(name||'')};
+        if(on&&!found)next.push(tag);
+        var value=next.join(',');if(value!==String(token.get('statusmarkers')||''))token.set('statusmarkers',value);
+        return {ok:true,tag:tag||'',active:!!on};
+    }
+    function postureOf(token){if(hasTokenMarker(token,POSTURE_MARKERS.lie))return 'lie';if(hasTokenMarker(token,POSTURE_MARKERS.crouch))return 'crouch';return 'stand';}
+    function postureMultiplier(token){var p=postureOf(token);return p==='lie'?0.25:(p==='crouch'?0.5:1);}
+    function baseBodyHeightFromSheet(token){
+        var cid=String(token&&token.get('represents')||''),parts=[];
+        ['flaws','npc_flaws','weaknesses','npc_weaknesses'].forEach(function(n){var v=attrValue(cid,[n]);if(v)parts.push(v);});
+        var text=decodeText(parts.join('\n')),m=/(?:^|[\s,;])(?:рост|height)\s*[-:=]\s*(\d+(?:[.,]\d+)?)\s*(?:фт\.?|фут(?:а|ов)?|ft\.?|feet|foot)?/i.exec(text);
+        if(m){var n=Number(String(m[1]).replace(',','.'));if(Number.isFinite(n)&&n>0)return {height:n,source:'Слабости'};}
+        try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.sizeProfile==='function'){var sp=AD5Height.sizeProfile(token),fallback={tiny:2,small:4,medium:6,large:10,huge:15,gargantuan:20}[sp.key];if(fallback)return {height:fallback,source:'размер '+sp.label};}}catch(ignore2){}
+        var p=getObj('page',pageIdOf(token)),scale=Number(p&&p.get('scale_number'))||5,squares=Math.max(Number(token.get('width')||70),Number(token.get('height')||70))/70;
+        return {height:Math.max(scale,Math.round(squares*scale*100)/100),source:'размер токена'};
+    }
+    function bodyHeightFromSheet(token){
+        var base=baseBodyHeightFromSheet(token),posture=postureOf(token),mult=postureMultiplier(token),height=Math.max(0.1,Number(base.height||0)*mult),label=posture==='lie'?'Лечь ×1/4':(posture==='crouch'?'Пригнуться ×1/2':'стоя');
+        return {height:height,baseHeight:Number(base.height)||height,source:base.source+(posture==='stand'?'':' · '+label),posture:posture,multiplier:mult};
+    }
+    function bodyHeightFeet(token){return bodyHeightFromSheet(token).height;}
+    function barNumber(token,index){
+        if(!isToken(token))return 0;
+        var raw=Number(String(token.get('bar'+index+'_value')==null?'':token.get('bar'+index+'_value')).replace(',','.')),link='',linked=NaN;
+        if(!Number.isFinite(raw))raw=0;
+        try{link=String(token.get('bar'+index+'_link')||'').trim();}catch(ignoreLink){}
+        if(link){try{var a=getObj('attribute',link);if(a){linked=Number(String(a.get('current')==null?'':a.get('current')).replace(',','.'));}}catch(ignoreAttr){}}
+        if(Number.isFinite(linked)){if(raw>0||linked>0)return Math.max(raw,linked);if(raw<0||linked<0)return Math.min(raw,linked);return 0;}
+        return raw;
+    }
+    function flightHeightFeet(token){
+        try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.flightHeightFeet==='function'){var h=Number(AD5Height.flightHeightFeet(token));if(Number.isFinite(h))return Math.max(0,h);}}catch(ignoreHeight){}
+        return Math.max(0,barNumber(token,3));
+    }
+    function nativeBar4Value(token){
+        if(!isToken(token))return NaN;
+        try{
+            var raw=token.get('bar4_value');
+            if(raw===undefined||raw===null||String(raw).trim()==='')return NaN;
+            var n=Number(String(raw).replace(',','.'));return Number.isFinite(n)?n:NaN;
+        }catch(ignore){return NaN;}
+    }
+    function terrainHeightFeet(tokenOrId){
+        var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;if(!isToken(token))return 0;
+        var native=nativeBar4Value(token);
+        if(Number.isFinite(native)){root().terrain[token.id]=native;return native;}
+        var cached=Number(root().terrain[token.id]);
+        if(Number.isFinite(cached))return cached;
+        // First access after installation/restart: derive terrain from geometry.
+        var surface=null;try{surface=terrainSurfaceAt(token);}catch(ignoreSurface){}
+        var n=surface?Number(surface.height):0;if(!Number.isFinite(n))n=0;
+        root().terrain[token.id]=n;if(surface&&surface.areaId)root().supports[token.id]=surface.areaId;else delete root().supports[token.id];
+        try{token.set('bar4_value',n);}catch(ignoreBar4Write){}
+        return n;
+    }
+    function setTerrainHeight(tokenOrId,h){
+        var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;if(!isToken(token))return 0;
+        h=Number(h);if(!Number.isFinite(h))h=0;root().terrain[token.id]=h;
+        // bar4 is dedicated to terrain height. For a linked bar Roll20 propagates
+        // token.set(bar4_value) to the linked Attribute itself; do not double-write it.
+        try{token.set('bar4_value',h);}catch(ignoreWrite){}
+        return h;
+    }
+    function elevation(token){return flightHeightFeet(token)+terrainHeightFeet(token);}
+    function rangeFeet(a,b){try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.rangeFeet==='function')return Number(AD5Height.rangeFeet(a,b));}catch(ignore){}var p=getObj('page',pageIdOf(a)),scale=Number(p&&p.get('scale_number'))||5,dx=(Number(a.get('left'))-Number(b.get('left')))/70,dy=(Number(a.get('top'))-Number(b.get('top')))/70,dz=elevation(a)-elevation(b);return Math.sqrt(dx*dx+dy*dy+(dz/scale)*(dz/scale))*scale;}
+
+    // ---------- Shape geometry ----------
+    function scaleOf(o,key){var n=Number(o&&o.get&&o.get(key));return Number.isFinite(n)&&Math.abs(n)>1e-9?Math.abs(n):1;}
+    function pathV2Dims(o){
+        // Jumpgate PathV2 can keep its original point geometry while resizing is
+        // represented by scaleX/scaleY. Prefer explicit width/height when Roll20
+        // exposes them, otherwise calculate the base box from points and apply scale.
+        var sx=scaleOf(o,'scaleX'),sy=scaleOf(o,'scaleY'),w=Number(o.get('width')),h=Number(o.get('height'));
+        if(Number.isFinite(w)&&w>0&&Number.isFinite(h)&&h>0)return {w:Math.max(1,w*sx),h:Math.max(1,h*sy)};
+        var pts=[];try{pts=JSON.parse(o.get('points')||'[]')||[];}catch(ignore){}var minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+        pts.forEach(function(pt){if(!Array.isArray(pt)||pt.length<2)return;var x=Number(pt[0]),y=Number(pt[1]);if(!Number.isFinite(x)||!Number.isFinite(y))return;minX=Math.min(minX,x);minY=Math.min(minY,y);maxX=Math.max(maxX,x);maxY=Math.max(maxY,y);});
+        return Number.isFinite(minX)?{w:Math.max(1,(maxX-minX)*sx),h:Math.max(1,(maxY-minY)*sy)}:{w:70*sx,h:70*sy};
+    }
+    function objLeft(o){return Number(objectType(o)==='pathv2'?o.get('x'):o.get('left'))||0;}
+    function objTop(o){return Number(objectType(o)==='pathv2'?o.get('y'):o.get('top'))||0;}
+    function objDims(o,rec){
+        // Geometry is ALWAYS taken from the live tabletop object. Height is a separate
+        // environment property and never changes just because the area is resized.
+        // Legacy pixelWidth/pixelHeight values are intentionally ignored so a 20-ft
+        // area resized visually to 5 ft immediately behaves as a 5-ft area.
+        var ty=objectType(o);
+        if(ty==='pathv2')return pathV2Dims(o);
+        if(ty==='path'){var w=Math.max(1,Number(o.get('width'))||70),h=Math.max(1,Number(o.get('height'))||70);return {w:Math.max(1,w*scaleOf(o,'scaleX')),h:Math.max(1,h*scaleOf(o,'scaleY'))};}
+        return {w:Math.max(1,Number(o.get('width'))||70),h:Math.max(1,Number(o.get('height'))||70)};
+    }
+    function rawPathPoints(o){
+        var ty=objectType(o),raw=[],out=[];
+        try{raw=JSON.parse(ty==='pathv2'?(o.get('points')||'[]'):(o.get('_path')||'[]'))||[];}catch(ignore){raw=[];}
+        raw.forEach(function(pt){
+            if(!Array.isArray(pt)||pt.length<2)return;
+            if(typeof pt[0]==='number'&&typeof pt[1]==='number'){out.push([Number(pt[0]),Number(pt[1])]);return;}
+            var nums=pt.slice(1).map(Number).filter(Number.isFinite);
+            if(nums.length>=2)out.push([nums[nums.length-2],nums[nums.length-1]]);
+        });
+        return out.filter(function(pt){return Number.isFinite(pt[0])&&Number.isFinite(pt[1]);});
+    }
+    function defaultShapeForObject(o){var ty=objectType(o);if(ty==='graphic')return 'square';if(ty==='path')return 'polygon';if(ty==='pathv2'){var sh=norm(o.get('shape')||'');if(sh==='eli'||sh==='ellipse'||sh==='circle')return 'circle';if(sh==='rec'||sh==='rect'||sh==='rectangle')return 'square';return 'polygon';}return 'square';}
+    function inferredShape(o,rec){
+        var stored=areaShape(rec),ty=objectType(o);
+        // PathV2 has an explicit native shape. It is more authoritative than stale
+        // state metadata and prevents a rectangle with only two points being treated
+        // as an invalid polygon after script migrations.
+        if(ty==='pathv2'){
+            var sh=norm(o.get('shape')||'');
+            if(sh==='eli'||sh==='ellipse'||sh==='circle')return 'circle';
+            if(sh==='rec'||sh==='rect'||sh==='rectangle')return 'square';
+            if(sh==='pol'||sh==='free'||(sh&&sh!=='rec'))return 'polygon';
+        }
+        if(stored==='circle'||stored==='polygon')return stored;
+        if(ty==='path'){var pp=rawPathPoints(o);if((pp.length>5||(rec&&rec.source==='manual'&&pp.length!==5))&&stored!=='circle')return 'polygon';}
+        return stored;
+    }
+    function geomInfo(o,rec){var d=objDims(o,rec);return {cx:objLeft(o),cy:objTop(o),hw:d.w/2,hh:d.h/2,rot:(Number(o.get('rotation'))||0)*Math.PI/180,shape:inferredShape(o,rec)};}
+    function localPoint(info,x,y){var dx=x-info.cx,dy=y-info.cy,c=Math.cos(-info.rot),s=Math.sin(-info.rot);return {x:dx*c-dy*s,y:dx*s+dy*c};}
+    function polygonLocalPoints(o,rec){
+        var pts=rawPathPoints(o);if(pts.length<3)return [];
+        var minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;pts.forEach(function(pt){minX=Math.min(minX,pt[0]);minY=Math.min(minY,pt[1]);maxX=Math.max(maxX,pt[0]);maxY=Math.max(maxY,pt[1]);});
+        var d=objDims(o,rec),bw=Math.max(1e-6,maxX-minX),bh=Math.max(1e-6,maxY-minY),cx=(minX+maxX)/2,cy=(minY+maxY)/2;
+        return pts.map(function(pt){return {x:(pt[0]-cx)*d.w/bw,y:(pt[1]-cy)*d.h/bh};});
+    }
+    function pointInPolygon(p,poly){var inside=false;for(var i=0,j=poly.length-1;i<poly.length;j=i++){var a=poly[i],b=poly[j],hit=((a.y>p.y)!==(b.y>p.y))&&(p.x<(b.x-a.x)*(p.y-a.y)/((b.y-a.y)||1e-12)+a.x);if(hit)inside=!inside;}return inside;}
+    function containsPointArea(area,x,y){var r=geomInfo(area.obj,area.rec),p=localPoint(r,x,y);if(r.shape==='circle'){var nx=p.x/Math.max(0.5,r.hw),ny=p.y/Math.max(0.5,r.hh);return nx*nx+ny*ny<=1.0001;}if(r.shape==='polygon'){var poly=polygonLocalPoints(area.obj,area.rec);return poly.length>=3?pointInPolygon(p,poly):false;}return Math.abs(p.x)<=r.hw+0.01&&Math.abs(p.y)<=r.hh+0.01;}
+    function lineRectIntervalInfo(r,x0,y0,x1,y1){var a=localPoint(r,x0,y0),b=localPoint(r,x1,y1),dx=b.x-a.x,dy=b.y-a.y,t0=0,t1=1;function slab(p,d,min,max){if(Math.abs(d)<1e-9)return p>=min&&p<=max;var u=(min-p)/d,v=(max-p)/d;if(u>v){var z=u;u=v;v=z;}if(u>t0)t0=u;if(v<t1)t1=v;return t0<=t1;}if(!slab(a.x,dx,-r.hw,r.hw)||!slab(a.y,dy,-r.hh,r.hh))return null;return {enter:Math.max(0,t0),exit:Math.min(1,t1)};}
+    function lineEllipseIntervalInfo(r,x0,y0,x1,y1){var a=localPoint(r,x0,y0),b=localPoint(r,x1,y1),rx=Math.max(0.5,r.hw),ry=Math.max(0.5,r.hh),ax=a.x/rx,ay=a.y/ry,dx=(b.x-a.x)/rx,dy=(b.y-a.y)/ry,A=dx*dx+dy*dy,B=2*(ax*dx+ay*dy),C=ax*ax+ay*ay-1;if(A<1e-12){return C<=0?{enter:0,exit:1}:null;}var disc=B*B-4*A*C;if(disc<0)return C<=0?{enter:0,exit:1}:null;var s=Math.sqrt(Math.max(0,disc)),u=(-B-s)/(2*A),v=(-B+s)/(2*A);if(u>v){var q=u;u=v;v=q;}var e=Math.max(0,u),x=Math.min(1,v);if(x<0||e>1||e>x)return null;return {enter:e,exit:x};}
+    function linePolygonIntervalInfo(r,poly,x0,y0,x1,y1){
+        var a=localPoint(r,x0,y0),b=localPoint(r,x1,y1),dx=b.x-a.x,dy=b.y-a.y,ts=[0,1];
+        function cross(ax,ay,bx,by){return ax*by-ay*bx;}
+        for(var i=0;i<poly.length;i++){var p=poly[i],q=poly[(i+1)%poly.length],ex=q.x-p.x,ey=q.y-p.y,den=cross(dx,dy,ex,ey);if(Math.abs(den)<1e-9)continue;var rx=p.x-a.x,ry=p.y-a.y,t=cross(rx,ry,ex,ey)/den,u=cross(rx,ry,dx,dy)/den;if(t>=-1e-9&&t<=1+1e-9&&u>=-1e-9&&u<=1+1e-9)ts.push(Math.max(0,Math.min(1,t)));}
+        ts.sort(function(x,y){return x-y;});var uniq=[];ts.forEach(function(t){if(!uniq.length||Math.abs(t-uniq[uniq.length-1])>1e-6)uniq.push(t);});var first=null,last=null;
+        for(var k=0;k<uniq.length-1;k++){var lo=uniq[k],hi=uniq[k+1],mid=(lo+hi)/2,mp={x:a.x+dx*mid,y:a.y+dy*mid};if(pointInPolygon(mp,poly)){if(first===null)first=lo;last=hi;}}
+        if(first===null){if(pointInPolygon(a,poly)&&pointInPolygon(b,poly))return {enter:0,exit:1};return null;}return {enter:first,exit:last};
+    }
+    function lineAreaInterval(area,x0,y0,x1,y1){var r=geomInfo(area.obj,area.rec);if(r.shape==='circle')return lineEllipseIntervalInfo(r,x0,y0,x1,y1);if(r.shape==='polygon'){var poly=polygonLocalPoints(area.obj,area.rec);return poly.length>=3?linePolygonIntervalInfo(r,poly,x0,y0,x1,y1):null;}return lineRectIntervalInfo(r,x0,y0,x1,y1);}
+    function movementPoint(a,b,t){return {left:Number(a.left)+(Number(b.left)-Number(a.left))*t,top:Number(a.top)+(Number(b.top)-Number(a.top))*t};}
+    function solidAreas(pageId){return pageAreas(pageId).filter(function(a){return areaType(a.rec)==='solid';});}
+    function clipMovementRoute(token,route){
+        if(!isToken(token)||!route||!Array.isArray(route.points)||route.points.length<2)return {blocked:false,route:route};
+        var solids=solidAreas(pageIdOf(token));if(!solids.length)return {blocked:false,route:route};
+        var pts=route.points.map(function(p){return {left:Number(p.left),top:Number(p.top)};}),best=null;
+        for(var i=1;i<pts.length;i++){
+            var a=pts[i-1],b=pts[i],dx=b.left-a.left,dy=b.top-a.top,segPx=Math.sqrt(dx*dx+dy*dy);if(segPx<0.001)continue;
+            var segBest=null;
+            solids.forEach(function(solid){
+                // A token already inside a SOLID may leave it; only outside -> inside/crossing is blocked.
+                if(containsPointArea(solid,a.left,a.top))return;
+                var iv=lineAreaInterval(solid,a.left,a.top,b.left,b.top);if(!iv)return;
+                var enter=Math.max(0,Number(iv.enter)||0),exit=Math.min(1,Number(iv.exit));
+                if(!Number.isFinite(exit)||exit<0||enter>1||exit<enter+1e-7)return;
+                if(!segBest||enter<segBest.enter)segBest={solid:solid,enter:enter,exit:exit};
+            });
+            if(segBest){best={segment:i-1,from:a,to:b,solid:segBest.solid,enter:segBest.enter,segPx:segPx};break;}
+        }
+        if(!best)return {blocked:false,route:route};
+        // Keep the centre at least 2 px on the incoming side of the boundary.
+        var backT=Math.min(0.05,2/Math.max(1,best.segPx)),stopT=Math.max(0,best.enter-backT),stop=movementPoint(best.from,best.to,stopT);
+        var clipped=pts.slice(0,best.segment+1);
+        if(!clipped.length||Math.abs(clipped[clipped.length-1].left-stop.left)>0.01||Math.abs(clipped[clipped.length-1].top-stop.top)>0.01)clipped.push(stop);
+        if(clipped.length<2)clipped=[pts[0],stop];
+        return {blocked:true,left:stop.left,top:stop.top,points:clipped,segment:best.segment,entryT:best.enter,areaId:best.solid.rec.objectId||best.solid.obj.id,areaName:objectName(best.solid.obj,best.solid.rec),message:'невозможно встать в эту область'};
+    }
+    function areaContainsToken(area,token){return !!(area&&token&&pageIdOf(area.obj)===pageIdOf(token)&&containsPointArea(area,Number(token.get('left'))||0,Number(token.get('top'))||0));}
+    function pageAreas(pageId){var out=[];Object.keys(root().areas).forEach(function(id){var a=areaRecord(id);if(a&&pageIdOf(a.obj)===String(pageId||''))out.push(a);});return out;}
+
+    // ---------- Area presentation / height hint ----------
+    function formatFeet(n){n=Number(n)||0;return Math.abs(n-Math.round(n))<1e-9?String(Math.round(n)):String(Math.round(n*100)/100);}
+    function areaHint(rec){return formatFeet(areaHeight(rec))+' фт';}
+    function removeHeightLabel(rec){
+        if(!rec||!rec.properties)return;
+        var id=String(rec.properties.heightLabelId||'');
+        if(id){try{var t=getObj('text',id);if(t)t.remove();}catch(ignore){}delete rec.properties.heightLabelId;}
+    }
+    function createHeightLabel(o,rec,props){
+        var pageId=pageIdOf(o),label=null,base={left:props.left,top:props.top,width:props.width,height:props.height,text:props.text,font_size:props.font_size,color:props.color,layer:props.layer,font_family:'Arial',rotation:0,controlledby:''};
+        // Roll20 parent ids are supplied without the leading underscore when an object is created.
+        // Use pageid first (Jumpgate/current sandbox), then the legacy _pageid form as a fallback.
+        try{var current={};Object.keys(base).forEach(function(k){current[k]=base[k];});current.pageid=pageId;label=createObj('text',current);}catch(ignoreCreate){}
+        if(!label){
+            try{var legacy={};Object.keys(base).forEach(function(k){legacy[k]=base[k];});legacy._pageid=pageId;label=createObj('text',legacy);}catch(ignoreLegacy){}
+        }
+        if(label){rec.properties.heightLabelId=label.id;}
+        return label;
+    }
+    function shouldHideHeightArea(rec){
+        // Static terrain/support geometry is a GM-only technical overlay.
+        // External AD5 Areas (spell visuals) keep their own layer so spell effects
+        // remain visible exactly as their owning module intended.
+        return !!(rec&&!rec.external&&(isSupportArea(rec)||areaType(rec)==='solid'));
+    }
+    function syncAreaLayer(area){
+        if(!area||!area.obj||!area.rec)return;
+        var o=area.obj,rec=area.rec;rec.properties=rec.properties&&typeof rec.properties==='object'?rec.properties:{};
+        var current=String(o.get('layer')||'objects');
+        if(shouldHideHeightArea(rec)){
+            if(current!==HEIGHT_LAYER){
+                if(current!=='map'&&current!=='walls'&&current!==HEIGHT_LAYER)rec.properties.previousVisibleLayer=current||'objects';
+                try{o.set('layer',HEIGHT_LAYER);}catch(ignoreLayer){}
+            }
+            rec.properties.gmHeightLayer=true;
+            return;
+        }
+        // If a formerly-physical manual area is changed into a non-height area,
+        // restore it to the layer it occupied before Environment hid it.
+        if(!rec.external&&rec.properties.gmHeightLayer){
+            var restore=String(rec.properties.previousVisibleLayer||'objects');
+            if(restore==='map'||restore==='walls'||restore===HEIGHT_LAYER)restore='objects';
+            if(current===HEIGHT_LAYER){try{o.set('layer',restore);}catch(ignoreRestore){}}
+            delete rec.properties.gmHeightLayer;delete rec.properties.previousVisibleLayer;
+        }
+    }
+    function syncAreaPresentation(area){
+        if(!area||!area.obj||!area.rec)return;
+        syncAreaLayer(area);
+        var o=area.obj,rec=area.rec,txt=areaHint(rec),ty=objectType(o);
+        // Keep Roll20's hover tooltip for Graphic objects, but ALSO create the same small
+        // visible height tag used by Path / PathV2. This makes zone height visible at a glance.
+        if(ty==='graphic'){
+            try{
+                var cur=String(o.get('tooltip')||''),shown=!!o.get('show_tooltip');
+                if(cur!==txt||!shown)o.set({tooltip:txt,show_tooltip:true});
+            }catch(ignoreTooltip){}
+        }
+        var id=String(rec.properties&&rec.properties.heightLabelId||''),label=id&&getObj('text',id),dims=objDims(o,rec);
+        var layer=shouldHideHeightArea(rec)?HEIGHT_LAYER:String(o.get('layer')||'objects');if(layer==='walls'||layer==='map')layer='objects';
+        // Compact tag: e.g. "20 фт". Keep it INSIDE the top edge of the zone.
+        // The label follows the parent area because syncAreaPresentation is called on every
+        // graphic/path/pathv2 position/size/rotation change.
+        var inset=Math.min(14,Math.max(7,dims.h/4));
+        var labelTop=objTop(o)-dims.h/2+inset;
+        var props={left:objLeft(o),top:labelTop,width:60,height:16,text:txt,font_size:11,color:'#ffffff',layer:layer};
+        if(label){
+            try{
+                // A stale/broken label from older versions is recreated automatically.
+                var lp=pageIdOf(label),op=pageIdOf(o);
+                if(lp&&op&&lp!==op){label.remove();label=null;delete rec.properties.heightLabelId;}
+                else label.set(props);
+            }catch(ignoreSet){try{if(label)label.remove();}catch(ignoreRemove){}label=null;delete rec.properties.heightLabelId;}
+        }
+        if(!label)createHeightLabel(o,rec,props);
+    }
+    function syncAllAreaPresentations(pageId){
+        pageAreas(pageId||'').forEach(syncAreaPresentation);
+    }
+
+    // ---------- Physical cover / area line of effect ----------
+    function tierFromRatio(ratio){ratio=Math.max(0,Math.min(1,Number(ratio)||0));if(ratio>=0.999)return COVER_RULES.full;if(ratio>=0.75)return COVER_RULES.threeQuarter;if(ratio>=0.5)return COVER_RULES.half;if(ratio>=0.25)return COVER_RULES.quarter;return null;}
+    function emptyCover(targetInfo,used,best){return {tier:'none',label:'нет укрытия',ratio:Number(best)||0,percent:Math.round((Number(best)||0)*100),acBonus:0,dexBonus:0,full:false,solid:false,solidFraction:0,areas:used||[],targetHeight:targetInfo?targetInfo.height:undefined,heightSource:targetInfo?targetInfo.source:undefined,samples:[]};}
+    function targetLateralPoints(sourceX,sourceY,target){
+        var tx=Number(target.get('left'))||0,ty=Number(target.get('top'))||0,dx=tx-sourceX,dy=ty-sourceY,len=Math.sqrt(dx*dx+dy*dy);
+        if(len<0.001)return [{x:tx,y:ty,offset:0}];
+        var px=-dy/len,py=dx/len,w=Math.max(1,Number(target.get('width'))||70),h=Math.max(1,Number(target.get('height'))||70),half=Math.abs(px)*w/2+Math.abs(py)*h/2;
+        return COVER_LATERAL_SAMPLES.map(function(k){var off=half*k;return {x:tx+px*off,y:ty+py*off,offset:k};});
+    }
+    function targetHeightThresholdForArea(sourceZ,top,interval){
+        var eps=1e-6,need=-Infinity,blockedAll=false;
+        [Math.max(0,Number(interval.enter)||0),Math.min(1,Number(interval.exit))].forEach(function(t){
+            if(!Number.isFinite(t))return;
+            if(t<=eps){if(sourceZ<=top+0.01)blockedAll=true;return;}
+            var threshold=sourceZ+(top-sourceZ)/t;if(threshold>need)need=threshold;
+        });
+        return {blockedAll:blockedAll,threshold:need};
+    }
+    function coverProfileFromPoint(pageId,sx,sy,sourceZ,target){
+        if(!isToken(target)||String(pageId||'')!==pageIdOf(target))return emptyCover(null,[],0);
+        sx=Number(sx)||0;sy=Number(sy)||0;sourceZ=Number(sourceZ);if(!Number.isFinite(sourceZ))sourceZ=0;
+        var targetInfo=bodyHeightFromSheet(target),targetHeight=Math.max(0.1,targetInfo.height),targetBase=elevation(target),targetTop=targetBase+targetHeight,areas=pageAreas(pageIdOf(target)).filter(function(a){var t=areaType(a.rec);return t==='phys'||t==='solid';}),usedMap={},samples=targetLateralPoints(sx,sy,target),hiddenSum=0,solidHidden=0;
+        samples=samples.map(function(point){
+            var threshold=-Infinity,solid=false,blockers=[];
+            areas.forEach(function(a){
+                var type=areaType(a.rec),iv=lineAreaInterval(a,sx,sy,point.x,point.y);if(!iv||iv.exit<=0.0001||iv.enter>=0.9999)return;
+                var top=areaHeight(a.rec);if(type==='phys'&&top<=0)return;
+                var id=a.rec.objectId||a.obj.id,name=objectName(a.obj,a.rec);
+                if(type==='solid'){
+                    solid=true;blockers.push({id:id,name:name,height:top,type:type,threshold:Infinity});usedMap[id]={id:id,name:name,height:top,type:type};return;
+                }
+                var req=targetHeightThresholdForArea(sourceZ,top,iv);if(req.blockedAll){threshold=Infinity;}else if(req.threshold>threshold)threshold=req.threshold;
+                if(req.blockedAll||req.threshold>targetBase+0.001){blockers.push({id:id,name:name,height:top,type:type,threshold:req.blockedAll?Infinity:req.threshold});usedMap[id]={id:id,name:name,height:top,type:type};}
+            });
+            var hidden=solid||threshold===Infinity?1:Math.max(0,Math.min(1,(threshold-targetBase)/targetHeight));
+            hiddenSum+=hidden;if(solid)solidHidden+=1;
+            return {x:point.x,y:point.y,offset:point.offset,hidden:hidden,visible:1-hidden,threshold:threshold,solid:solid,blockers:blockers,targetBase:targetBase,targetTop:targetTop,sourceZ:sourceZ};
+        });
+        var ratio=samples.length?hiddenSum/samples.length:0,solidFraction=samples.length?solidHidden/samples.length:0,used=Object.keys(usedMap).map(function(k){var u=usedMap[k],r=0;samples.forEach(function(sm){if(sm.blockers.some(function(b){return b.id===u.id;}))r+=sm.hidden;});u.ratio=samples.length?r/samples.length:0;u.full=u.ratio>=0.999;return u;});
+        var rule=tierFromRatio(ratio);if(!rule){var none=emptyCover(targetInfo,used,ratio);none.samples=samples;none.targetBase=targetBase;none.targetTop=targetTop;none.sourceHeight=sourceZ;none.solidFraction=solidFraction;return none;}
+        return {tier:rule.key,label:rule.label,ratio:ratio,percent:Math.round(ratio*100),acBonus:rule.ac,dexBonus:rule.dex,full:!!rule.full,solid:!!rule.full&&solidFraction>=0.999,solidFraction:solidFraction,areas:used,targetHeight:targetHeight,targetBase:targetBase,targetTop:targetTop,heightSource:targetInfo.source,sourceHeight:sourceZ,samples:samples};
+    }
+    function coverBetweenPoint(pageId,sx,sy,sourceHeight,target){return coverProfileFromPoint(pageId,sx,sy,sourceHeight,target);}
+    function coverBetween(source,target){
+        if(!isToken(source)||!isToken(target)||pageIdOf(source)!==pageIdOf(target))return emptyCover(null,[],0);
+        var sourceInfo=bodyHeightFromSheet(source),sourceBase=elevation(source),sourceAim=sourceBase+sourceInfo.height*SOURCE_AIM_FRACTION,result=coverProfileFromPoint(pageIdOf(target),Number(source.get('left'))||0,Number(source.get('top'))||0,sourceAim,target);
+        result.sourceBase=sourceBase;result.sourceBodyHeight=sourceInfo.height;result.sourcePosture=sourceInfo.posture;result.sourceAim=sourceAim;return result;
+    }
+    function propagationLimit(pageId,sx,sy,tx,ty,effectHeight,ignoreCover,sourceBase){
+        if(ignoreCover)return {blocked:false,fraction:1,area:null};
+        pageId=String(pageId||'');sx=Number(sx)||0;sy=Number(sy)||0;tx=Number(tx)||0;ty=Number(ty)||0;
+        effectHeight=Number(effectHeight);if(!Number.isFinite(effectHeight)||effectHeight<=0)effectHeight=5;
+        sourceBase=Number(sourceBase);if(!Number.isFinite(sourceBase))sourceBase=0;
+        var effectTop=sourceBase+effectHeight,best=1,blocker=null;
+        pageAreas(pageId).forEach(function(a){
+            var type=areaType(a.rec);if(type!=='solid'&&type!=='phys')return;
+            // An effect whose centre was deliberately placed inside a volume may spread outward;
+            // this mirrors the movement rule that allows a legacy token to leave SOLID.
+            if(containsPointArea(a,sx,sy))return;
+            var top=areaHeight(a.rec);
+            if(type==='phys'){
+                // A PHYS surface entirely at/below the emitter floor cannot block an
+                // effect travelling across that same elevated floor.
+                if(top<=sourceBase+0.01)return;
+                // Strict campaign rule in absolute Z: propagation clears the obstacle
+                // only when the TOP of the effect is greater than the PHYS top.
+                if(effectTop>top+0.01)return;
+            }
+            var iv=lineAreaInterval(a,sx,sy,tx,ty);if(!iv)return;
+            var enter=Math.max(0,Number(iv.enter)||0),exit=Math.min(1,Number(iv.exit));
+            if(!Number.isFinite(exit)||exit<=0.001||enter>=0.999||exit<=enter+1e-7)return;
+            if(enter<best){best=enter;blocker={id:a.rec.objectId||a.obj.id,name:objectName(a.obj,a.rec),height:top,type:type,area:a};}
+        });
+        return blocker?{blocked:true,fraction:Math.max(0,Math.min(1,best)),area:blocker}:{blocked:false,fraction:1,area:null};
+    }
+    function areaExposure(origin,target,areaHeight,ignoreCover){
+        origin=origin||{};
+        if(!isToken(target))return {blocked:false,cover:emptyCover(null,[],0),dexAdvantage:false,reason:''};
+        var pageId=String(origin.pageId||origin.page||pageIdOf(target));
+        if(pageId!==pageIdOf(target))return {blocked:false,cover:emptyCover(null,[],0),dexAdvantage:false,reason:''};
+        if(ignoreCover)return {blocked:false,ignored:true,cover:emptyCover(bodyHeightFromSheet(target),[],0),dexAdvantage:false,reason:'ПОКР'};
+        var sx=Number(origin.left);if(!Number.isFinite(sx))sx=0;var sy=Number(origin.top);if(!Number.isFinite(sy))sy=0;
+        var sourceBase=Number(origin.elevation);if(!Number.isFinite(sourceBase))sourceBase=0;areaHeight=Number(areaHeight);if(!Number.isFinite(areaHeight)||areaHeight<=0)areaHeight=5;
+        var tx=Number(target.get('left'))||0,ty=Number(target.get('top'))||0,limit=propagationLimit(pageId,sx,sy,tx,ty,areaHeight,false,sourceBase);
+        if(limit.blocked){var blocker=limit.area&&limit.area.area,reason=blocker&&blocker.type==='solid'?'СОЛИД':'полное укрытие',blockedCover={tier:'full',label:'полное укрытие',ratio:1,percent:100,acBonus:0,dexBonus:0,full:true,solid:!!(blocker&&blocker.type==='solid'),solidFraction:blocker&&blocker.type==='solid'?1:0,areas:blocker?[blocker]:[],targetHeight:bodyHeightFeet(target),heightSource:bodyHeightFromSheet(target).source,samples:[]};return {blocked:true,cover:blockedCover,dexAdvantage:false,blockers:blocker?[blocker]:[],reason:reason,propagation:limit};}
+        var emitterZ=sourceBase+areaHeight*0.5,cover=coverProfileFromPoint(pageId,sx,sy,emitterZ,target),dexAdvantage=cover.tier&&cover.tier!=='none';
+        return {blocked:false,cover:cover,dexAdvantage:!!dexAdvantage,blockers:cover.areas||[],reason:dexAdvantage?cover.label:'',propagation:limit};
+    }
+
+    // ---------- Obscuration ----------
+    function attackVisibility(source,target){
+        var result={blocked:false,disadvantage:false,reasons:[],areas:[],distance:rangeFeet(source,target)};
+        if(!isToken(source)||!isToken(target)||pageIdOf(source)!==pageIdOf(target))return result;
+        var sx=Number(source.get('left'))||0,sy=Number(source.get('top'))||0,tx=Number(target.get('left'))||0,ty=Number(target.get('top'))||0,targetTop=elevation(target)+bodyHeightFeet(target),targetBase=elevation(target);
+        var sourceAim=elevation(source)+bodyHeightFeet(source)*SOURCE_AIM_FRACTION,targetAim=targetBase+bodyHeightFeet(target)*0.5;
+        pageAreas(pageIdOf(target)).forEach(function(a){
+            var type=areaType(a.rec);if(type!=='zaslow'&&type!=='zashigh')return;var interval=lineAreaInterval(a,sx,sy,tx,ty);if(!interval||interval.exit-interval.enter<=0.001)return;var h=areaHeight(a.rec);if(h<=0)return;
+            // Treat the shot as a 3-D segment between the creatures' centres. If
+            // the segment is already above the volume throughout the horizontal
+            // intersection, the obscuring area does not affect this attack.
+            var zEnter=sourceAim+(targetAim-sourceAim)*interval.enter,zExit=sourceAim+(targetAim-sourceAim)*interval.exit;
+            if(h<Math.min(zEnter,zExit)-0.01)return;
+            var entry={id:a.rec.objectId||a.obj.id,name:objectName(a.obj,a.rec),height:h,type:type};result.areas.push(entry);
+            if(type==='zaslow'){result.disadvantage=true;result.reasons.push('ЗАСЛОУ '+objectName(a.obj,a.rec));return;}
+            // Heavy obscuration blocks target selection only when it reaches the
+            // target's full vertical extent. Adjacent combat (<=5 ft) is the
+            // campaign exception: targeting is allowed, but at disadvantage.
+            if(h>=targetTop-0.01){
+                if(result.distance<=5.0001){result.disadvantage=true;result.reasons.push('ЗАСХАЙ в 5 фт '+objectName(a.obj,a.rec));}
+                else {result.blocked=true;result.reasons.push('ЗАСХАЙ '+objectName(a.obj,a.rec));}
+            }
+        });
+        return result;
+    }
+
+    // ---------- Terrain / support / pits (bar4 model) ----------
+    function isPit(rec){return areaHeight(rec)<0;}
+    function isSupportArea(rec){return areaType(rec)==='phys'||isPit(rec);}
+    function supportRecord(tokenId){var id=root().supports[String(tokenId||'')];if(!id)return null;var a=areaRecord(id);if(!a||!isSupportArea(a.rec)){delete root().supports[String(tokenId||'')];return null;}return a;}
+    function tokenFootprintSamples(token,x,y){
+        x=Number(x);y=Number(y);if(!Number.isFinite(x))x=Number(token.get('left'))||0;if(!Number.isFinite(y))y=Number(token.get('top'))||0;
+        var hw=Math.max(1,Number(token.get('width'))||70)*0.30,hh=Math.max(1,Number(token.get('height'))||70)*0.30;
+        return [
+            {x:x,y:y,center:true},
+            {x:x-hw,y:y},{x:x+hw,y:y},{x:x,y:y-hh},{x:x,y:y+hh},
+            {x:x-hw,y:y-hh},{x:x+hw,y:y-hh},{x:x-hw,y:y+hh},{x:x+hw,y:y+hh}
+        ];
+    }
+    function supportOverlap(area,token,x,y){
+        var pts=tokenFootprintSamples(token,x,y),inside=0,center=false;
+        pts.forEach(function(p,i){if(containsPointArea(area,p.x,p.y)){inside++;if(i===0)center=true;}});
+        // Centre-in preserves the historical behavior. Majority footprint overlap is
+        // a robust fallback for edge-aligned tokens and migrated PathV2 rectangles.
+        return {inside:center||inside>=5,center:center,count:inside,total:pts.length,ratio:inside/pts.length};
+    }
+    function terrainSurfaceAt(tokenOrId,x,y){
+        var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;if(!isToken(token))return null;
+        x=Number.isFinite(Number(x))?Number(x):(Number(token.get('left'))||0);y=Number.isFinite(Number(y))?Number(y):(Number(token.get('top'))||0);
+        var areas=[];pageAreas(pageIdOf(token)).forEach(function(a){if(!isSupportArea(a.rec))return;var overlap=supportOverlap(a,token,x,y);if(overlap.inside)areas.push({area:a,overlap:overlap});});
+        // Highest physical level wins. If only pits are present, the least-deep pit floor wins.
+        areas.sort(function(a,b){return areaHeight(b.area.rec)-areaHeight(a.area.rec);});
+        var hit=areas[0];if(!hit)return null;var a=hit.area;
+        return {areaId:a.rec.objectId||a.obj.id,height:areaHeight(a.rec),name:objectName(a.obj,a.rec),area:a,overlap:hit.overlap};
+    }
+    function terrainHeightAt(tokenOrId,x,y){var s=terrainSurfaceAt(tokenOrId,x,y);return s?Number(s.height):0;}
+    function pitSurfaceAt(tokenOrId,x,y){var s=terrainSurfaceAt(tokenOrId,x,y);return s&&Number(s.height)<0?s:null;}
+    function negativeHeightAllowed(tokenOrId,h){var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;h=Number(h);if(!isToken(token)||!Number.isFinite(h)||h>=0)return false;return Math.abs(terrainHeightAt(token)-h)<=0.11;}
+    function landingSurface(tokenOrId,fromHeight){var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;if(!isToken(token))return null;var s=terrainSurfaceAt(token);if(!s)return null;var top=Number(fromHeight);if(!Number.isFinite(top))top=elevation(token);return Number(s.height)<top-0.01?s:null;}
+    function clearSupport(tokenOrId){var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;if(token&&token.id)delete root().supports[token.id];return true;}
+    function assignSurface(token,surface){
+        if(!isToken(token))return 0;
+        if(surface&&surface.areaId){root().supports[token.id]=surface.areaId;setTerrainHeight(token,Number(surface.height)||0);return Number(surface.height)||0;}
+        delete root().supports[token.id];setTerrainHeight(token,0);return 0;
+    }
+    function landOnSurface(tokenOrId,surface){
+        var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;if(!isToken(token))return 0;
+        var a=null;if(surface&&surface.area&&surface.area.rec)a=surface.area;else if(surface&&surface.areaId)a=areaRecord(surface.areaId);else if(typeof surface==='string')a=areaRecord(surface);
+        if(!a||!isSupportArea(a.rec)||!areaContainsToken(a,token)){assignSurface(token,null);token.set('bar3_value',0);return 0;}
+        var h=areaHeight(a.rec);assignSurface(token,{areaId:a.rec.objectId||a.obj.id,height:h,area:a,name:objectName(a.obj,a.rec)});token.set('bar3_value',0);return h;
+    }
+    function syncSupport(token){
+        if(!isTerrainManagedToken(token))return null;var surface=terrainSurfaceAt(token);assignSurface(token,surface);
+        try{if(typeof AD5Height!=='undefined'&&AD5Height){if(typeof AD5Height.syncMarker==='function')AD5Height.syncMarker(token);if(typeof AD5Height.refreshTooltip==='function')AD5Height.refreshTooltip(token);}}catch(ignore){}
+        return surface&&surface.area||null;
+    }
+    function standableSupport(token){var s=terrainSurfaceAt(token);return s&&Number(s.height)>0&&s.area&&areaType(s.area.rec)==='phys'?s.area:null;}
+    function standOn(token,area){
+        if(!isToken(token)||!area)throw new Error('Не найден токен или область.');if(areaType(area.rec)!=='phys')throw new Error('Встать можно только на область ФИЗ.');var h=areaHeight(area.rec);if(h<=0)throw new Error('STAND используется только для положительной поверхности.');
+        assignSurface(token,{areaId:area.rec.objectId||area.obj.id,height:h,area:area,name:objectName(area.obj,area.rec)});token.set('bar3_value',0);
+        try{if(typeof AD5Height!=='undefined'&&AD5Height){if(typeof AD5Height.syncMarker==='function')AD5Height.syncMarker(token);if(typeof AD5Height.refreshTooltip==='function')AD5Height.refreshTooltip(token);}}catch(ignore){}
+        return h;
+    }
+    function requestTerrainFall(token,fromTerrain,toTerrain,reason){
+        try{
+            if(typeof AD5Height==='undefined'||!AD5Height||typeof AD5Height.terrainFall!=='function'){
+                sendChat(SCRIPT,'/w gm <b>Environment → Height:</b> AD5Height.terrainFall недоступен. Проверьте, что включён только один актуальный AD5 Height Engine.',null,{noarchive:true});
+                return false;
+            }
+            return !!AD5Height.terrainFall(token,fromTerrain,toTerrain,reason||'Сход на более низкую местность');
+        }catch(e){
+            sendChat(SCRIPT,'/w gm <b>Environment → Height ошибка:</b> '+esc(e&&e.message?e.message:e),null,{noarchive:true});
+            return false;
+        }
+    }
+    function applyTerrainTransition(token,oldTerrain,newSurface,oldFlight,reason){
+        if(!isToken(token))return false;oldTerrain=Number(oldTerrain);if(!Number.isFinite(oldTerrain))oldTerrain=terrainHeightFeet(token);oldFlight=Number(oldFlight);if(!Number.isFinite(oldFlight))oldFlight=flightHeightFeet(token);oldFlight=Math.max(0,oldFlight);
+        var newTerrain=newSurface?Number(newSurface.height):0;if(!Number.isFinite(newTerrain))newTerrain=0, newSurface=null;
+        var oldTotal=oldTerrain+oldFlight;assignSurface(token,newSurface);
+        if(oldFlight>0){
+            // While flying, preserve absolute world elevation across terrain changes.
+            // Example: bar3 10 + bar4 20 => total 30; moving to terrain 0 gives bar3 30.
+            var newFlight=Math.max(0,oldTotal-newTerrain);token.set('bar3_value',newFlight);
+            try{if(typeof AD5Height!=='undefined'&&AD5Height){AD5Height.syncMarker(token);AD5Height.refreshTooltip(token);}}catch(ignoreFly){}
+            return Math.abs(newTerrain-oldTerrain)>0.01||Math.abs(newFlight-oldFlight)>0.01;
+        }
+        if(Number(token.get('bar3_value'))<0)token.set('bar3_value',0);
+        try{if(typeof AD5Height!=='undefined'&&AD5Height){AD5Height.syncMarker(token);AD5Height.refreshTooltip(token);}}catch(ignoreGround){}
+        if(newTerrain<oldTerrain-0.01)return requestTerrainFall(token,oldTerrain,newTerrain,reason||'Сход на более низкую местность')||true;
+        return Math.abs(newTerrain-oldTerrain)>0.01;
+    }
+    function dropIfUnsupported(token){
+        if(!isTerrainManagedToken(token))return false;var oldTerrain=terrainHeightFeet(token),surface=terrainSurfaceAt(token);var next=surface?Number(surface.height):0;if(Math.abs(next-oldTerrain)<=0.01){assignSurface(token,surface);return false;}return applyTerrainTransition(token,oldTerrain,surface,flightHeightFeet(token),'Изменение поверхности под токеном');
+    }
+    function processPitTransition(){return false;}
+    function processTokenMove(token,fromX,fromY,fromTerrain,fromFlight,reason){
+        if(!isTerrainManagedToken(token))return false;
+        fromX=Number(fromX);fromY=Number(fromY);
+        // For ordinary player/GM drags, bar4 can be stale by the time the deferred
+        // movement handler runs. Reconstruct the PRE-MOVE support from the old X/Y.
+        // A positive PHYS under those coordinates is authoritative for a fall off
+        // an edge; this is independent of handler ordering and of current bar4.
+        var oldSurface=(Number.isFinite(fromX)&&Number.isFinite(fromY))?terrainSurfaceAt(token,fromX,fromY):null;
+        var oldTerrain=Number(fromTerrain);
+        if(oldSurface&&oldSurface.area&&areaType(oldSurface.area.rec)==='phys'&&Number(oldSurface.height)>0){
+            oldTerrain=Number(oldSurface.height);
+        }else if(!Number.isFinite(oldTerrain)){
+            oldTerrain=oldSurface?Number(oldSurface.height):0;
+        }
+        if(!Number.isFinite(oldTerrain))oldTerrain=0;
+        var oldFlight=Number(fromFlight);if(!Number.isFinite(oldFlight))oldFlight=flightHeightFeet(token);
+        var surface=terrainSurfaceAt(token),newTerrain=surface?Number(surface.height):0;
+        if(!Number.isFinite(newTerrain))newTerrain=0;
+        var leftPositivePhys=!!(oldSurface&&oldSurface.area&&areaType(oldSurface.area.rec)==='phys'&&Number(oldSurface.height)>0&&newTerrain<oldTerrain-0.01);
+        var why=reason||(leftPositivePhys?('Выход из зоны ФИЗ «'+String(oldSurface.name||'поверхность')+'»'):'Переход на более низкую местность');
+        return applyTerrainTransition(token,oldTerrain,surface,oldFlight,why);
+    }
+    function beginForcedMove(tokenOrId){
+        var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;if(!isTerrainManagedToken(token))return null;
+        var x=Number(token.get('left'))||0,y=Number(token.get('top'))||0,terrain=terrainHeightFeet(token),flight=flightHeightFeet(token);
+        if(!Number.isFinite(terrain))terrain=terrainHeightAt(token,x,y);if(!Number.isFinite(terrain))terrain=0;
+        if(!Number.isFinite(flight))flight=0;
+        var snap={id:'forced-'+Date.now().toString(36)+'-'+(++forcedMoveSequence),tokenId:token.id,fromX:x,fromY:y,fromTerrain:terrain,fromFlight:Math.max(0,flight),created:Date.now()};
+        forcedMoveGuards[token.id]=snap;delete pendingTokenMoves[token.id];
+        return {id:snap.id,tokenId:snap.tokenId,fromX:snap.fromX,fromY:snap.fromY,fromTerrain:snap.fromTerrain,fromFlight:snap.fromFlight,created:snap.created};
+    }
+    function endForcedMove(tokenOrId,snapshot,reason){
+        var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;if(!isToken(token)||!snapshot)return false;
+        var guard=forcedMoveGuards[token.id];if(guard&&snapshot.id&&guard.id!==snapshot.id)return false;
+        delete forcedMoveGuards[token.id];delete pendingTokenMoves[token.id];
+        return processTokenMove(token,Number(snapshot.fromX),Number(snapshot.fromY),Number(snapshot.fromTerrain),Number(snapshot.fromFlight),reason||'Падение после принудительного перемещения');
+    }
+    function cancelForcedMove(tokenOrId,snapshot){
+        var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId,id=token&&token.id?token.id:String(snapshot&&snapshot.tokenId||tokenOrId||'');
+        var guard=forcedMoveGuards[id];if(!guard)return false;if(snapshot&&snapshot.id&&guard.id!==snapshot.id)return false;
+        delete forcedMoveGuards[id];delete pendingTokenMoves[id];return true;
+    }
+    function hookHeight(){if(HEIGHT_HOOKED)return;try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.onChange==='function'){AD5Height.onChange(function(ev){if(ev&&ev.token)syncSupport(ev.token);});HEIGHT_HOOKED=true;}}catch(ignore){}}
+    function migrateLegacyToken(token){
+        if(!isTerrainManagedToken(token))return;var r=root(),old=Number(token.get('bar3_value'));if(!Number.isFinite(old))old=0;var surface=terrainSurfaceAt(token),terrain=surface?Number(surface.height):0,hadSupport=!!r.supports[token.id],flight=0;
+        // <=1.3.5 stored absolute/support elevation in bar3. Convert once to bar3 flight + bar4 terrain.
+        if(surface){if(hadSupport||old<0||Math.abs(old-terrain)<=0.11)flight=0;else flight=Math.max(0,old-terrain);}else flight=Math.max(0,old);
+        assignSurface(token,surface);token.set('bar3_value',flight);
+    }
+    function syncTokenTerrainNoDamage(token){
+        if(!isTerrainManagedToken(token))return;var oldTerrain=terrainHeightFeet(token),oldFlight=flightHeightFeet(token),oldTotal=oldTerrain+oldFlight,surface=terrainSurfaceAt(token),newTerrain=surface?Number(surface.height):0;assignSurface(token,surface);
+        if(oldFlight>0)token.set('bar3_value',Math.max(0,oldTotal-newTerrain));else token.set('bar3_value',0);
+    }
+    // Restart/update must never reinterpret an already stored bar4 as zero merely
+    // because no PHYS region is currently registered. Preserve the token's native
+    // terrain value and only rebuild support ownership when it exactly matches a
+    // surface under the token. Explicit !ad5env repair still performs a full sync.
+    function preserveTokenTerrainOnReady(token){
+        if(!isTerrainManagedToken(token))return;
+        var native=nativeBar4Value(token);
+        if(Number.isFinite(native)){
+            root().terrain[token.id]=native;
+            var surface=null;try{surface=terrainSurfaceAt(token);}catch(ignoreSurface){}
+            if(surface&&Math.abs(Number(surface.height)-native)<=0.01)root().supports[token.id]=surface.areaId;else delete root().supports[token.id];
+            try{if(typeof AD5Height!=='undefined'&&AD5Height){if(typeof AD5Height.syncMarker==='function')AD5Height.syncMarker(token);if(typeof AD5Height.refreshTooltip==='function')AD5Height.refreshTooltip(token);}}catch(ignoreHeight){}
+            return native;
+        }
+        syncTokenTerrainNoDamage(token);
+        return terrainHeightFeet(token);
+    }
+    function resyncPageTransitions(pageId,reason){findObjs({_type:'graphic',_subtype:'token',_pageid:String(pageId||'')}).forEach(function(t){if(isTerrainManagedToken(t))dropIfUnsupported(t);});}
+
+    // ---------- Area creation / registration ----------
+    function isJumpgate(){var c=Campaign(),r='';try{r=String(c.get('release')||'').toLowerCase();}catch(ignoreRelease){}if(r==='jumpgate')return true;try{r=String(c.get('_release')||'').toLowerCase();}catch(ignoreLegacyRelease){}return r==='jumpgate';}
+    function shapePoints(shape,w,h){if(shape==='circle'){var out=[];for(var i=0;i<=64;i++){var a=i*Math.PI/32;out.push([i?'L':'M',w/2+w/2*Math.cos(a),h/2+h/2*Math.sin(a)]);}return out;}return [['M',0,0],['L',w,0],['L',w,h],['L',0,h],['L',0,0]];}
+    function pathV2Points(shape,w,h){return shape==='circle'?[[0,0],[w,h]]:[[0,0],[w,h]];}
+    function createEnvPath(pageId,shape,sizeFt,left,top,layer){var page=getObj('page',pageId);if(!page)throw new Error('Страница не найдена.');layer=String(layer||'objects')===HEIGHT_LAYER?HEIGHT_LAYER:'objects';var scale=Number(page.get('scale_number'))||5,factor=70/scale,w=(shape==='circle'?sizeFt*2:sizeFt)*factor,h=w;if(isJumpgate())return createObj('pathv2',{pageid:pageId,layer:layer,shape:shape==='circle'?'eli':'rec',points:JSON.stringify(pathV2Points(shape,w,h)),x:left,y:top,rotation:0,stroke:BROWN,stroke_width:5,fill:'transparent',controlledby:'',fadeOnOverlap:false,renderAsScenery:false,baseOpacity:1});return createObj('path',{_pageid:pageId,layer:layer,_path:JSON.stringify(shapePoints(shape,w,h)),width:w,height:h,left:left,top:top,rotation:0,scaleX:1,scaleY:1,stroke:BROWN,stroke_width:5,fill:'transparent',controlledby:''});}
+    function addArea(o,h,type,opts){if(!isEnvDrawable(o))throw new Error('Выберите рисунок/graphic или path, а не боевой токен.');h=Number(h);if(!Number.isFinite(h)||Math.abs(h)<1e-9)throw new Error('Высота области не может быть 0. Положительная = поверхность, отрицательная = пропасть.');type=typeFromInput(type)||'phys';opts=opts||{};var rec=root().areas[o.id]||{};rec.objectId=o.id;rec.objectType=objectType(o);rec.pageId=pageIdOf(o);rec.name=opts.name||rec.name||objectName(o);rec.properties=rec.properties&&typeof rec.properties==='object'?rec.properties:{};rec.properties.height=h;rec.properties.type=type;rec.properties.shape=opts.shape||rec.properties.shape||defaultShapeForObject(o);delete rec.properties.pixelWidth;delete rec.properties.pixelHeight;rec.source=opts.source||rec.source||'manual';rec.external=!!opts.external;root().areas[o.id]=rec;syncAreaPresentation({obj:o,rec:rec});if(areaType(rec)==='phys'||areaType(rec)==='solid'||areaHeight(rec)<0){var ap=pageIdOf(o);setTimeout(function(){try{resyncPageTransitions(ap,'Регистрация/изменение области высоты');}catch(e){sendChat(SCRIPT,'/w gm <b>Синхронизация области:</b> '+esc(e&&e.message?e.message:e),null,{noarchive:true});}},0);}return rec;}
+    function registerExternalArea(oOrId,h,type,opts){var o=typeof oOrId==='string'?envObject(oOrId):oOrId;if(!o)return null;opts=opts||{};opts.external=true;opts.source=opts.source||'AD5 Areas';return addArea(o,h,type,opts);}
+    function removeArea(id,options){options=options||{};var r=root(),existing=r.areas[id],page=existing&&existing.pageId;if(existing)removeHeightLabel(existing);delete r.areas[id];if(page&&!options.keepHeight)resyncPageTransitions(page,'Исчезновение поверхности');}
+    function unregisterExternalArea(id){removeArea(String(id||''));return true;}
+    function setAreaHeightById(id,h){h=Number(h);if(!Number.isFinite(h)||Math.abs(h)<1e-9)throw new Error('Высота не может быть 0.');var a=areaRecord(id);if(a){a.rec.properties.height=h;syncAreaPresentation(a);}try{if(h>0&&typeof AD5Areas!=='undefined'&&AD5Areas&&typeof AD5Areas.setAreaHeight==='function')AD5Areas.setAreaHeight(id,h);}catch(ignore){}if(a)resyncPageTransitions(pageIdOf(a.obj),'Изменение высоты поверхности');return !!a;}
+    function createManual(shape,size,type,height,pid,msg){shape=norm(shape);shape=/^(?:circle|круг)$/.test(shape)?'circle':(/^(?:square|квадрат)$/.test(shape)?'square':null);if(!shape)throw new Error('Форма: circle/круг или square/квадрат.');size=Number(size);height=Number(height);type=typeFromInput(type);if(!Number.isFinite(size)||size<=0)throw new Error('Размер должен быть больше 0.');if(!Number.isFinite(height)||Math.abs(height)<1e-9)throw new Error('Высота не может быть 0. Отрицательная высота создаёт пропасть.');if(!type)throw new Error('Тип: ФИЗ, ЗАСЛОУ, ЗАСХАЙ или СОЛИД.');var pageId=playerPageId(pid),page=getObj('page',pageId);if(!page)throw new Error('Активная страница не найдена.');var left=Number(page.get('width')||33)*70/2,top=Number(page.get('height')||20)*70/2;var sel=selectedObjects(msg||{}).filter(function(o){return objectType(o)==='graphic';})[0];if(sel){left=Number(sel.get('left'))||left;top=Number(sel.get('top'))||top;}var heightLayer=(type==='phys'||type==='solid'||height<0)?HEIGHT_LAYER:'objects';var p=createEnvPath(pageId,shape,size,left,top,heightLayer);if(!p)throw new Error('Не удалось создать область.');var rec=addArea(p,height,type,{shape:shape,source:'GM macro',name:TYPE_LABELS[type]+' '+height+' фт'});try{if(typeof toBack==='function')toBack(p);}catch(ignoreBack){}return {obj:p,rec:rec};}
+
+    // ---------- API / setup ----------
+    function tokenActionName(rank,label){return Array(Math.max(0,Number(rank)||0)+1).join('\u200b')+label;}
+    function plainTokenActionName(name){return String(name||'').replace(/^\u200b+/,'');}
+    function ensureTokenMacros(){
+        try{
+            // Default Roll20 Token Actions are alphabetically sorted. Invisible
+            // zero-width prefixes keep the visible labels clean while enforcing
+            // one deterministic order across global macros and character abilities.
+            // The old STAND support-placement command remains available as
+            // !ad5env stand, but its Token Action is intentionally removed.
+            var defs=[
+                {rank:1,name:'Сесть',action:'!ad5env crouch'},
+                {rank:2,name:'Лечь',action:'!ad5env lie'},
+                {rank:3,name:'Встать',action:'!ad5env rise'}
+            ];
+            findObjs({_type:'player'}).forEach(function(pl){
+                var macros=findObjs({_type:'macro'}).filter(function(m){return String(m.get('_playerid')||m.get('playerid')||'')===String(pl.id);});
+                // Remove obsolete posture buttons from earlier builds.
+                macros.filter(function(m){var p=plainTokenActionName(m.get('name')),a=String(m.get('action')||'').trim();return p==='STAND'||p==='Пригнуться'||a==='!ad5env stand';}).forEach(function(m){try{m.remove();}catch(ignoreOld){}});
+                macros=findObjs({_type:'macro'}).filter(function(m){return String(m.get('_playerid')||m.get('playerid')||'')===String(pl.id);});
+                defs.forEach(function(def){
+                    var wanted=tokenActionName(def.rank,def.name),matches=macros.filter(function(m){return String(m.get('action')||'').trim()===def.action||plainTokenActionName(m.get('name'))===def.name;});
+                    var macro=matches[0]||null,props={name:wanted,action:def.action,istokenaction:true,visibleto:''};
+                    if(macro){var patch={},changed=false;Object.keys(props).forEach(function(k){if(String(macro.get(k)==null?'':macro.get(k))!==String(props[k]==null?'':props[k])){patch[k]=props[k];changed=true;}});if(changed)macro.set(patch);}else macro=createObj('macro',{name:wanted,playerid:pl.id,action:def.action,istokenaction:true,visibleto:''});
+                    matches.slice(1).forEach(function(m){try{m.remove();}catch(ignoreDup){}});
+                });
+                // This is deliberately a normal GM macro rather than a Token Action:
+                // Token Actions are not available when the GM selects a Path/PathV2.
+                // The command therefore works with drawings, paths and map graphics.
+                if(playerIsGM(pl.id)){
+                    var solidName='Сделать СОЛИД',solidAction='!ad5env make-solid';
+                    var solidOwned=findObjs({_type:'macro',name:solidName}).filter(function(m){return String(m.get('_playerid')||m.get('playerid')||'')===String(pl.id);});
+                    var solidProps={action:solidAction,istokenaction:false,visibleto:''};
+                    if(solidOwned[0])solidOwned[0].set(solidProps);else createObj('macro',{name:solidName,playerid:pl.id,action:solidAction,istokenaction:false,visibleto:''});
+                }
+            });
+        }catch(ignore){}
+    }
+    function setPosture(token,mode){
+        if(!isToken(token))return {ok:false,mode:'stand',error:'token'};
+        mode=(mode==='crouch'||mode==='lie')?mode:'stand';
+        // Resolve both tags before changing anything, so a missing Earthdawn set
+        // can never leave a token half-switched between postures.
+        var crouchTag=markerTag(POSTURE_MARKERS.crouch),lieTag=markerTag(POSTURE_MARKERS.lie);
+        if((mode==='crouch'&&!crouchTag)||(mode==='lie'&&!lieTag))return {ok:false,mode:postureOf(token),error:'missing-marker',name:mode==='crouch'?POSTURE_MARKERS.crouch:POSTURE_MARKERS.lie};
+        var a=setTokenMarker(token,POSTURE_MARKERS.crouch,mode==='crouch');if(!a.ok)return {ok:false,mode:postureOf(token),error:a.error,name:a.name};
+        var b=setTokenMarker(token,POSTURE_MARKERS.lie,mode==='lie');if(!b.ok)return {ok:false,mode:postureOf(token),error:b.error,name:b.name};
+        return {ok:true,mode:mode};
+    }
+    function togglePosture(token,mode){
+        if(!isToken(token))return {ok:false,mode:'stand',error:'token'};
+        var current=postureOf(token),next=current===mode?'stand':mode;return setPosture(token,next);
+    }
+    function makeSelectedSolid(msg){
+        if(!playerIsGM(msg.playerid))throw new Error('СОЛИД может создавать только GM.');
+        var objs=selectedObjects(msg).filter(isEnvDrawable);
+        if(!objs.length)throw new Error('Выберите один или несколько рисунков/graphics или Path/PathV2. Боевые токены персонажей не преобразуются в СОЛИД.');
+        var pages={},created=0,converted=0;
+        objs.forEach(function(o){
+            var existing=areaRecord(o.id),h=5;
+            if(existing){
+                h=areaHeight(existing.rec);if(!Number.isFinite(h)||Math.abs(h)<1e-9)h=5;
+                existing.rec.properties=existing.rec.properties&&typeof existing.rec.properties==='object'?existing.rec.properties:{};
+                existing.rec.properties.type='solid';
+                existing.rec.properties.height=h;
+                syncAreaPresentation(existing);
+                converted++;
+            }else{
+                addArea(o,h,'solid',{source:'GM macro · Сделать СОЛИД',name:objectName(o)||'СОЛИД'});
+                created++;
+            }
+            pages[pageIdOf(o)]=true;
+            try{if(typeof toBack==='function')toBack(o);}catch(ignoreBack){}
+        });
+        // If an existing PHYS surface was converted, tokens standing on it must
+        // immediately lose that support and re-evaluate their terrain/fall state.
+        Object.keys(pages).forEach(function(pageId){if(pageId)resyncPageTransitions(pageId,'Объект преобразован в СОЛИД');});
+        sendChat(SCRIPT,'/w gm <b>Сделать СОЛИД:</b> обработано <b>'+objs.length+'</b> объект(а/ов). Новых: '+created+', преобразовано существующих областей: '+converted+'. Все выбранные СОЛИД перенесены на GM Layer.',null,{noarchive:true});
+        return objs.length;
+    }
+
+    function runtimeRelease(){var c=Campaign(),a='',b='';try{a=String(c.get('release')||'');}catch(ignoreA){}try{b=String(c.get('_release')||'');}catch(ignoreB){}return {release:a,_release:b,jumpgate:isJumpgate()};}
+    function doctorReport(msg){
+        var rel=runtimeRelease(),r=root(),page=playerPageId(msg.playerid),areas=pageAreas(page),lines=[];
+        lines.push('<b>AD5 Environment '+esc(VERSION)+' · DOCTOR</b>');
+        lines.push('Roll20 release=<b>'+esc(rel.release||'∅')+'</b>, _release=<b>'+esc(rel._release||'∅')+'</b>, режим=<b>'+(rel.jumpgate?'Jumpgate / PathV2':'Legacy / Path')+'</b>.');
+        lines.push('Глобалы: Height=<b>'+esc((typeof AD5Height!=='undefined'&&AD5Height&&AD5Height.version)||'НЕТ')+'</b>, Areas=<b>'+esc((typeof AD5Areas!=='undefined'&&AD5Areas&&AD5Areas.version)||'НЕТ')+'</b>, AD5=<b>'+esc((typeof AD5!=='undefined'&&AD5&&AD5.version)||'НЕТ')+'</b>.');
+        lines.push('state.Environment version=<b>'+esc(r.version||'∅')+'</b>'+(String(r.version||'')!==VERSION?' <b style="color:#b00">— возможны одновременно включённые старые Environment</b>':'')+'.');
+        lines.push('Зарегистрировано областей на активной странице: <b>'+areas.length+'</b> (всего '+Object.keys(r.areas||{}).length+').');
+        var sel=selectedObjects(msg);
+        sel.forEach(function(o){
+            if(isToken(o)){
+                var surf=null;try{surf=terrainSurfaceAt(o);}catch(e){lines.push('<b>'+esc(o.get('name')||o.id)+'</b>: ошибка terrainSurfaceAt: '+esc(e.message||e));return;}
+                var b3='';try{b3=String(o.get('bar3_value')==null?'':o.get('bar3_value'));}catch(ignoreB3){}
+                var b4='';try{b4=String(o.get('bar4_value')==null?'':o.get('bar4_value'));}catch(ignoreB4){}
+                lines.push('<b>'+esc(o.get('name')||o.id)+'</b>: bar3='+esc(b3||'∅')+', bar4='+esc(b4||'∅')+', terrain='+esc(terrainHeightFeet(o))+' фт, surface='+(surf?('<b>'+esc(surf.name)+' '+esc(surf.height)+' фт</b>'):'нет')+', autoTerrain='+(isTerrainManagedToken(o)?'<b>ДА</b>':'НЕТ · высота сохраняется как у объекта')+'.');
+            }else if(isEnvDrawable(o)){
+                var ar=areaRecord(o.id);lines.push('Объект <b>'+esc(o.id)+'</b>: type='+esc(objectType(o))+', layer='+esc(o.get('layer')||'')+', зарегистрирован='+(ar?'<b>ДА</b>':'<b>НЕТ</b>')+(ar?', '+esc(TYPE_LABELS[areaType(ar.rec)]||areaType(ar.rec))+' '+esc(areaHeight(ar.rec))+' фт, shape='+esc(inferredShape(ar.obj,ar.rec)):'')+'.');
+            }
+        });
+        var toks=sel.filter(isToken);if(toks.length===2){try{var c=coverBetween(toks[0],toks[1]);lines.push('Укрытие '+esc(toks[0].get('name')||toks[0].id)+' → '+esc(toks[1].get('name')||toks[1].id)+': <b>'+esc(c.label||c.tier||'нет')+'</b>, '+esc(c.percent||0)+'%.');}catch(e){lines.push('Ошибка coverBetween: <b>'+esc(e.message||e)+'</b>.');}}
+        sendChat(SCRIPT,'/w gm '+lines.join('<br>'),null,{noarchive:true});
+    }
+    function repairRuntime(msg){
+        if(!playerIsGM(msg.playerid))throw new Error('REPAIR доступен только GM.');
+        hookHeight();var page=playerPageId(msg.playerid),areas=pageAreas(page),areaCount=0,tokenCount=0;
+        areas.forEach(function(a){try{syncAreaPresentation(a);areaCount++;}catch(e){sendChat(SCRIPT,'/w gm Ошибка области '+esc(a&&a.obj&&a.obj.id||'?')+': '+esc(e.message||e),null,{noarchive:true});}});
+        findObjs({_type:'graphic',_subtype:'token'}).forEach(function(t){if(isTerrainManagedToken(t)&&pageIdOf(t)===page){try{syncTokenTerrainNoDamage(t);tokenCount++;}catch(e){sendChat(SCRIPT,'/w gm Ошибка токена '+esc(t.get('name')||t.id)+': '+esc(e.message||e),null,{noarchive:true});}}});
+        sendChat(SCRIPT,'/w gm <b>Environment REPAIR:</b> областей синхронизировано '+areaCount+', токенов '+tokenCount+'.',null,{noarchive:true});
+        return {areas:areaCount,tokens:tokenCount};
+    }
+
+    function markerSetupStatus(){
+        return {crouch:{name:POSTURE_MARKERS.crouch,tag:markerTag(POSTURE_MARKERS.crouch)},lie:{name:POSTURE_MARKERS.lie,tag:markerTag(POSTURE_MARKERS.lie)}};
+    }
+    function command(msg){
+        if(msg.type!=='api'||!/^!ad5env(?:\s|$)/i.test(msg.content))return;var a=msg.content.trim().split(/\s+/),sub=norm(a[1]||'status');
+        try{
+            if(sub==='ping'){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' '+VERSION+'</b> активен.',null,{noarchive:true});return;}
+            if(sub==='doctor'||sub==='diag'||sub==='диагностика'){doctorReport(msg);return;}
+            if(sub==='repair'||sub==='починить'||sub==='sync-all'){repairRuntime(msg);return;}
+            if(sub==='make-solid'||sub==='makesolid'||sub==='solid'||sub==='сделать-солид'||sub==='сделатьсолид'){makeSelectedSolid(msg);return;}
+            if(sub==='create'||sub==='создать'){
+                if(!playerIsGM(msg.playerid))throw new Error('Создавать окружение может только GM.');var made=createManual(a[2],number(a[3]),a[4],number(a[5]),msg.playerid,msg);sendChat(SCRIPT,'/w gm Создана коричневая область <b>'+esc(TYPE_LABELS[areaType(made.rec)])+'</b>: '+esc(inferredShape(made.obj,made.rec))+' · высота <b>'+areaHeight(made.rec)+' фт</b>'+(shouldHideHeightArea(made.rec)?' · <b>слой GM</b>':'')+'.',null,{noarchive:true});return;
+            }
+            if(sub==='add'){
+                if(!playerIsGM(msg.playerid))throw new Error('Изменять окружение может только GM.');var h=number(a[2]),type=typeFromInput(a[3])||'phys';if(!Number.isFinite(h)||Math.abs(h)<1e-9)throw new Error('Формат: !ad5env add 8 ФИЗ или !ad5env add -50 ФИЗ');var objs=selectedObjects(msg).filter(isEnvDrawable);if(!objs.length)throw new Error('Выберите рисунок/graphic или path области.');objs.forEach(function(o){addArea(o,h,type);});sendChat(SCRIPT,'/w gm Область окружения: '+esc(TYPE_LABELS[type])+' · высота <b>'+h+' фт</b>'+(objs.some(function(o){var ar=areaRecord(o.id);return ar&&shouldHideHeightArea(ar.rec);})?' · <b>слой GM</b>':'')+'.',null,{noarchive:true});return;
+            }
+            if(sub==='height'||sub==='set-height'||sub==='высота'){
+                if(!playerIsGM(msg.playerid))throw new Error('Изменять высоту может только GM.');var nh=number(a[2]);if(!Number.isFinite(nh)||Math.abs(nh)<1e-9)throw new Error('Формат: !ad5env set-height 8 или -50');var objsH=selectedObjects(msg).filter(isEnvDrawable);if(!objsH.length)throw new Error('Выберите область.');objsH.forEach(function(o){var existing=areaRecord(o.id);if(existing){setAreaHeightById(o.id,nh);return;}var touched=false;try{if(nh>0&&typeof AD5Areas!=='undefined'&&AD5Areas&&typeof AD5Areas.setAreaHeight==='function')touched=!!AD5Areas.setAreaHeight(o.id,nh);}catch(ignoreAreaHeight){}if(!touched)addArea(o,nh,'phys');});sendChat(SCRIPT,'/w gm Высота выбранной области перезаписана: <b>'+nh+' фт</b>.',null,{noarchive:true});return;
+            }
+            if(sub==='remove'||sub==='delete'){
+                if(!playerIsGM(msg.playerid))throw new Error('Только GM.');var objs2=selectedObjects(msg);if(!objs2.length)throw new Error('Выберите область.');objs2.forEach(function(o){removeArea(o.id);});sendChat(SCRIPT,'/w gm Область окружения удалена из Environment.',null,{noarchive:true});return;
+            }
+            if(sub==='stand'||sub==='стать'||sub==='встать'){
+                var ts=selectedTokens(msg);if(!ts.length)throw new Error('Выберите токен.');ts.forEach(function(t){if(!canControlToken(t,msg.playerid))throw new Error('Нет управления токеном '+(t.get('name')||t.id)+'.');var ar=standableSupport(t);if(!ar)throw new Error('Под токеном нет положительной области ФИЗ.');var h2=standOn(t,ar);sendChat(SCRIPT,'/w "'+String(msg.who||'player').replace(/"/g,'')+'" <b>'+esc(t.get('name')||t.id)+'</b>: высота поверхности <b>'+h2+' фт</b>.',null,{noarchive:true});});return;
+            }
+            if(sub==='crouch'||sub==='пригнуться'||sub==='сесть'){
+                var crouchTokens=selectedTokens(msg);if(!crouchTokens.length)throw new Error('Выберите токен.');crouchTokens.forEach(function(t){
+                    if(!canControlToken(t,msg.playerid))throw new Error('Нет управления токеном '+(t.get('name')||t.id)+'.');
+                    var result=togglePosture(t,'crouch');if(!result.ok&&result.error==='missing-marker')throw new Error('В игре не найден маркер «'+result.name+'». Добавьте Earthdawn Fourth Edition Token Marker Set в настройки игры и перезапустите Mod Sandbox.');
+                    var info=bodyHeightFromSheet(t);sendChat(SCRIPT,'/w "'+String(msg.who||'player').replace(/"/g,'')+'" <b>'+esc(t.get('name')||t.id)+'</b>: '+(result.mode==='crouch'?'Сесть':'обычная стойка')+' · эффективный рост <b>'+Math.round(info.height*100)/100+' фт</b>.',null,{noarchive:true});
+                });return;
+            }
+            if(sub==='lie'||sub==='лечь'||sub==='лежать'){
+                var lieTokens=selectedTokens(msg);if(!lieTokens.length)throw new Error('Выберите токен.');lieTokens.forEach(function(t){
+                    if(!canControlToken(t,msg.playerid))throw new Error('Нет управления токеном '+(t.get('name')||t.id)+'.');
+                    var result2=togglePosture(t,'lie');if(!result2.ok&&result2.error==='missing-marker')throw new Error('В игре не найден маркер «'+result2.name+'». Добавьте Earthdawn Fourth Edition Token Marker Set в настройки игры и перезапустите Mod Sandbox.');
+                    var info2=bodyHeightFromSheet(t);sendChat(SCRIPT,'/w "'+String(msg.who||'player').replace(/"/g,'')+'" <b>'+esc(t.get('name')||t.id)+'</b>: '+(result2.mode==='lie'?'Лечь':'обычная стойка')+' · эффективный рост <b>'+Math.round(info2.height*100)/100+' фт</b>.',null,{noarchive:true});
+                });return;
+            }
+            if(sub==='rise'||sub==='встать'||sub==='стойка'){
+                var riseTokens=selectedTokens(msg);if(!riseTokens.length)throw new Error('Выберите токен.');riseTokens.forEach(function(t){
+                    if(!canControlToken(t,msg.playerid))throw new Error('Нет управления токеном '+(t.get('name')||t.id)+'.');
+                    var proneResult=null;
+                    try{if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.standUp==='function')proneResult=AD5ConditionEngine.standUp(t,msg.playerid);}catch(condErr){throw new Error(condErr.message||condErr);}
+                    if(proneResult&&!proneResult.ok)throw new Error(proneResult.reason||'Невозможно встать из состояния «Сбит с ног».');
+                    var beforePosture=postureOf(t),result3=setPosture(t,'stand'),info3=bodyHeightFromSheet(t);
+                    if(!result3.ok)throw new Error('Не удалось снять маркеры стойки с '+(t.get('name')||t.id)+'.');
+                    var proneText=proneResult&&!proneResult.already?' · Сбит с ног снят'+(proneResult.charged?' · движение -'+(Math.round(proneResult.charged*100)/100)+' фт':''):'';
+                    sendChat(SCRIPT,'/w "'+String(msg.who||'player').replace(/"/g,'')+'" <b>'+esc(t.get('name')||t.id)+'</b>: '+(beforePosture==='stand'?'стойка восстановлена':'Встать')+' · исходный рост <b>'+Math.round(info3.height*100)/100+' фт</b>'+proneText+'.',null,{noarchive:true});
+                });return;
+            }
+            if(sub==='markers'||sub==='маркеры'){
+                var ms=markerSetupStatus();sendChat(SCRIPT,'/w gm <b>Маркеры стойки:</b><br>'+esc(ms.crouch.name)+': '+(ms.crouch.tag?'<b>OK</b> · '+esc(ms.crouch.tag):'<b>НЕ НАЙДЕН</b>')+'<br>'+esc(ms.lie.name)+': '+(ms.lie.tag?'<b>OK</b> · '+esc(ms.lie.tag):'<b>НЕ НАЙДЕН</b>')+'.',null,{noarchive:true});return;
+            }
+            if(sub==='cover'){
+                if(!playerIsGM(msg.playerid))throw new Error('Диагностика доступна GM.');var st=selectedTokens(msg);if(st.length!==2)throw new Error('Выберите ровно два токена: атакующий и цель.');var cv=coverBetween(st[0],st[1]),vis=attackVisibility(st[0],st[1]),srcInfo=bodyHeightFromSheet(st[0]),dstInfo=bodyHeightFromSheet(st[1]);sendChat(SCRIPT,'/w gm <b>Окружение</b>: '+esc(st[0].get('name')||st[0].id)+' → '+esc(st[1].get('name')||st[1].id)+'<br>Высота точки атаки: <b>'+Math.round(Number(cv.sourceAim||0)*100)/100+' фт</b> · рост атакующего '+Math.round(srcInfo.height*100)/100+' фт ('+esc(srcInfo.posture)+')<br>Цель: основание '+Math.round(elevation(st[1])*100)/100+' фт · эффективный рост '+Math.round(dstInfo.height*100)/100+' фт ('+esc(dstInfo.posture)+')<br>Закрыто силуэта: <b>'+Math.round((cv.ratio||0)*100)+'%</b> · Укрытие: <b>'+esc(cv.label)+'</b>'+(cv.full?' · цель нельзя выбрать':(' · КД +'+cv.acBonus+' · ЛОВ save +'+cv.dexBonus))+'.<br>Профиль: '+esc((cv.samples||[]).map(function(x){return Math.round(x.hidden*100)+'%';}).join(' / ')||'—')+'<br>Заслонение: '+(vis.blocked?'<b>ЗАСХАЙ · цель недоступна</b>':(vis.disadvantage?'<b>помеха</b>':'нет'))+(vis.reasons.length?' · '+esc(vis.reasons.join(', ')):'')+'.',null,{noarchive:true});return;
+            }
+            if(sub==='terrain'||sub==='bar4'||sub==='поверхность'){
+                if(!playerIsGM(msg.playerid))throw new Error('Диагностика доступна GM.');var ts=selectedTokens(msg);if(ts.length!==1)throw new Error('Выберите ровно один токен.');
+                var tt=ts[0],surf=terrainSurfaceAt(tt),cached=Number(root().terrain[tt.id]),native=nativeBar4Value(tt),lines=[];
+                pageAreas(pageIdOf(tt)).filter(function(ar){return isSupportArea(ar.rec);}).forEach(function(ar){var ov=supportOverlap(ar,tt,Number(tt.get('left'))||0,Number(tt.get('top'))||0),g=geomInfo(ar.obj,ar.rec);lines.push(esc(objectName(ar.obj,ar.rec))+' ['+esc(areaType(ar.rec))+'] h='+areaHeight(ar.rec)+' · layer='+esc(ar.obj.get('layer')||'')+' · shape='+esc(g.shape)+' · center=('+(Math.round(g.cx*10)/10)+','+(Math.round(g.cy*10)/10)+') · size='+(Math.round(g.hw*2*10)/10)+'×'+(Math.round(g.hh*2*10)/10)+' · samples='+ov.count+'/'+ov.total+(ov.center?' · CENTER':'')+(ov.inside?' · <b>ПОД ТОКЕНОМ</b>':''));});
+                sendChat(SCRIPT,'/w gm <b>Terrain debug</b>: '+esc(tt.get('name')||tt.id)+'<br>Поверхность: <b>'+(surf?esc(surf.name)+' · '+surf.height+' фт':'нет · 0 фт')+'</b><br>bar4_value: <b>'+esc(Number.isFinite(native)?native:'∅')+' фт</b><br>state mirror: <b>'+esc(Number.isFinite(cached)?cached:'∅')+' фт</b><br><b>Зарегистрированные ФИЗ/пропасти на странице:</b><br>'+(lines.join('<br>')||'нет') ,null,{noarchive:true});return;
+            }
+            if(sub==='sync'||sub==='labels'||sub==='метки'){
+                if(!playerIsGM(msg.playerid))throw new Error('Только GM.');
+                var count=0;Object.keys(root().areas).forEach(function(id){var ar=areaRecord(id);if(ar){syncAreaPresentation(ar);count++;}});
+                var page=playerPageId(msg.playerid),tokenCount=0;
+                findObjs({_type:'graphic',_subtype:'token',_pageid:page}).forEach(function(t){if(!isTerrainManagedToken(t))return;syncTokenTerrainNoDamage(t);tokenCount++;});
+                sendChat(SCRIPT,'/w gm Environment синхронизирован: областей <b>'+count+'</b>, bar4/высота местности пересчитаны у токенов <b>'+tokenCount+'</b>.',null,{noarchive:true});return;
+            }
+            if(sub==='status'||sub==='list'){
+                if(!playerIsGM(msg.playerid))throw new Error('Только GM.');var rows=[];Object.keys(root().areas).forEach(function(id){var ar=areaRecord(id);if(ar)rows.push(esc(objectName(ar.obj,ar.rec))+' ['+esc(id)+'] — <b>'+esc(TYPE_LABELS[areaType(ar.rec)])+'</b> · высота <b>'+areaHeight(ar.rec)+' фт</b> · '+esc(inferredShape(ar.obj,ar.rec))+(ar.rec.external?' · spell/Areas':'').toString());});sendChat(SCRIPT,'/w gm <b>AD5 Environment '+VERSION+'</b><br>'+(rows.join('<br>')||'Областей нет.')+'<br><i>AREA создаёт область · AREA HEIGHT меняет высоту · STAND ставит токен на ФИЗ · Сесть/Лечь меняют эффективный рост.</i>',null,{noarchive:true});return;
+            }
+            throw new Error('Команды: create FORM SIZE TYPE HEIGHT, add N [TYPE], make-solid, set-height N, remove, stand, crouch, lie, rise, markers, cover, terrain, sync, status, ping.');
+        }catch(e){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+'</b>: '+esc(e.message||e),null,{noarchive:true});}
+    }
+    function tokenPositionChanged(token,prev){
+        try{
+            if(!isTerrainManagedToken(token))return;
+            // A portal/stair transition changes the map region intentionally. Do not
+            // interpret the large coordinate jump or floor-base change as a fall.
+            // Floors keeps this guard active across the nested change:graphic event.
+            try{if(typeof AD5Floors!=='undefined'&&AD5Floors&&typeof AD5Floors.isTeleporting==='function'&&AD5Floors.isTeleporting(token.id)){setTimeout(function(){var live=getObj('graphic',token.id);if(live)syncTokenTerrainNoDamage(live);},0);return;}}catch(ignoreFloorTeleport){}
+            // ТЯГ/ТОЛЧ is resolved explicitly after Movement reaches its final snapped
+            // and SOLID-clipped cell. Ignore all intermediate token.set events here.
+            if(forcedMoveGuards[token.id])return;
+            var bx=Number(prev&&prev.left),by=Number(prev&&prev.top),nx=Number(token.get('left')),ny=Number(token.get('top'));
+            if(!Number.isFinite(bx)||!Number.isFinite(by)||!Number.isFinite(nx)||!Number.isFinite(ny)||Math.abs(bx-nx)<0.01&&Math.abs(by-ny)<0.01){
+                // A bar4-only change can come from Environment itself OR from a GM/player
+                // editing the fourth bar. setTerrainHeight() mirrors its own writes into
+                // state BEFORE token.set(), so equality with the mirror identifies an
+                // internal synchronization and prevents duplicate falling. An external
+                // decrease is a real terrain drop and must use the normal Height pipeline.
+                if(prev&&prev.bar4_value!==undefined&&String(prev.bar4_value)!==String(token.get('bar4_value'))){
+                    var beforeTerrain=Number(String(prev.bar4_value).replace(',','.')),
+                        afterTerrain=nativeBar4Value(token),cachedTerrain=Number(root().terrain[token.id]);
+                    if(!Number.isFinite(beforeTerrain))beforeTerrain=Number.isFinite(cachedTerrain)?cachedTerrain:0;
+                    if(!Number.isFinite(afterTerrain))afterTerrain=Number.isFinite(cachedTerrain)?cachedTerrain:0;
+                    var internalWrite=Number.isFinite(cachedTerrain)&&Math.abs(cachedTerrain-afterTerrain)<=0.01;
+                    if(internalWrite){
+                        try{if(typeof AD5Height!=='undefined'&&AD5Height){AD5Height.syncMarker(token);AD5Height.refreshTooltip(token);}}catch(ignoreInternalBar4){}
+                        return;
+                    }
+                    // Accept the manual/external height as the new terrain level. Any old
+                    // registered support is no longer authoritative until the next X/Y move.
+                    root().terrain[token.id]=afterTerrain;delete root().supports[token.id];
+                    try{if(typeof AD5Height!=='undefined'&&AD5Height){AD5Height.syncMarker(token);AD5Height.refreshTooltip(token);}}catch(ignoreExternalBar4){}
+                    if(afterTerrain<beforeTerrain-0.01&&flightHeightFeet(token)<=0){
+                        requestTerrainFall(token,beforeTerrain,afterTerrain,'Снижение bar4 / высоты поверхности');
+                    }
+                }
+                return;
+            }
+            var q=pendingTokenMoves[token.id];
+            if(!q){
+                var prevTerrain=NaN,prevFlight=NaN;
+                if(prev&&prev.bar4_value!==undefined&&String(prev.bar4_value).trim()!=='')prevTerrain=Number(String(prev.bar4_value).replace(',','.'));
+                if(!Number.isFinite(prevTerrain)){var cached=Number(root().terrain[token.id]);prevTerrain=Number.isFinite(cached)?cached:terrainHeightAt(token,bx,by);}
+                if(prev&&prev.bar3_value!==undefined)prevFlight=Number(String(prev.bar3_value).replace(',','.'));
+                if(!Number.isFinite(prevFlight))prevFlight=flightHeightFeet(token);
+                q=pendingTokenMoves[token.id]={fromX:bx,fromY:by,fromTerrain:prevTerrain,fromFlight:Math.max(0,prevFlight),scheduled:false};
+            }
+            // Always remember the latest destination; a drag/waypoint sequence can
+            // emit more than one graphic change before our deferred calculation.
+            q.toX=nx;q.toY=ny;
+            if(q.scheduled)return;q.scheduled=true;
+            setTimeout(function(){
+                var job=pendingTokenMoves[token.id];delete pendingTokenMoves[token.id];if(!job)return;var live=getObj('graphic',token.id);if(!isToken(live))return;
+                try{processTokenMove(live,job.fromX,job.fromY,job.fromTerrain,job.fromFlight);}catch(e){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' movement:</b> '+esc(e.message||e),null,{noarchive:true});}
+            },0);
+        }catch(ignoreOuter){}
+    }
+    function destroyed(o){if(root().areas[o.id])removeArea(o.id);delete root().supports[o.id];delete forcedMoveGuards[o.id];delete pendingTokenMoves[o.id];}
+    function areaObjectChanged(o){
+        try{
+            var a=root().areas[o&&o.id]?areaRecord(o.id):null;if(!a)return;
+            // Old versions cached the original pixel size. Remove it so every
+            // cover/support/intersection calculation follows the object the GM
+            // actually sees on the tabletop. The vertical height stays untouched.
+            if(a.rec.properties){delete a.rec.properties.pixelWidth;delete a.rec.properties.pixelHeight;}
+            syncAreaPresentation(a);
+            // Any resize/move can change terrain under tokens. Re-evaluate the page;
+            // falling is based on the old terrain/bar4 height versus the new terrain height.
+            resyncPageTransitions(pageIdOf(o),'Изменение геометрии поверхности');
+        }catch(ignore){}
+    }
+    on('destroy:graphic',function(o){destroyed(o);if(isToken(o)){delete root().terrain[o.id];delete root().supports[o.id];}});on('destroy:path',destroyed);on('destroy:pathv2',destroyed);
+    on('change:graphic',areaObjectChanged);on('change:graphic',tokenPositionChanged);on('change:path',areaObjectChanged);on('change:pathv2',areaObjectChanged);on('add:graphic',function(t){if(isTerrainManagedToken(t))setTimeout(function(){syncTokenTerrainNoDamage(t);},0);});on('chat:message',command);
+    on('ready',function(){var r=root();hookHeight();ensureTokenMacros();setTimeout(function(){
+        hookHeight();
+        // Repair/sync the hidden terrain geometry before evaluating tokens standing on it.
+        Object.keys(root().areas).forEach(function(id){var a=areaRecord(id);if(a)syncAreaPresentation(a);});
+        var tokens=findObjs({_type:'graphic',_subtype:'token'}).filter(isTerrainManagedToken);
+        if(Number(r.bar4ModelVersion||0)<2){tokens.forEach(migrateLegacyToken);r.bar4ModelVersion=2;}else tokens.forEach(preserveTokenTerrainOnReady);
+    },250);sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' '+VERSION+'</b> запущен. Псевдо-3D укрытие активно; DOCTOR: !ad5env doctor; REPAIR: !ad5env repair.  Сесть = рост ×1/2 (027-Blindsiding), Лечь = рост ×1/4 (302-Ambushing), Встать = исходный рост. Статические ФИЗ/пропасти и СОЛИД находятся на GM Layer, но участвуют в геометрии. Автосинхронизация bar4 выполняется только для представленных персонажей/NPC на Objects; высота декоративных, MAP- и portal-token больше не перезаписывается при рестарте/обновлении. bar3 = полёт, bar4 = высота поверхности; state.AD5Environment.terrain зеркалирует bar4 для стабильного расчёта переходов. При движении bar4 автоматически принимает высоту ФИЗ/пропасти под токеном; выход с положительной ФИЗ определяется по исходным координатам и автоматически запускает урон падения; ТЯГ/ТОЛЧ после финальной клетки используют тот же расчёт; переходы AD5 Floors синхронизируют bar4 без ложного падения.',null,{noarchive:true});});
+
+    return {version:VERSION,barNumber:barNumber,coverBetween:coverBetween,coverBetweenPoint:coverBetweenPoint,coverProfileFromPoint:coverProfileFromPoint,areaExposure:areaExposure,propagationLimit:propagationLimit,attackVisibility:attackVisibility,bodyHeightFeet:bodyHeightFeet,bodyHeightInfo:bodyHeightFromSheet,areaHeight:areaHeight,areaType:areaType,pageAreas:pageAreas,
+        registerExternalArea:registerExternalArea,unregisterExternalArea:unregisterExternalArea,setAreaHeight:setAreaHeightById,
+        terrainHeightFeet:terrainHeightFeet,setTerrainHeight:setTerrainHeight,terrainSurfaceAt:terrainSurfaceAt,terrainHeightAt:terrainHeightAt,flightHeightFeet:flightHeightFeet,totalHeightFeet:elevation,
+        beginForcedMove:beginForcedMove,endForcedMove:endForcedMove,cancelForcedMove:cancelForcedMove,processTokenMove:processTokenMove,
+        isSupported:function(tokenOrId){var t=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;return !!(t&&flightHeightFeet(t)<=0&&supportRecord(t.id));},
+        supportInfo:function(tokenOrId){var t=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId,a=t&&supportRecord(t.id);return a?{areaId:a.rec.objectId||a.obj.id,height:terrainHeightFeet(t),name:objectName(a.obj,a.rec)}:null;},
+        landingSurface:landingSurface,landOnSurface:landOnSurface,clearSupport:clearSupport,pitSurfaceAt:pitSurfaceAt,negativeHeightAllowed:negativeHeightAllowed,clipMovementRoute:clipMovementRoute,solidAreas:solidAreas,syncAreaPresentation:function(id){var a=typeof id==='string'?areaRecord(id):id;if(a)syncAreaPresentation(a);return !!a;},
+        syncSupport:syncSupport,dropIfUnsupported:dropIfUnsupported,makeSelectedSolid:makeSelectedSolid,doctor:doctorReport,repair:repairRuntime,standOn:function(tokenOrId){var t=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId,a=t&&standableSupport(t);return a?standOn(t,a):false;},
+        _test:{coverProfileFromPoint:coverProfileFromPoint,targetHeightThresholdForArea:targetHeightThresholdForArea,targetLateralPoints:targetLateralPoints,postureOf:postureOf,setPosture:setPosture,togglePosture:togglePosture,markerTag:markerTag,markerSetupStatus:markerSetupStatus,shouldHideHeightArea:shouldHideHeightArea,syncAreaLayer:syncAreaLayer,tierFromRatio:tierFromRatio,containsPoint:function(o,x,y,shape){var rec={properties:{shape:shape||'square'}};return containsPointArea({obj:o,rec:rec},x,y);},objDims:function(o){return objDims(o,null);},lineAreaInterval:lineAreaInterval,clipMovementRoute:clipMovementRoute,solidAreas:solidAreas,typeFromInput:typeFromInput,areaType:areaType,rawPathPoints:rawPathPoints,inferredShape:inferredShape,pointInPolygon:pointInPolygon,defaultShapeForObject:defaultShapeForObject,terrainSurfaceAt:terrainSurfaceAt,supportOverlap:supportOverlap,tokenFootprintSamples:tokenFootprintSamples,applyTerrainTransition:applyTerrainTransition,processTokenMove:processTokenMove,migrateLegacyToken:migrateLegacyToken,isTerrainManagedToken:isTerrainManagedToken,syncTokenTerrainNoDamage:syncTokenTerrainNoDamage,preserveTokenTerrainOnReady:preserveTokenTerrainOnReady}};
+}());
+}
