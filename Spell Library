@@ -1,0 +1,934 @@
+/* Installation guard: disable old unguarded versions before installing. */
+if(typeof AD5SpellLibrary!=='undefined'&&AD5SpellLibrary) {
+    log('AD5SpellLibrary: duplicate module skipped; keep one installed copy.');
+} else {
+/*
+ * AD5 Spell Library 2.3.5 — Import Templates Only / Sheet First
+ * For Legacy "D&D 5E by Roll20" + AD5 4.3.105.
+ *
+ * SAFE ARCHITECTURE:
+ * - NO add:attribute / change:attribute listeners.
+ * - NO startup migration and NO writes on ready.
+ * - Only explicit chat commands can modify a sheet.
+ * - Does NOT spend/restore spell slots or any repeating_resource.
+ *
+ * Player workflow:
+ *   1) Select your own token.
+ *   2) Type: !ad5spell
+ *      or: !ad5spell Огненный шар
+ *   3) Search and click "Добавить".
+ *
+ * Internal button commands:
+ *   !ad5spell-search TOKEN_ID QUERY
+ *   !ad5spell-add TOKEN_ID SPELL_ID
+ *
+ * GM library manager:
+ *   Macro AD5-SPELLS -> !ad5spell-json
+ *   JSON buffer supports one object or arrays up to 200 records.
+ *   Existing entries use PATCH semantics by id or exact name.
+ */
+var AD5SpellLibrary = (function(){
+    'use strict';
+
+    var VERSION='2.3.5';
+    var SCRIPT='AD5 Spell Library';
+    var BUILTIN_DATA=[{"id":"fire-bolt","name":"Огненный снаряд","aliases":["Fire Bolt","Огненный болт","Огненный снаряд"],"level":0,"school":"Воплощение","castingTime":"1 действие","range":"120 фт","target":"1 существо","duration":"Мгновенно","components":{"v":true,"s":true,"m":false},"attack":"Ranged","damage":"1d10","damageType":"огонь","progression":"Cantrip Dice","output":"ATTACK","description":"ЗАКЛ","duplicateKey":"fire-bolt","automation":"full","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Чародей, Волшебник","spellAbility":"auto"},{"id":"ray-of-frost","name":"Луч холода","aliases":["Ray of Frost","Луч холода"],"level":0,"school":"Воплощение","castingTime":"1 действие","range":"60 фт","target":"1 существо","duration":"Мгновенно","components":{"v":true,"s":true,"m":false},"attack":"Ranged","damage":"1d8","damageType":"холод","progression":"Cantrip Dice","output":"ATTACK","description":"ЗАКЛ\nЗамедление 10 1\nПримечание: снять замедление в начале следующего хода заклинателя.","duplicateKey":"ray-of-frost","automation":"partial","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Чародей, Волшебник","spellAbility":"auto"},{"id":"shocking-grasp","name":"Электрошок","aliases":["Shocking Grasp","Шокирующее прикосновение","Электрошок"],"level":0,"school":"Воплощение","castingTime":"1 действие","range":"Касание","target":"1 существо","duration":"Мгновенно","components":{"v":true,"s":true,"m":false},"attack":"Melee","damage":"1d8","damageType":"электричество","progression":"Cantrip Dice","output":"ATTACK","description":"ЗАКЛ\nПримечание: при попадании цель не может совершать реакции до начала своего следующего хода.","duplicateKey":"shocking-grasp","automation":"partial","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Чародей, Волшебник","spellAbility":"auto"},{"id":"sacred-flame","name":"Священное пламя","aliases":["Sacred Flame","Священное пламя"],"level":0,"school":"Воплощение","castingTime":"1 действие","range":"60 фт","target":"1 существо","duration":"Мгновенно","components":{"v":true,"s":true,"m":false},"save":"DEX","saveSuccess":"Нет урона","damage":"1d8","damageType":"излучение","progression":"Cantrip Dice","output":"ATTACK","description":"ЗАКЛ\nПРВ: полный урон; УСП: нет урона\nПримечание: укрытие не даёт бонус к этому спасброску.","duplicateKey":"sacred-flame","automation":"partial","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Жрец","spellAbility":"auto"},{"id":"eldritch-blast","name":"Мистический заряд","aliases":["Eldritch Blast","Потусторонний разряд","Мистический заряд"],"level":0,"school":"Воплощение","castingTime":"1 действие","range":"120 фт","target":"1 существо","duration":"Мгновенно","components":{"v":true,"s":true,"m":false},"attack":"Ranged","damage":"1d10","damageType":"силовое поле","progression":"Cantrip Beam","output":"ATTACK","description":"ЗАКЛ\nПримечание: Cantrip Beam создаёт дополнительные лучи по уровню персонажа.","duplicateKey":"eldritch-blast","automation":"partial","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Колдун","spellAbility":"auto"},{"id":"acid-splash","name":"Брызги кислоты","aliases":["Acid Splash","Брызги кислоты"],"level":0,"school":"Вызов","castingTime":"1 действие","range":"60 фт","target":"до 2 целей","duration":"Мгновенно","components":{"v":true,"s":true,"m":false},"save":"DEX","saveSuccess":"Нет урона","damage":"1d6","damageType":"кислота","progression":"Cantrip Dice","output":"ATTACK","description":"ЗАКЛ\nПРВ: полный урон; УСП: нет урона","duplicateKey":"acid-splash","automation":"full","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Чародей, Волшебник","spellAbility":"auto"},{"id":"chill-touch","name":"Леденящее прикосновение","aliases":["Chill Touch","Леденящее прикосновение"],"level":0,"school":"Некромантия","castingTime":"1 действие","range":"120 фт","target":"1 существо","duration":"1 раунд","components":{"v":true,"s":true,"m":false},"attack":"Ranged","damage":"1d8","damageType":"некротическая энергия","progression":"Cantrip Dice","output":"ATTACK","description":"ЗАКЛ\nПримечание: при попадании цель не может восстанавливать хиты до начала следующего хода заклинателя.","duplicateKey":"chill-touch","automation":"partial","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Чародей, Колдун, Волшебник","spellAbility":"auto"},{"id":"poison-spray","name":"Ядовитые брызги","aliases":["Poison Spray","Ядовитые брызги"],"level":0,"school":"Вызов","castingTime":"1 действие","range":"10 фт","target":"1 существо","duration":"Мгновенно","components":{"v":true,"s":true,"m":false},"save":"CON","saveSuccess":"Нет урона","damage":"1d12","damageType":"яд","progression":"Cantrip Dice","output":"ATTACK","description":"ЗАКЛ\nПРВ: полный урон; УСП: нет урона","duplicateKey":"poison-spray","automation":"full","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Друид, Чародей, Колдун, Волшебник","spellAbility":"auto"},{"id":"thorn-whip","name":"Терновый кнут","aliases":["Thorn Whip","Терновый кнут"],"level":0,"school":"Преобразование","castingTime":"1 действие","range":"30 фт","target":"1 существо","duration":"Мгновенно","components":{"v":true,"s":true,"m":true,"material":"стебель растения с шипами"},"attack":"Melee","damage":"1d6","damageType":"колющий","progression":"Cantrip Dice","output":"ATTACK","description":"ЗАКЛ\nТЯГ 10 фт","duplicateKey":"thorn-whip","automation":"full","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Друид","spellAbility":"auto"},{"id":"vicious-mockery","name":"Злая насмешка","aliases":["Vicious Mockery","Злая насмешка"],"level":0,"school":"Очарование","castingTime":"1 действие","range":"60 фт","target":"1 существо","duration":"Мгновенно","components":{"v":true,"s":false,"m":false},"save":"WIS","saveSuccess":"Нет урона","damage":"1d4","damageType":"психический","progression":"Cantrip Dice","output":"ATTACK","description":"ЗАКЛ\nПРВ: полный урон; УСП: нет урона\nПримечание: при провале следующая атака цели до конца её следующего хода совершается с помехой.","duplicateKey":"vicious-mockery","automation":"partial","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Бард","spellAbility":"auto"},{"id":"burning-hands","name":"Огненные ладони","aliases":["Burning Hands","Огненные ладони"],"level":1,"school":"Воплощение","castingTime":"1 действие","range":"На себя","target":"15 фт конус","duration":"Мгновенно","components":{"v":true,"s":true,"m":false},"save":"DEX","saveSuccess":"Половина урона","damage":"3d6","damageType":"огонь","higherDieCount":"1","higherDieType":"d6","higherText":"За каждый круг ячейки выше 1-го урон увеличивается на 1d6.","output":"ATTACK","description":"ЗАКЛ\nПРВ: полный урон; УСП: половина урона","duplicateKey":"burning-hands","automation":"full","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Чародей, Волшебник","spellAbility":"auto"},{"id":"guiding-bolt","name":"Направляющий снаряд","aliases":["Guiding Bolt","Направляющий снаряд"],"level":1,"school":"Воплощение","castingTime":"1 действие","range":"120 фт","target":"1 существо","duration":"1 раунд","components":{"v":true,"s":true,"m":false},"attack":"Ranged","damage":"4d6","damageType":"излучение","higherDieCount":"1","higherDieType":"d6","higherText":"За каждый круг ячейки выше 1-го урон увеличивается на 1d6.","output":"ATTACK","description":"ЗАКЛ\nПримечание: следующая атака по цели до конца следующего хода заклинателя получает преимущество.","duplicateKey":"guiding-bolt","automation":"partial","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Жрец","spellAbility":"auto"},{"id":"inflict-wounds","name":"Нанесение ран","aliases":["Inflict Wounds","Нанесение ран"],"level":1,"school":"Некромантия","castingTime":"1 действие","range":"Касание","target":"1 существо","duration":"Мгновенно","components":{"v":true,"s":true,"m":false},"attack":"Melee","damage":"3d10","damageType":"некротическая энергия","higherDieCount":"1","higherDieType":"d10","higherText":"За каждый круг ячейки выше 1-го урон увеличивается на 1d10.","output":"ATTACK","description":"ЗАКЛ","duplicateKey":"inflict-wounds","automation":"full","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Жрец","spellAbility":"auto"},{"id":"chromatic-orb-acid","name":"Цветной шарик — Кислота","aliases":["Chromatic Orb","Хроматическая сфера","Цветной шарик","Цветной шарик — Кислота"],"level":1,"school":"Воплощение","castingTime":"1 действие","range":"90 фт","target":"1 существо","duration":"Мгновенно","components":{"v":true,"s":true,"m":true,"material":"алмаз стоимостью не менее 50 зм"},"attack":"Ranged","damage":"3d8","damageType":"кислота","higherDieCount":"1","higherDieType":"d8","higherText":"За каждый круг ячейки выше 1-го урон увеличивается на 1d8.","output":"ATTACK","description":"ЗАКЛ","duplicateKey":"chromatic-orb","automation":"full","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Чародей, Волшебник","spellAbility":"auto"},{"id":"chromatic-orb-cold","name":"Цветной шарик — Холод","aliases":["Chromatic Orb","Хроматическая сфера","Цветной шарик","Цветной шарик — Холод"],"level":1,"school":"Воплощение","castingTime":"1 действие","range":"90 фт","target":"1 существо","duration":"Мгновенно","components":{"v":true,"s":true,"m":true,"material":"алмаз стоимостью не менее 50 зм"},"attack":"Ranged","damage":"3d8","damageType":"холод","higherDieCount":"1","higherDieType":"d8","higherText":"За каждый круг ячейки выше 1-го урон увеличивается на 1d8.","output":"ATTACK","description":"ЗАКЛ","duplicateKey":"chromatic-orb","automation":"full","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Чародей, Волшебник","spellAbility":"auto"},{"id":"chromatic-orb-fire","name":"Цветной шарик — Огонь","aliases":["Chromatic Orb","Хроматическая сфера","Цветной шарик","Цветной шарик — Огонь"],"level":1,"school":"Воплощение","castingTime":"1 действие","range":"90 фт","target":"1 существо","duration":"Мгновенно","components":{"v":true,"s":true,"m":true,"material":"алмаз стоимостью не менее 50 зм"},"attack":"Ranged","damage":"3d8","damageType":"огонь","higherDieCount":"1","higherDieType":"d8","higherText":"За каждый круг ячейки выше 1-го урон увеличивается на 1d8.","output":"ATTACK","description":"ЗАКЛ","duplicateKey":"chromatic-orb","automation":"full","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Чародей, Волшебник","spellAbility":"auto"},{"id":"chromatic-orb-lightning","name":"Цветной шарик — Электричество","aliases":["Chromatic Orb","Хроматическая сфера","Цветной шарик","Цветной шарик — Электричество"],"level":1,"school":"Воплощение","castingTime":"1 действие","range":"90 фт","target":"1 существо","duration":"Мгновенно","components":{"v":true,"s":true,"m":true,"material":"алмаз стоимостью не менее 50 зм"},"attack":"Ranged","damage":"3d8","damageType":"электричество","higherDieCount":"1","higherDieType":"d8","higherText":"За каждый круг ячейки выше 1-го урон увеличивается на 1d8.","output":"ATTACK","description":"ЗАКЛ","duplicateKey":"chromatic-orb","automation":"full","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Чародей, Волшебник","spellAbility":"auto"},{"id":"chromatic-orb-poison","name":"Цветной шарик — Яд","aliases":["Chromatic Orb","Хроматическая сфера","Цветной шарик","Цветной шарик — Яд"],"level":1,"school":"Воплощение","castingTime":"1 действие","range":"90 фт","target":"1 существо","duration":"Мгновенно","components":{"v":true,"s":true,"m":true,"material":"алмаз стоимостью не менее 50 зм"},"attack":"Ranged","damage":"3d8","damageType":"яд","higherDieCount":"1","higherDieType":"d8","higherText":"За каждый круг ячейки выше 1-го урон увеличивается на 1d8.","output":"ATTACK","description":"ЗАКЛ","duplicateKey":"chromatic-orb","automation":"full","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Чародей, Волшебник","spellAbility":"auto"},{"id":"chromatic-orb-thunder","name":"Цветной шарик — Звук","aliases":["Chromatic Orb","Хроматическая сфера","Цветной шарик","Цветной шарик — Звук"],"level":1,"school":"Воплощение","castingTime":"1 действие","range":"90 фт","target":"1 существо","duration":"Мгновенно","components":{"v":true,"s":true,"m":true,"material":"алмаз стоимостью не менее 50 зм"},"attack":"Ranged","damage":"3d8","damageType":"звук","higherDieCount":"1","higherDieType":"d8","higherText":"За каждый круг ячейки выше 1-го урон увеличивается на 1d8.","output":"ATTACK","description":"ЗАКЛ","duplicateKey":"chromatic-orb","automation":"full","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Чародей, Волшебник","spellAbility":"auto"},{"id":"thunderwave","name":"Волна грома","aliases":["Thunderwave","Волна грома"],"level":1,"school":"Воплощение","castingTime":"1 действие","range":"На себя","target":"15 фт куб","duration":"Мгновенно","components":{"v":true,"s":true,"m":false},"save":"CON","saveSuccess":"Половина урона","damage":"2d8","damageType":"звук","higherDieCount":"1","higherDieType":"d8","higherText":"За каждый круг ячейки выше 1-го урон увеличивается на 1d8.","output":"ATTACK","description":"ЗАКЛ\nПРВ: полный урон, ТОЛЧ 10 фт; УСП: половина урона","duplicateKey":"thunderwave","automation":"full","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Бард, Друид, Чародей, Волшебник","spellAbility":"auto"},{"id":"ice-knife","name":"Ледяной нож","aliases":["Ice Knife","Ледяной нож"],"level":1,"school":"Вызов","castingTime":"1 действие","range":"60 фт","target":"5 фт круг","duration":"Мгновенно","components":{"v":false,"s":true,"m":true,"material":"капля воды или кусочек льда"},"attack":"Ranged","save":"DEX","saveSuccess":"Нет урона от взрыва","damage":"1d10","damageType":"колющий","damage2":"2d6","damageType2":"холод","higherDieCount":"1","higherDieType":"d6","higherText":"За каждый круг ячейки выше 1-го урон холодом от взрыва увеличивается на 1d6.","output":"ATTACK","description":"ЗАКЛ\nПримечание: Урон1 — попадание ножом; Урон2 — взрыв холодом. Вторичную 5-футовую область применяйте отдельным эффектом, чтобы не нанести Урон1 соседним целям.","duplicateKey":"ice-knife","automation":"partial","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Друид, Чародей, Волшебник","spellAbility":"auto"},{"id":"witch-bolt","name":"Ведьмин снаряд","aliases":["Witch Bolt","Ведьмин снаряд"],"level":1,"school":"Воплощение","castingTime":"1 действие","range":"30 фт","target":"1 существо","duration":"Концентрация, до 1 минуты","components":{"v":true,"s":true,"m":true,"material":"веточка дерева, поражённого молнией"},"concentration":true,"attack":"Ranged","damage":"1d12","damageType":"электричество","higherDieCount":"1","higherDieType":"d12","higherText":"Первичный урон увеличивается на 1d12 за каждый круг ячейки выше 1-го.","output":"ATTACK","description":"ЗАКЛ\nAD5ЭФФ: {\"kind\":\"link\",\"duration\":10,\"range\":30,\"formula\":\"1d12\",\"type\":\"электричество\"}","duplicateKey":"witch-bolt","automation":"full","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Чародей, Колдун, Волшебник","spellAbility":"auto"},{"id":"cure-wounds","name":"Лечение ран","aliases":["Cure Wounds","Лечение ран"],"level":1,"school":"Воплощение","castingTime":"1 действие","range":"Касание","target":"1 существо","duration":"Мгновенно","components":{"v":true,"s":true,"m":false},"healing":"1d8","addAbilityMod":true,"higherDieCount":"1","higherDieType":"d8","higherText":"За каждый круг ячейки выше 1-го лечение увеличивается на 1d8.","output":"ATTACK","description":"ЗАКЛ","duplicateKey":"cure-wounds","automation":"full","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Бард, Жрец, Друид, Паладин, Следопыт","spellAbility":"auto"},{"id":"healing-word-arvenor","name":"Лечащее слово","aliases":["Healing Word","Лечащее слово"],"level":1,"school":"Воплощение","castingTime":"1 бонусное действие","range":"60 фт","target":"1 существо","duration":"Мгновенно","components":{"v":true,"s":false,"m":false},"output":"ATTACK","source":"Арвенор","description":"ЗАКЛ\nПримечание: правило Арвенора — хиты не восстанавливает; только стабилизирует существо, совершающее спасброски от смерти.","duplicateKey":"healing-word-arvenor","automation":"partial","ad5Tag":true,"ad5Mechanical":true,"classes":"Бард, Жрец, Друид","spellAbility":"auto"},{"id":"identify-arvenor","name":"Опознание","aliases":["Identify","Опознание"],"level":1,"school":"Прорицание","castingTime":"1 минута","range":"Касание","target":"1 предмет","duration":"Мгновенно","components":{"v":true,"s":true,"m":true,"material":"жемчужина стоимостью не менее 100 зм и совиное перо"},"ritual":true,"output":"ATTACK","source":"Арвенор","description":"ЗАКЛ\nПримечание: правило Арвенора — вместо полного раскрытия свойств выполняется проверка магии; результат раскрывает 0+ свойств.","duplicateKey":"identify-arvenor","automation":"partial","ad5Tag":true,"ad5Mechanical":true,"classes":"Бард, Волшебник","spellAbility":"auto"},{"id":"detect-evil-good-arvenor","name":"Обнаружение зла и добра","aliases":["Detect Evil and Good","Обнаружение зла и добра"],"level":1,"school":"Прорицание","castingTime":"1 действие","range":"На себя","target":"выбранный тип существа","duration":"Мгновенно","components":{"v":true,"s":true,"m":false},"output":"ATTACK","source":"Арвенор","description":"ЗАКЛ\nПримечание: правило Арвенора — выбрать тип существа; 1 круг мгновенно без местоположения; 2 круг 1 минута; 3 круг указывает направление; предметы без личности не определяются.","duplicateKey":"detect-evil-good-arvenor","automation":"partial","ad5Tag":true,"ad5Mechanical":true,"classes":"Жрец, Паладин","spellAbility":"auto","selfApply":true},{"id":"shatter","name":"Дребезги","aliases":["Shatter","Дребезги"],"level":2,"school":"Воплощение","castingTime":"1 действие","range":"60 фт","target":"10 фт круг","duration":"Мгновенно","components":{"v":true,"s":true,"m":true,"material":"кусочек слюды"},"save":"CON","saveSuccess":"Половина урона","damage":"3d8","damageType":"звук","higherDieCount":"1","higherDieType":"d8","higherText":"За каждый круг ячейки выше 2-го урон увеличивается на 1d8.","output":"ATTACK","description":"ЗАКЛ\nПРВ: полный урон; УСП: половина урона","duplicateKey":"shatter","automation":"full","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Бард, Чародей, Колдун, Волшебник","spellAbility":"auto"},{"id":"hold-person","name":"Удержание личности","aliases":["Hold Person","Удержание личности"],"level":2,"school":"Очарование","castingTime":"1 действие","range":"60 фт","target":"1 гуманоид","duration":"Концентрация, до 1 минуты","components":{"v":true,"s":true,"m":true,"material":"маленький прямой кусочек железа"},"concentration":true,"save":"WIS","saveSuccess":"Нет эффекта","output":"ATTACK","ad5Mechanical":true,"description":"ЗАКЛ\nПРВ: парализован МДР{DC} 10; УСП: нет эффекта","duplicateKey":"hold-person","automation":"full","source":"Арвенор","ad5Tag":true,"classes":"Бард, Жрец, Друид, Чародей, Колдун, Волшебник","spellAbility":"auto"},{"id":"web","name":"Паутина","aliases":["Web","Паутина"],"level":2,"school":"Вызов","castingTime":"1 действие","range":"60 фт","target":"20 фт куб, обл","duration":"Концентрация, до 1 часа","components":{"v":true,"s":true,"m":true,"material":"кусочек паутины"},"concentration":true,"save":"DEX","saveSuccess":"Нет состояния","output":"ATTACK","ad5Mechanical":true,"description":"ЗАКЛ\nВХОД: ПРВ: опутан; УСП: нет эффекта. ОБЛН: ПРВ: опутан; УСП: нет эффекта. ПАСС: труднопроходимая местность. ОСВОБ: опутан, ПРОВЕРКА СИЛ{DC}, ПРВ: нет эффекта, УСП: нет эффекта","duplicateKey":"web","automation":"full","source":"Арвенор","ad5Tag":true,"classes":"Чародей, Волшебник","spellAbility":"auto"},{"id":"blindness-deafness-blind","name":"Слепота","aliases":["Blindness/Deafness","Blindness Deafness","Слепота/Глухота","Слепота"],"level":2,"school":"Некромантия","castingTime":"1 действие","range":"30 фт","target":"1 существо","duration":"1 минута","components":{"v":true,"s":false,"m":false},"save":"CON","saveSuccess":"Нет эффекта","output":"ATTACK","ad5Mechanical":true,"description":"ЗАКЛ\nПРВ: ослеплен ТЕЛ{DC} 10; УСП: нет эффекта","duplicateKey":"blindness-deafness","automation":"full","source":"Арвенор","ad5Tag":true,"classes":"Бард, Жрец, Чародей, Волшебник","spellAbility":"auto"},{"id":"blindness-deafness-deaf","name":"Глухота","aliases":["Blindness/Deafness","Blindness Deafness","Слепота/Глухота","Глухота"],"level":2,"school":"Некромантия","castingTime":"1 действие","range":"30 фт","target":"1 существо","duration":"1 минута","components":{"v":true,"s":false,"m":false},"save":"CON","saveSuccess":"Нет эффекта","output":"ATTACK","ad5Mechanical":true,"description":"ЗАКЛ\nПРВ: оглохший ТЕЛ{DC} 10; УСП: нет эффекта","duplicateKey":"blindness-deafness","automation":"full","source":"Арвенор","ad5Tag":true,"classes":"Бард, Жрец, Чародей, Волшебник","spellAbility":"auto"},{"id":"acid-arrow","name":"Кислотная стрела","aliases":["Melf's Acid Arrow","Acid Arrow","Кислотная стрела Мельфа","Кислотная стрела"],"level":2,"school":"Воплощение","castingTime":"1 действие","range":"90 фт, ЭФФ 1","target":"1 существо","duration":"1 раунд","components":{"v":true,"s":true,"m":true,"material":"измельчённый лист ревеня и желудок гадюки"},"attack":"Ranged","damage":"4d4","damageType":"кислота","damage2":"2d4","damageType2":"кислота","higherDieCount":"1","higherDieType":"d4","higherText":"Оба этапа урона увеличиваются на 1d4 за каждый круг ячейки выше 2-го.","output":"ATTACK","description":"ЗАКЛ\nКАСТ: Урон1. КНЦТ: Урон2\nПримечание: при промахе RAW-половину первоначального урона примените вручную; последующего Урон2 нет.","duplicateKey":"acid-arrow","automation":"partial","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Волшебник","spellAbility":"auto"},{"id":"fireball","name":"Огненный шар","aliases":["Fireball","Фаербол","Огненный шар"],"level":3,"school":"Воплощение","castingTime":"1 действие","range":"150 фт","target":"20 фт круг","duration":"Мгновенно","components":{"v":true,"s":true,"m":true,"material":"маленький шарик из гуано летучей мыши и серы"},"save":"DEX","saveSuccess":"Половина урона","damage":"8d6","damageType":"огонь","higherDieCount":"1","higherDieType":"d6","higherText":"За каждый круг ячейки выше 3-го урон увеличивается на 1d6.","output":"ATTACK","description":"ЗАКЛ\nПРВ: полный урон; УСП: половина урона","duplicateKey":"fireball","automation":"full","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Чародей, Волшебник","spellAbility":"auto"},{"id":"lightning-bolt","name":"Молния","aliases":["Lightning Bolt","Молния"],"level":3,"school":"Воплощение","castingTime":"1 действие","range":"На себя","target":"линия 5/100/5 фт","duration":"Мгновенно","components":{"v":true,"s":true,"m":true,"material":"кусочек меха и жезл из янтаря, хрусталя или стекла"},"save":"DEX","saveSuccess":"Половина урона","damage":"8d6","damageType":"электричество","higherDieCount":"1","higherDieType":"d6","higherText":"За каждый круг ячейки выше 3-го урон увеличивается на 1d6.","output":"ATTACK","description":"ЗАКЛ\nПРВ: полный урон; УСП: половина урона","duplicateKey":"lightning-bolt","automation":"full","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Чародей, Волшебник","spellAbility":"auto"},{"id":"call-lightning","name":"Призыв молнии","aliases":["Call Lightning","Призыв молнии"],"level":3,"school":"Вызов","castingTime":"1 действие","range":"120 фт","target":"5 фт круг","duration":"Концентрация, до 10 минут","components":{"v":true,"s":true,"m":false},"concentration":true,"save":"DEX","saveSuccess":"Половина урона","damage":"3d10","damageType":"электричество","higherDieCount":"1","higherDieType":"d10","higherText":"За каждый круг ячейки выше 3-го урон молнии увеличивается на 1d10.","output":"ATTACK","description":"ЗАКЛ\nПРВ: полный урон; УСП: половина урона\nПримечание: каждый последующий вызов молнии выполняется повторным нажатием способности; концентрация сохраняется отдельно.","duplicateKey":"call-lightning","automation":"partial","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Друид","spellAbility":"auto"},{"id":"spirit-guardians-radiant","name":"Духовные стражи — Излучение","aliases":["Spirit Guardians","Духовные стражи","Духовные стражи — Излучение"],"level":3,"school":"Вызов","castingTime":"1 действие","range":"На себя","target":"аура 15 фт, обл","duration":"Концентрация, до 10 минут","components":{"v":true,"s":true,"m":true,"material":"священный символ"},"concentration":true,"save":"WIS","saveSuccess":"Половина урона","damage":"3d8","damageType":"излучение","higherDieCount":"1","higherDieType":"d8","higherText":"За каждый круг ячейки выше 3-го урон увеличивается на 1d8.","output":"ATTACK","description":"ЗАКЛ\nВХОД: УСП: Урон1, половина урона; ПРВ: Урон1, полный урон. ОБЛН: УСП: Урон1, половина урона; ПРВ: Урон1, полный урон\nПримечание: снижение скорости и исключённых при сотворении союзников контролируйте вручную.","duplicateKey":"spirit-guardians","automation":"partial","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Жрец","spellAbility":"auto"},{"id":"spirit-guardians-necrotic","name":"Духовные стражи — Некротика","aliases":["Spirit Guardians","Духовные стражи","Духовные стражи — Некротика"],"level":3,"school":"Вызов","castingTime":"1 действие","range":"На себя","target":"аура 15 фт, обл","duration":"Концентрация, до 10 минут","components":{"v":true,"s":true,"m":true,"material":"священный символ"},"concentration":true,"save":"WIS","saveSuccess":"Половина урона","damage":"3d8","damageType":"некротическая энергия","higherDieCount":"1","higherDieType":"d8","higherText":"За каждый круг ячейки выше 3-го урон увеличивается на 1d8.","output":"ATTACK","description":"ЗАКЛ\nВХОД: УСП: Урон1, половина урона; ПРВ: Урон1, полный урон. ОБЛН: УСП: Урон1, половина урона; ПРВ: Урон1, полный урон\nПримечание: снижение скорости и исключённых при сотворении союзников контролируйте вручную.","duplicateKey":"spirit-guardians","automation":"partial","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Жрец","spellAbility":"auto"},{"id":"vampiric-touch","name":"Касание вампира","aliases":["Vampiric Touch","Касание вампира"],"level":3,"school":"Некромантия","castingTime":"1 действие","range":"На себя","target":"1 существо в досягаемости","duration":"Концентрация, до 1 минуты","components":{"v":true,"s":true,"m":false},"concentration":true,"attack":"Melee","damage":"3d6","damageType":"некротическая энергия","higherDieCount":"1","higherDieType":"d6","higherText":"За каждый круг ячейки выше 3-го урон увеличивается на 1d6.","output":"ATTACK","description":"ЗАКЛ\nПримечание: при попадании восстановите вручную половину фактически нанесённого некротического урона.","duplicateKey":"vampiric-touch","automation":"partial","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Колдун, Волшебник","spellAbility":"auto","selfApply":false},{"id":"detect-poison-disease-arvenor","name":"Обнаружение болезней и ядов","aliases":["Detect Poison and Disease","Обнаружение болезней и ядов"],"level":3,"school":"Прорицание","castingTime":"1 действие","range":"На себя","target":"30 фт","duration":"Концентрация, до 10 минут","components":{"v":true,"s":true,"m":true,"material":"лист тиса"},"concentration":true,"ritual":false,"output":"ATTACK","source":"Арвенор","description":"ЗАКЛ\nПримечание: правило Арвенора — 3 круг, концентрация до 10 минут, ритуалом не сотворяется.","duplicateKey":"detect-poison-disease-arvenor","automation":"partial","ad5Tag":true,"ad5Mechanical":true,"classes":"Жрец, Друид, Паладин, Следопыт","spellAbility":"auto","selfApply":true},{"id":"blight","name":"Усыхание","aliases":["Blight","Усыхание"],"level":4,"school":"Некромантия","castingTime":"1 действие","range":"30 фт","target":"1 существо","duration":"Мгновенно","components":{"v":true,"s":true,"m":false},"save":"CON","saveSuccess":"Половина урона","damage":"8d8","damageType":"некротическая энергия","higherDieCount":"1","higherDieType":"d8","higherText":"За каждый круг ячейки выше 4-го урон увеличивается на 1d8.","output":"ATTACK","description":"ЗАКЛ\nПРВ: полный урон; УСП: половина урона\nПримечание: особые взаимодействия с растениями применяются вручную.","duplicateKey":"blight","automation":"partial","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Друид, Чародей, Колдун, Волшебник","spellAbility":"auto"},{"id":"ice-storm","name":"Ледяная буря","aliases":["Ice Storm","Ледяная буря"],"level":4,"school":"Воплощение","castingTime":"1 действие","range":"300 фт","target":"цилиндр 20/40 фт","duration":"Мгновенно","components":{"v":true,"s":true,"m":true,"material":"щепотка пыли и несколько капель воды"},"save":"DEX","saveSuccess":"Половина урона","damage":"2d8","damageType":"дробящий","damage2":"4d6","damageType2":"холод","higherDieCount":"1","higherDieType":"d8","higherText":"За каждый круг ячейки выше 4-го дробящий урон увеличивается на 1d8.","output":"ATTACK","description":"ЗАКЛ\nПРВ: полный урон; УСП: половина урона\nПримечание: труднопроходимую местность до конца следующего хода заклинателя разместите/снимите вручную.","duplicateKey":"ice-storm","automation":"partial","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Друид, Чародей, Волшебник","spellAbility":"auto"},{"id":"wall-of-fire","name":"Стена огня","aliases":["Wall of Fire","Стена огня"],"level":4,"school":"Воплощение","castingTime":"1 действие","range":"120 фт","target":"линия 5/60/20 фт, обл","duration":"Концентрация, до 1 минуты","components":{"v":true,"s":true,"m":true,"material":"небольшой кусочек фосфора"},"concentration":true,"save":"DEX","saveSuccess":"Половина первоначального урона","damage":"5d8","damageType":"огонь","higherDieCount":"1","higherDieType":"d8","higherText":"За каждый круг ячейки выше 4-го урон увеличивается на 1d8.","output":"ATTACK","description":"ЗАКЛ\nКАСТ: УСП: Урон1, половина урона; ПРВ: Урон1, полный урон\nПримечание: постоянный урон только с выбранной горячей стороны стены требует ручного контроля.","duplicateKey":"wall-of-fire","automation":"partial","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Друид, Чародей, Волшебник","spellAbility":"auto"},{"id":"polymorph","name":"Полиморф","aliases":["Polymorph","Полиморф"],"level":4,"school":"Преобразование","castingTime":"1 действие","range":"60 фт","target":"1 существо","duration":"Концентрация, до 1 часа","components":{"v":true,"s":true,"m":true,"material":"кокон гусеницы"},"concentration":true,"save":"WIS","saveSuccess":"Нет эффекта","output":"ATTACK","ad5Mechanical":true,"description":"ЗАКЛ\nПОЛИМОРФ","duplicateKey":"polymorph","automation":"full","source":"Арвенор","ad5Tag":true,"classes":"Бард, Друид, Чародей, Волшебник","spellAbility":"auto"},{"id":"cone-of-cold","name":"Конус холода","aliases":["Cone of Cold","Конус холода"],"level":5,"school":"Воплощение","castingTime":"1 действие","range":"На себя","target":"60 фт конус","duration":"Мгновенно","components":{"v":true,"s":true,"m":true,"material":"маленький хрустальный или стеклянный конус"},"save":"CON","saveSuccess":"Половина урона","damage":"8d8","damageType":"холод","higherDieCount":"1","higherDieType":"d8","higherText":"За каждый круг ячейки выше 5-го урон увеличивается на 1d8.","output":"ATTACK","description":"ЗАКЛ\nПРВ: полный урон; УСП: половина урона","duplicateKey":"cone-of-cold","automation":"full","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Чародей, Волшебник","spellAbility":"auto"},{"id":"cloudkill","name":"Смертельное облако","aliases":["Cloudkill","Смертельное облако"],"level":5,"school":"Вызов","castingTime":"1 действие","range":"120 фт","target":"20 фт круг, обл","duration":"Концентрация, до 10 минут","components":{"v":true,"s":true,"m":false},"concentration":true,"save":"CON","saveSuccess":"Половина урона","damage":"5d8","damageType":"яд","higherDieCount":"1","higherDieType":"d8","higherText":"За каждый круг ячейки выше 5-го урон увеличивается на 1d8.","output":"ATTACK","description":"ЗАКЛ\nВХОД: УСП: Урон1, половина урона; ПРВ: Урон1, полный урон. ОБЛН: УСП: Урон1, половина урона; ПРВ: Урон1, полный урон\nПримечание: перемещение облака выполняется вручную перемещением шаблона.","duplicateKey":"cloudkill","automation":"partial","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Чародей, Волшебник","spellAbility":"auto"},{"id":"flame-strike","name":"Огненная кара","aliases":["Flame Strike","Огненная кара"],"level":5,"school":"Воплощение","castingTime":"1 действие","range":"60 фт","target":"цилиндр 10/40 фт","duration":"Мгновенно","components":{"v":true,"s":true,"m":true,"material":"щепотка серы"},"save":"DEX","saveSuccess":"Половина урона","damage":"4d6","damageType":"огонь","damage2":"4d6","damageType2":"излучение","higherText":"При сотворении ячейкой выше 5-го суммарный урон увеличивается на 1d6 за круг.","output":"ATTACK","description":"ЗАКЛ\nПРВ: полный урон; УСП: половина урона","duplicateKey":"flame-strike","automation":"full","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Жрец","spellAbility":"auto"},{"id":"disintegrate","name":"Распад","aliases":["Disintegrate","Дезинтеграция","Распад"],"level":6,"school":"Преобразование","castingTime":"1 действие","range":"60 фт","target":"1 существо или объект","duration":"Мгновенно","components":{"v":true,"s":true,"m":true,"material":"магнит и щепотка пыли"},"save":"DEX","saveSuccess":"Нет урона","damage":"10d6+40","damageType":"силовое поле","higherDieCount":"3","higherDieType":"d6","higherText":"За каждый круг ячейки выше 6-го урон увеличивается на 3d6.","output":"ATTACK","description":"ЗАКЛ\nПРВ: полный урон; УСП: нет урона\nПримечание: уничтожение цели при падении до 0 хитов применяется вручную.","duplicateKey":"disintegrate","automation":"partial","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Чародей, Волшебник","spellAbility":"auto"},{"id":"chain-lightning","name":"Цепная молния","aliases":["Chain Lightning","Цепная молния"],"level":6,"school":"Воплощение","castingTime":"1 действие","range":"150 фт","target":"до 4 целей","duration":"Мгновенно","components":{"v":true,"s":true,"m":true,"material":"кусочек меха, янтаря, стекла или хрусталя и три серебряные булавки"},"save":"DEX","saveSuccess":"Половина урона","damage":"10d8","damageType":"электричество","higherText":"За каждый круг ячейки выше 6-го можно выбрать одну дополнительную вторичную цель.","output":"ATTACK","description":"ЗАКЛ\nПРВ: полный урон; УСП: половина урона","duplicateKey":"chain-lightning","automation":"full","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Чародей, Волшебник","spellAbility":"auto"},{"id":"sunbeam","name":"Солнечный луч","aliases":["Sunbeam","Солнечный луч"],"level":6,"school":"Воплощение","castingTime":"1 действие","range":"На себя","target":"линия 5/60/5 фт","duration":"Концентрация, до 1 минуты","components":{"v":true,"s":true,"m":true,"material":"увеличительное стекло"},"concentration":true,"save":"CON","saveSuccess":"Половина урона","damage":"6d8","damageType":"излучение","output":"ATTACK","description":"ЗАКЛ\nПРВ: полный урон, ослеплен 1; УСП: половина урона\nПримечание: новый луч в последующие ходы создаётся повторным использованием способности.","duplicateKey":"sunbeam","automation":"partial","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Друид, Чародей, Волшебник","spellAbility":"auto"},{"id":"finger-of-death","name":"Перст смерти","aliases":["Finger of Death","Перст смерти"],"level":7,"school":"Некромантия","castingTime":"1 действие","range":"60 фт","target":"1 существо","duration":"Мгновенно","components":{"v":true,"s":true,"m":false},"save":"CON","saveSuccess":"Половина урона","damage":"7d8+30","damageType":"некротическая энергия","output":"ATTACK","description":"ЗАКЛ\nПРВ: полный урон; УСП: половина урона\nПримечание: превращение погибшего гуманоида в зомби применяется вручную.","duplicateKey":"finger-of-death","automation":"partial","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Чародей, Колдун, Волшебник","spellAbility":"auto"},{"id":"fire-storm","name":"Огненная буря","aliases":["Fire Storm","Огненная буря"],"level":7,"school":"Воплощение","castingTime":"1 действие","range":"150 фт","target":"до десяти 10-футовых кубов","duration":"Мгновенно","components":{"v":true,"s":true,"m":false},"save":"DEX","saveSuccess":"Половина урона","damage":"7d10","damageType":"огонь","output":"ATTACK","description":"ЗАКЛ\nПРВ: полный урон; УСП: половина урона\nПримечание: AD5 Areas размещает один 10-футовый куб; дополнительные связанные кубы размещаются отдельными применениями.","duplicateKey":"fire-storm","automation":"partial","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Жрец, Друид, Чародей","spellAbility":"auto"},{"id":"sunburst","name":"Солнечный взрыв","aliases":["Sunburst","Солнечный взрыв"],"level":8,"school":"Воплощение","castingTime":"1 действие","range":"150 фт","target":"60 фт круг","duration":"Мгновенно","components":{"v":true,"s":true,"m":true,"material":"огонь и кусочек солнечного камня"},"save":"CON","saveSuccess":"Половина урона","damage":"12d6","damageType":"излучение","output":"ATTACK","description":"ЗАКЛ\nПРВ: полный урон, ослеплен ТЕЛ{DC} 10; УСП: половина урона","duplicateKey":"sunburst","automation":"full","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Друид, Чародей, Волшебник","spellAbility":"auto"},{"id":"meteor-swarm","name":"Метеоритный дождь","aliases":["Meteor Swarm","Метеоритный дождь"],"level":9,"school":"Воплощение","castingTime":"1 действие","range":"1 миля","target":"четыре области по 40 фт круг","duration":"Мгновенно","components":{"v":true,"s":true,"m":false},"save":"DEX","saveSuccess":"Половина урона","damage":"20d6","damageType":"дробящий","damage2":"20d6","damageType2":"огонь","output":"ATTACK","description":"ЗАКЛ\nПРВ: полный урон; УСП: половина урона\nПримечание: четыре 40-футовые области размещаются по одной; не применяйте одну и ту же цель повторно.","duplicateKey":"meteor-swarm","automation":"partial","source":"Арвенор","ad5Tag":true,"ad5Mechanical":true,"classes":"Чародей, Волшебник","spellAbility":"auto"}];
+    var CUSTOM_DATA=[];
+    var DATA=BUILTIN_DATA.slice();
+    var DB=Object.create(null), ALIAS=Object.create(null), locks=Object.create(null);
+
+    function norm(v){
+        return String(v==null?'':v)
+            .replace(/<[^>]*>/g,' ')
+            .replace(/&nbsp;|&#160;/gi,' ')
+            .replace(/[‐‑‒–—―]/g,'-')
+            .replace(/\s+/g,' ')
+            .trim()
+            .toLocaleLowerCase('ru-RU')
+            .replace(/ё/g,'е');
+    }
+    function esc(v){
+        return String(v==null?'':v).replace(/[&<>"']/g,function(c){
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+        });
+    }
+    function whisper(pid,html){
+        if(playerIsGM(pid)){sendChat(SCRIPT,'/w gm '+html,null,{noarchive:true});return;}
+        var p=getObj('player',pid);
+        if(!p)return;
+        var name=String(p.get('_displayname')||'').replace(/["\r\n]/g,'');
+        sendChat(SCRIPT,'/w "'+name+'" '+html,null,{noarchive:true});
+    }
+    function panel(title,body){
+        return '<div style="border:1px solid #333;background:#fff;padding:8px;border-radius:4px">'+
+            '<div style="font-weight:bold;background:#452c63;color:#fff;padding:5px;margin:-8px -8px 8px">'+esc(title)+'</div>'+
+            body+'</div>';
+    }
+    function button(label,cmd){
+        return '<a style="display:inline-block;background:#6a418b;color:#fff;padding:4px 7px;margin:2px;border-radius:3px;text-decoration:none" href="'+esc(cmd)+'">'+esc(label)+'</a>';
+    }
+    function attr(cid,name){
+        var xs=findObjs({_type:'attribute',_characterid:String(cid),name:String(name)})||[];
+        return xs[0]||null;
+    }
+    function attrValue(cid,name){
+        var a=attr(cid,name);return a?String(a.get('current')==null?'':a.get('current')):'';
+    }
+    function controlledBy(raw,pid){
+        var ids=String(raw||'').split(',').map(function(x){return x.trim();}).filter(Boolean);
+        return ids.indexOf('all')>=0||ids.indexOf(String(pid))>=0;
+    }
+    function canControl(token,pid){
+        if(playerIsGM(pid))return true;
+        if(!token)return false;
+        var cid=String(token.get('represents')||''),c=cid&&getObj('character',cid);
+        return controlledBy(token.get('controlledby'),pid)||!!(c&&controlledBy(c.get('controlledby'),pid));
+    }
+    function isNpc(cid){
+        return /^(?:1|on|true)$/i.test(attrValue(cid,'npc'));
+    }
+    function selectedToken(msg){
+        if(!msg.selected||msg.selected.length!==1)throw new Error('Выделите ровно один свой токен и повторите команду.');
+        var t=getObj('graphic',msg.selected[0]._id);
+        if(!t||t.get('_subtype')!=='token'||t.get('isdrawing'))throw new Error('Выделенный объект должен быть токеном.');
+        return t;
+    }
+    function validateTargetToken(token,pid){
+        if(!token)throw new Error('Токен больше не существует.');
+        if(!canControl(token,pid))throw new Error('Вы не управляете этим токеном.');
+        var cid=String(token.get('represents')||''),c=cid&&getObj('character',cid);
+        if(!c)throw new Error('Токен должен быть связан с листом персонажа через Represents Character.');
+        if(isNpc(cid)&&!playerIsGM(pid))throw new Error('Игрок может добавлять заклинания только в свой PC-лист.');
+        return c;
+    }
+    function buildIndex(){
+        DB=Object.create(null);ALIAS=Object.create(null);
+        DATA=BUILTIN_DATA.concat(CUSTOM_DATA||[]);
+        DATA.forEach(function(raw){
+            var s=JSON.parse(JSON.stringify(raw));
+            DB[s.id]=s;
+            var names=(s.aliases||[]).concat([s.name]);
+            names.forEach(function(a){
+                var k=norm(a);if(!k)return;
+                if(!ALIAS[k])ALIAS[k]=[];
+                if(ALIAS[k].indexOf(s.id)<0)ALIAS[k].push(s.id);
+            });
+        });
+    }
+    function all(){
+        return Object.keys(DB).map(function(id){return DB[id];}).sort(function(a,b){
+            return Number(a.level)-Number(b.level)||String(a.name).localeCompare(String(b.name),'ru');
+        });
+    }
+    function search(query){
+        var q=norm(query),rows=[];
+        if(!q)return [];
+        all().forEach(function(s){
+            var score=999,names=(s.aliases||[]).concat([s.name]);
+            names.forEach(function(a){
+                var n=norm(a),x=999;
+                if(n===q)x=0;
+                else if(n.indexOf(q)===0)x=1;
+                else if(n.indexOf(q)>=0)x=2;
+                else if(q.indexOf(n)>=0)x=3;
+                if(x<score)score=x;
+            });
+            if(score<999)rows.push({spell:s,score:score});
+        });
+        rows.sort(function(a,b){
+            return a.score-b.score||Number(a.spell.level)-Number(b.spell.level)||
+                String(a.spell.name).localeCompare(String(b.spell.name),'ru')||
+                searchQuality(b.spell)-searchQuality(a.spell);
+        });
+        // 2.3.1: old custom handouts can contain two different IDs with the exact
+        // same spell name.  Showing both makes it easy to import an obsolete
+        // service/info template.  Collapse exact name+level duplicates and keep the
+        // mechanically richer record.  Different names/variants remain separate.
+        var best=Object.create(null),order=[];
+        rows.forEach(function(x){
+            var key=norm(x.spell.name)+'|'+String(Number(x.spell.level)||0),prev=best[key];
+            if(!prev){best[key]=x;order.push(key);return;}
+            if(x.score<prev.score||(x.score===prev.score&&searchQuality(x.spell)>searchQuality(prev.spell)))best[key]=x;
+        });
+        return order.map(function(k){return best[k].spell;});
+    }
+    function levelLabel(level){return Number(level)===0?'заговор':String(level)+' круг';}
+    function isMultiResolverSpell(s){
+        return /(?:^|[\n.;])\s*(?:МУЛЬТИ|MULTI)\s*:/i.test(String(s&&s.description||'').replace(/\r\n|\n|\r/g,'\n').replace(/<br\s*\/?\s*>/gi,'\n'));
+    }
+    function isNativeCardSpell(s){
+        if(!s)return false;
+        if(isMultiResolverSpell(s))return true;
+        if(s.nativeCard===true||/^(?:1|true|yes|on|да)$/i.test(String(s.nativeCard||'')))return true;
+        return /(?:^|[\n;])\s*(?:AD5КАРТА|AD5CARD|NATIVECARD)\s*:\s*(?:ДА|YES|ON|TRUE|1)(?=\s|$|[;,.])/i.test(String(s.description||'').replace(/<br\s*\/?\s*>/gi,'\n'));
+    }
+    function searchQuality(s){
+        var q=0;
+        if(s&&s.automation==='full')q+=20;else if(s&&s.automation==='partial')q+=10;
+        if(s&&s.ad5Mechanical)q+=8;
+        if(s&&(s.attack||s.save||s.damage||s.damage2||s.healing))q+=6;
+        if(isMultiResolverSpell(s))q+=8;
+        if(isNativeCardSpell(s))q+=4;
+        if(s&&String(s.description||'').trim())q+=2;
+        return q;
+    }
+    function mechanicsLabel(s){
+        var parts=[];
+        if(s.attack)parts.push(s.attack==='Melee'?'атака ближ.':'атака дальн.');
+        if(s.save)parts.push('спас '+s.save);
+        if(s.damage)parts.push(s.damage+' '+(s.damageType||''));
+        if(s.damage2)parts.push(s.damage2+' '+(s.damageType2||''));
+        if(s.healing)parts.push(s.healing+' лечение');
+        if(s.concentration)parts.push('КОН');
+        return parts.join(' · ')||'служебное/информационное';
+    }
+    function showMenu(pid,token){
+        var c=validateTargetToken(token,pid);
+        var cmd='!ad5spell-search '+token.id+' ?{Название заклинания|Огненный шар}';
+        whisper(pid,panel('AD5 · Библиотека заклинаний',
+            '<b>'+esc(c.get('name'))+'</b><br>'+
+            'В базе: <b>'+DATA.length+'</b> готовых AD5-записей.<br>'+
+            button('Поиск',cmd)+
+            '<br><small>Можно сразу написать: <code>!ad5spell Огненный шар</code></small>'));
+    }
+    function showSearch(pid,token,query){
+        var c=validateTargetToken(token,pid),rows=search(query);
+        if(!rows.length){
+            whisper(pid,panel('Заклинания не найдены',
+                'Запрос: <b>'+esc(query)+'</b><br>'+button('Новый поиск','!ad5spell-search '+token.id+' ?{Название заклинания|}')));
+            return;
+        }
+        if(rows.length===1){addSpell(pid,token,rows[0].id);return;}
+        var visible=rows.slice(0,12);
+        var body='<b>'+esc(c.get('name'))+'</b> · запрос «'+esc(query)+'»<br>';
+        visible.forEach(function(s){
+            body+='<div style="border-top:1px solid #ddd;padding:5px 0">'+
+                '<b>'+esc(s.name)+'</b> · '+esc(levelLabel(s.level))+
+                (s.automation==='partial'?' · <span style="color:#a05a00">частично автоматизировано</span>':' · <span style="color:#167a39">AD5 готово</span>')+
+                '<br><small>'+esc(mechanicsLabel(s))+'</small><br>'+
+                button('Добавить','!ad5spell-add '+token.id+' '+s.id)+
+                '</div>';
+        });
+        if(rows.length>visible.length)body+='<small>Показано '+visible.length+' из '+rows.length+'. Уточните запрос.</small>';
+        body+='<br>'+button('Новый поиск','!ad5spell-search '+token.id+' ?{Название заклинания|}');
+        whisper(pid,panel('Результаты поиска',body));
+    }
+    function newRowId(){
+        if(typeof generateRowID==='function')return generateRowID();
+        return '-'+Date.now().toString(36)+Math.random().toString(36).slice(2,10);
+    }
+    function section(level){return Number(level)===0?'cantrip':String(Number(level));}
+    function toggle(name,on){return on?'{{'+name+'=1}}':'';}
+    function saveDC(cid){
+        var names=['spell_save_dc','spell_save_dc_mod'];
+        for(var i=0;i<names.length;i++){
+            var raw=attrValue(cid,names[i]),n=Number(raw);
+            if(Number.isFinite(n)&&n>=1&&n<=99)return Math.floor(n);
+        }
+        return null;
+    }
+    function compileForCharacter(cid,raw){
+        var s=JSON.parse(JSON.stringify(raw)),dc=saveDC(cid);
+        if(/\{DC\}/.test(String(s.description||''))){
+            if(dc===null)throw new Error('Для «'+s.name+'» нужен числовой spell_save_dc в листе, чтобы записать автоматический повторный спасбросок/проверку.');
+            s.description=String(s.description).replace(/\{DC\}/g,String(dc));
+        }
+        return s;
+    }
+    function abilityReference(raw){
+        raw=String(raw||'').trim();if(!raw||/^auto$/i.test(raw))return '';
+        var map={STR:'strength',DEX:'dexterity',CON:'constitution',INT:'intelligence',WIS:'wisdom',CHA:'charisma',
+            'СИЛ':'strength','ЛОВ':'dexterity','ТЕЛ':'constitution','ИНТ':'intelligence','МДР':'wisdom','ХАР':'charisma'};
+        var key=raw.toUpperCase(),ability=map[key];
+        if(ability)return '@{'+ability+'_mod}+';
+        if(/^@\{[^{}]+\}\+?$/.test(raw))return /\+$/.test(raw)?raw:raw+'+';
+        return raw;
+    }
+    function spellAbilityValue(cid,s){
+        var explicit=abilityReference(s.spellAbility||'');if(explicit)return explicit;
+        var global=String(attrValue(cid,'spellcasting_ability')||'').trim();
+        if(global&&!/^(?:0|none|null)$/i.test(global))return global;
+        return '';
+    }
+    function spellAttrs(cid,s,rowId){
+        var prefix='repeating_spell-'+section(s.level)+'_'+rowId+'_',o={},c=s.components||{};
+        function put(k,v){if(v!==undefined&&v!==null)o[prefix+k]=String(v);}
+        put('spellname',s.name);
+        put('spellname_base',s.name);
+        put('spelllevel',s.level);
+        put('spellschool',s.school||'');
+        put('spellcastingtime',s.castingTime||'1 действие');
+        put('spellrange',s.range||'');
+        put('spelltarget',s.target||'');
+        put('spellduration',s.duration||'');
+        put('spellritualflag',s.ritual?'1':'0');
+        put('spellritual',toggle('ritual',!!s.ritual));
+        put('spellconcentrationflag',s.concentration?'1':'0');
+        put('spellconcentration',toggle('concentration',!!s.concentration));
+        put('spellcomp_v',toggle('v',!!c.v));
+        put('spellcomp_s',toggle('s',!!c.s));
+        put('spellcomp_m',toggle('m',!!c.m));
+        put('spellcomp_materials',c.material||'');
+        put('spell_ability',spellAbilityValue(cid,s));
+        put('spellattackinfoflag',(s.attack||s.damage||s.damage2||s.healing||s.save)?'1':'0');
+        put('ad5self',s.selfApply===true?'1':(s.selfApply===false?'0':''));
+        put('ad5nativecard',isNativeCardSpell(s)?'1':'0');
+        put('spellprepared',s.prepared===false?'0':'1');
+        put('prep',s.prepared===false?'0':'1');
+        put('spellclass',s.classes||'');
+        put('spellsource',s.source||'Арвенор · импортировано из AD5 Library');
+        put('spellattack',s.attack||'');
+        put('spelldamage',s.damage||'');
+        put('spelldamagetype',s.damageType||'');
+        put('spelldamage2',s.damage2||'');
+        put('spelldamagetype2',s.damageType2||'');
+        put('spellhealing',s.healing||'');
+        put('spelldmgmod',s.addAbilityMod?'1':'0');
+        put('spell_damage_progression',s.progression||'');
+        put('spellsave',s.save||'');
+        put('spellsavesuccess',s.saveSuccess||'');
+        put('spellhldie',s.higherDieCount||'');
+        put('spellhldietype',s.higherDieType||'');
+        put('spellhlbonus',s.higherBonus||'');
+        put('spelldescription',s.description||'ЗАКЛ');
+        put('spellathigherlevels',s.higherText||'');
+        // Import provenance only. These fields are NEVER consulted by AD5 during
+        // execution; after creation the character sheet is fully detached from the template DB.
+        put('ad5lib_id',s.id);
+        put('ad5lib_key',s.duplicateKey||s.id);
+        put('ad5lib_version',VERSION);
+        put('ad5lib_detached','1');
+        // First stage must be SPELLCARD. A later worker-driven switch creates
+        // the native linked repeating_attack row and spellattackid.
+        put('spelloutput','SPELLCARD');
+        return {prefix:prefix,values:o};
+    }
+    function existingKeys(cid){
+        var keys=Object.create(null),names=Object.create(null);
+        (findObjs({_type:'attribute',_characterid:String(cid)})||[]).forEach(function(a){
+            var n=String(a.get('name')||''),v=String(a.get('current')||'');
+            if(/^repeating_spell-(?:cantrip|[0-9])_.+_ad5lib_key$/i.test(n)&&v)keys[norm(v)]=true;
+            if(/^repeating_spell-(?:cantrip|[0-9])_.+_(?:spellname|spellname_base)$/i.test(n)&&v)names[norm(v)]=true;
+        });
+        return {keys:keys,names:names};
+    }
+    function writeBatched(cid,values,done){
+        var keys=Object.keys(values),i=0;
+        function step(){
+            try{
+                var end=Math.min(i+8,keys.length);
+                for(;i<end;i++){
+                    var name=keys[i],value=values[name],a=attr(cid,name);
+                    if(a)a.set({current:value});
+                    else createObj('attribute',{characterid:cid,name:name,current:value});
+                }
+                if(i<keys.length){setTimeout(step,0);return;}
+                setTimeout(done,100);
+            }catch(e){done(e);}
+        }
+        step();
+    }
+    function normalizeAttackId(v){
+        return String(v||'').replace(/^repeating_attack_/i,'').replace(/_(?:atkname|rollbase(?:_[a-z]+)?)$/i,'').trim();
+    }
+    function linkedAttack(cid,prefix){
+        var id=normalizeAttackId(attrValue(cid,prefix+'spellattackid'));
+        if(!id)return null;
+        var name=attr(cid,'repeating_attack_'+id+'_atkname');
+        return name?{id:id,name:name}:null;
+    }
+    function waitLink(cid,prefix,tries,done){
+        var l=linkedAttack(cid,prefix);
+        if(l){done(null,l);return;}
+        if(tries<=0){done(new Error('Roll20 не создал связанную строку Attacks & Spellcasting (spellattackid). Заклинание в книге сохранено.'));return;}
+        setTimeout(function(){waitLink(cid,prefix,tries-1,done);},200);
+    }
+    function notifyImportedCharacter(cid){
+        if(typeof AD5Reactions!=='undefined'&&AD5Reactions&&typeof AD5Reactions.invalidateCharacter==='function')AD5Reactions.invalidateCharacter(cid);
+        if(typeof DBMAccessibility!=='undefined'&&DBMAccessibility&&typeof DBMAccessibility.syncCharacter==='function')DBMAccessibility.syncCharacter(cid);
+    }
+    function waitAd5Patch(cid,prefix,attackId,tries,done){
+        // This call is reached only after an explicitly requested import.
+        var r=attr(cid,'repeating_attack_'+attackId+'_rollbase');
+        if(!r){if(tries<=0){done(false);return;}setTimeout(function(){waitAd5Patch(cid,prefix,attackId,tries-1,done);},200);return;}
+        try{
+            if(typeof AD5!=='undefined'&&AD5&&AD5.spellbook&&typeof AD5.spellbook.patchLinkedAttack==='function'){
+                var result=AD5.spellbook.patchLinkedAttack(cid,attackId,prefix);
+                notifyImportedCharacter(cid);done(!!(result&&result.ok));return;
+            }
+            notifyImportedCharacter(cid);done(false);
+        }catch(e){log('AD5 Spell Library import finalize: '+String(e.stack||e));done(false);}
+    }
+    function afterOutputWorker(a,value,delay,done){
+        var finished=false,timer=null;
+        function finish(err){if(finished)return;finished=true;if(timer!==null)clearTimeout(timer);done(err);}
+        try{
+            var workerHook=typeof a.setWithWorker==='function'&&typeof onSheetWorkerCompleted==='function';
+            if(workerHook)onSheetWorkerCompleted(function(){finish(null);});
+            // Give actual workers time to finish; legacy hosts retain the short fallback.
+            timer=setTimeout(function(){finish(null);},workerHook?Math.max(5000,delay):delay);
+            if(typeof a.setWithWorker==='function')a.setWithWorker({current:value});
+            else a.set({current:value});
+        }catch(e){finish(e);}
+    }
+    function switchToAttack(cid,prefix,done){
+        var a=attr(cid,prefix+'spelloutput');
+        if(!a){done(new Error('Не найдено поле spelloutput после создания заклинания.'));return;}
+        afterOutputWorker(a,'ATTACK',250,function(err){if(err){done(err);return;}waitLink(cid,prefix,30,done);});
+    }
+    function finalizeMultiSpellCard(cid,prefix,done){
+        var a=attr(cid,prefix+'spelloutput');
+        if(!a){done(new Error('Не найдено поле spelloutput после создания МУЛЬТИ-заклинания.'));return;}
+        afterOutputWorker(a,'SPELLCARD',300,function(err){
+            if(err){done(err);return;}
+            try{
+                if(typeof AD5!=='undefined'&&AD5&&AD5.spellbook&&typeof AD5.spellbook.prepareNativeMulti==='function')AD5.spellbook.prepareNativeMulti(cid);
+                notifyImportedCharacter(cid);done(null);
+            }catch(e){done(e);}
+        });
+    }
+    function addSpell(pid,token,spellId){
+        var c=validateTargetToken(token,pid),raw=DB[String(spellId||'')];
+        if(!raw)throw new Error('Заклинание не найдено в библиотеке.');
+        var key=String(c.id)+'|'+norm(raw.duplicateKey||raw.id);
+        if(locks[key])throw new Error('Это заклинание уже добавляется. Подождите завершения текущей операции.');
+
+        var existing=existingKeys(c.id);
+        if(existing.keys[norm(raw.duplicateKey||raw.id)]||existing.names[norm(raw.name)])
+            throw new Error('«'+raw.name+'» уже есть в книге заклинаний этого персонажа.');
+
+        var s=compileForCharacter(c.id,raw),rowId=newRowId(),built=spellAttrs(c.id,s,rowId);
+        locks[key]=true;
+        setTimeout(function(){delete locks[key];},15000);
+
+        whisper(pid,panel('Добавление заклинания',
+            '<b>'+esc(s.name)+'</b> → <b>'+esc(c.get('name'))+'</b><br>'+
+            'Раздел: '+esc(levelLabel(s.level))+'. Создаю штатную Spellbook-запись…'));
+
+        writeBatched(c.id,built.values,function(writeErr){
+            if(writeErr){delete locks[key];whisper(pid,panel('Ошибка',esc(writeErr.message||writeErr)));return;}
+            if(isNativeCardSpell(s)){
+                finalizeMultiSpellCard(c.id,built.prefix,function(cardErr){
+                    delete locks[key];
+                    if(cardErr){
+                        whisper(pid,panel('Заклинание добавлено, SpellCard требует проверки',
+                            '<b>'+esc(s.name)+'</b> сохранено в разделе '+esc(levelLabel(s.level))+'.<br>'+esc(cardErr.message||cardErr)+
+                            '<br>Механика остаётся в строке «Заклинания»; repeating_attack не используется как источник данных.'));
+                        return;
+                    }
+                    whisper(pid,panel('Заклинание готово',
+                        '<b>'+esc(s.name)+'</b> добавлено персонажу <b>'+esc(c.get('name'))+'</b>.<br>'+
+                        'Круг: <b>'+esc(levelLabel(s.level))+'</b> · <b>Native SpellCard</b><br>'+
+                        '<span style="color:#167a39"><b>AD5:</b> Native AD5 SpellCard читает название, дистанцию, цель, урон, тип и описание из живой строки раздела «Заклинания». repeating_attack/rollbase для механики не используется.</span>'));
+                });
+                return;
+            }
+            switchToAttack(c.id,built.prefix,function(linkErr,link){
+                delete locks[key];
+                if(linkErr){
+                    whisper(pid,panel('Заклинание добавлено, связь не создана',
+                        '<b>'+esc(s.name)+'</b> находится в разделе '+esc(levelLabel(s.level))+'.<br>'+
+                        esc(linkErr.message||linkErr)+
+                        '<br>Откройте заклинание и переключите ВЫВОД: Карточка → Атака вручную.'));
+                    return;
+                }
+                waitAd5Patch(c.id,built.prefix,link.id,20,function(patched){
+                    whisper(pid,panel('Заклинание готово',
+                        '<b>'+esc(s.name)+'</b> добавлено персонажу <b>'+esc(c.get('name'))+'</b>.<br>'+
+                        'Круг: <b>'+esc(levelLabel(s.level))+'</b> · spellattackid: <code>'+esc(link.id)+'</code><br>'+
+                        (patched
+                            ?'<span style="color:#167a39"><b>AD5:</b> связанная атака автоматически подготовлена; определения заклинания всё равно читаются из Spellbook.</span>'
+                            :'<span style="color:#a05a00"><b>AD5:</b> Roll20 создал связь; подготовка attack-row не подтверждена. Команда GM: <code>!ad5 buttons selected</code>.</span>')+
+                        (s.automation==='partial'
+                            ?'<br><small>У этого заклинания есть эффект, который текущий стек не может точно автоматизировать; он записан в описании как «Примечание».</small>'
+                            :'')
+                    ));
+                });
+            });
+        });
+    }
+    var CUSTOM_HANDOUT='AD5 Spell Library — Custom';
+    var IMPORT_HANDOUT='AD5 Spell Library — JSON Import';
+    var ADMIN_MACRO='AD5-SPELLS';
+    var MAX_IMPORT=200;
+
+    function decodeNotes(raw){
+        return String(raw||'')
+            .replace(/<br\s*\/?\s*>|<\/p>|<\/div>/gi,'\n')
+            .replace(/<[^>]*>/g,'')
+            .replace(/&quot;/gi,'"').replace(/&#39;|&apos;/gi,"'")
+            .replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&nbsp;|&#160;/gi,' ')
+            .replace(/&amp;/gi,'&')
+            .replace(/&#(x[0-9a-f]+|\d+);/gi,function(_,n){
+                var code=n.charAt(0).toLowerCase()==='x'?parseInt(n.slice(1),16):Number(n);
+                return Number.isFinite(code)?String.fromCharCode(code):_;
+            })
+            .replace(/^\uFEFF/,'')
+            .replace(/^```(?:json)?\s*/i,'')
+            .replace(/\s*```$/,'')
+            .trim();
+    }
+    function customId(name){
+        var s=norm(name),h=0,i;
+        for(i=0;i<s.length;i++)h=((h<<5)-h+s.charCodeAt(i))|0;
+        return 'custom-'+Math.abs(h).toString(36);
+    }
+    function bool(v,def){
+        if(v===undefined||v===null||v==='')return !!def;
+        if(typeof v==='boolean')return v;
+        return /^(?:1|true|yes|on|да)$/i.test(String(v).trim());
+    }
+    function normalizeCustomSpell(raw,index){
+        if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('Запись '+(index+1)+': ожидается JSON-объект.');
+        var s=JSON.parse(JSON.stringify(raw)),required=['name','level','school','castingTime','range','target','duration'];
+        required.forEach(function(k){
+            if(s[k]===undefined||s[k]===null||String(s[k]).trim()==='')
+                throw new Error('Запись '+(index+1)+': обязательное поле '+k+'.');
+        });
+        s.name=String(s.name).trim();
+        s.id=String(s.id||customId(s.name)).trim();
+        if(!/^[A-Za-z0-9_.:-]{1,100}$/.test(s.id))
+            throw new Error(s.name+': id может содержать только A-Z, a-z, 0-9, _, ., :, -.');
+        s.level=Number(s.level);
+        if(!Number.isSafeInteger(s.level)||s.level<0||s.level>9)throw new Error(s.name+': level должен быть 0–9.');
+        s.aliases=Array.isArray(s.aliases)?s.aliases.map(String):[];
+        if(s.aliases.indexOf(s.name)<0)s.aliases.push(s.name);
+        s.school=String(s.school);
+        s.castingTime=String(s.castingTime);
+        s.range=String(s.range);
+        s.target=String(s.target);
+        s.duration=String(s.duration);
+        s.components=s.components&&typeof s.components==='object'?s.components:{};
+        s.components={
+            v:bool(s.components.v,false),
+            s:bool(s.components.s,false),
+            m:bool(s.components.m,false),
+            material:String(s.components.material||'')
+        };
+        s.concentration=bool(s.concentration,false);
+        s.ritual=bool(s.ritual,false);
+        s.addAbilityMod=bool(s.addAbilityMod,false);
+        // 2.3.3: preserve explicit Native SpellCard intent from custom JSON.
+        // 2.3.2 normalized unknown fields away, so {\"nativeCard\":true} was
+        // silently lost and save-only declarative spells were switched to ATTACK.
+        s.nativeCard=bool(s.nativeCard,false);
+        s.attack=String(s.attack||'');
+        s.save=String(s.save||'');
+        s.saveSuccess=String(s.saveSuccess||'');
+        s.damage=String(s.damage||'');
+        s.damageType=String(s.damageType||'');
+        s.damage2=String(s.damage2||'');
+        s.damageType2=String(s.damageType2||'');
+        s.healing=String(s.healing||'');
+        s.progression=String(s.progression||'');
+        s.higherDieCount=String(s.higherDieCount||'');
+        s.higherDieType=String(s.higherDieType||'');
+        s.higherBonus=String(s.higherBonus||'');
+        s.higherText=String(s.higherText||'');
+        s.classes=String(s.classes||'Арвенор');
+        s.source=String(s.source||'Арвенор');
+        s.spellAbility=String(s.spellAbility||'auto');
+        if(s.selfApply!==undefined)s.selfApply=bool(s.selfApply,false);
+        s.description=String(s.description||'').trim();
+        if(!/(?:^|\s)ЗАКЛ(?:$|\s|[.,;:!?])/i.test(s.description))
+            s.description='ЗАКЛ'+(s.description?'\n'+s.description:'');
+        s.output='ATTACK';
+        s.ad5Tag=true;
+        s.ad5Mechanical=true;
+        s.automation=String(s.automation||'full');
+        s.duplicateKey=String(s.duplicateKey||s.id);
+        return s;
+    }
+    function customTemplate(){return [{
+        id:'my-spell',
+        name:'Моё заклинание',
+        aliases:['My Spell'],
+        level:3,
+        school:'Воплощение',
+        castingTime:'1 действие',
+        range:'60 фт',
+        target:'1 существо',
+        duration:'Мгновенно',
+        components:{v:true,s:true,m:false,material:''},
+        concentration:false,
+        ritual:false,
+        spellAbility:'auto',
+        classes:'Волшебник',
+        source:'Арвенор',
+        attack:'',
+        save:'DEX',
+        saveSuccess:'Половина урона',
+        damage:'8d6',
+        damageType:'огонь',
+        damage2:'',
+        damageType2:'',
+        healing:'',
+        addAbilityMod:false,
+        progression:'',
+        higherDieCount:'1',
+        higherDieType:'d6',
+        higherBonus:'',
+        higherText:'За каждый круг выше 3-го +1d6.',
+        description:'ЗАКЛ\nПРВ: полный урон; УСП: половина урона',
+        selfApply:false
+    }];}
+
+    function customHandout(){
+        var hs=findObjs({_type:'handout',name:CUSTOM_HANDOUT})||[];
+        return hs[0]||null;
+    }
+    function importHandout(){
+        var hs=findObjs({_type:'handout',name:IMPORT_HANDOUT})||[];
+        return hs[0]||null;
+    }
+    function handoutLink(h,label){
+        var id=h&&(h.id||h.get('_id'));
+        if(!id)return '';
+        return '<a style="display:inline-block;background:#305a8d;color:#fff;padding:5px 8px;margin:2px;border-radius:3px;text-decoration:none" href="http://journal.roll20.net/handout/'+esc(id)+'">'+esc(label||'Открыть Handout')+'</a>';
+    }
+    function importInstructions(){
+        return '<h3>AD5 Spell Library — JSON Manager</h3>'+
+            '<p><b>Добавить новое:</b> вставьте полный объект заклинания.</p>'+
+            '<p><b>Изменить существующее:</b> достаточно <code>name</code> или <code>id</code> и только изменяемых полей. По умолчанию используется patch-режим.</p>'+
+            '<p><b>Много заклинаний:</b> вставьте массив <code>[{...},{...}]</code>. Максимум '+MAX_IMPORT+' записей за один импорт.</p>'+
+            '<p><b>Полная замена:</b> добавьте <code>"mode":"replace"</code> — тогда запись не наследует старые поля и должна быть полной.</p>'+
+            '<p><b>Сброс изменения встроенного заклинания:</b> <code>{"name":"Огненный шар","reset":true}</code>.</p>'+
+            '<p>JSON помещается в <b>GM Notes</b>. После Save нажмите макрос <b>'+ADMIN_MACRO+'</b> → <b>Добавить / обновить</b>.</p>'+
+            '<p>Примеры patch:</p>'+
+            '<pre>{"name":"Огненный шар","damage":"10d6"}</pre>'+
+            '<pre>[{"name":"Огненный шар","damage":"10d6"},{"name":"Молния","damage":"9d6"}]</pre>';
+    }
+    function ensureCustomHandout(){
+        var h=customHandout();
+        if(!h){
+            h=createObj('handout',{name:CUSTOM_HANDOUT,inplayerjournals:'',controlledby:'',archived:false});
+            if(!h)throw new Error('Не удалось создать постоянный Handout библиотеки.');
+            h.set('notes','AD5 Spell Library '+VERSION+' — постоянные пользовательские записи и overrides. Не удаляйте без резервной копии.');
+            h.set('gmnotes','[]');
+        }else{
+            if(String(h.get('inplayerjournals')||'')!=='')h.set('inplayerjournals','');
+            if(String(h.get('controlledby')||'')!=='')h.set('controlledby','');
+        }
+        return h;
+    }
+    function ensureImportHandout(){
+        var h=importHandout();
+        if(!h){
+            h=createObj('handout',{name:IMPORT_HANDOUT,inplayerjournals:'',controlledby:'',archived:false});
+            if(!h)throw new Error('Не удалось создать JSON-буфер заклинаний.');
+            h.set('gmnotes',JSON.stringify(customTemplate(),null,2));
+        }
+        h.set('notes',importInstructions());
+        if(String(h.get('inplayerjournals')||'')!=='')h.set('inplayerjournals','');
+        if(String(h.get('controlledby')||'')!=='')h.set('controlledby','');
+        return h;
+    }
+    function ensureAdminMacro(){
+        var players=findObjs({_type:'player'})||[],gmIds=[],made=0,updated=0;
+        players.forEach(function(p){
+            var pid=String(p.id||p.get('_id')||'');
+            if(pid&&playerIsGM(pid))gmIds.push(pid);
+        });
+        if(!gmIds.length){
+            log(SCRIPT+' '+VERSION+': macro create skipped: no GM player object.');
+            return {made:0,updated:0};
+        }
+        var owner=gmIds[0],macros=findObjs({_type:'macro',name:ADMIN_MACRO})||[];
+        var own=macros.filter(function(m){
+            return String(m.get('playerid')||m.get('_playerid')||'')===owner;
+        });
+        var m=own[0]||macros[0]||null;
+        if(!m){
+            try{
+                var created=createObj('macro',{
+                    name:ADMIN_MACRO,
+                    action:'!ad5spell-json',
+                    playerid:owner,
+                    visibleto:gmIds.join(','),
+                    istokenaction:false
+                });
+                if(created)made++;
+            }catch(e){
+                log(SCRIPT+' '+VERSION+' macro create failed: '+(e.message||e));
+            }
+        }else{
+            var changes={};
+            if(String(m.get('action')||'')!=='!ad5spell-json')changes.action='!ad5spell-json';
+            var current=String(m.get('visibleto')||'').split(',').filter(Boolean),merged=current.slice();
+            gmIds.forEach(function(id){if(merged.indexOf(id)<0)merged.push(id);});
+            if(merged.join(',')!==current.join(','))changes.visibleto=merged.join(',');
+            if(Object.keys(changes).length){m.set(changes);updated++;}
+        }
+        return {made:made,updated:updated};
+    }
+
+    function loadCustom(pid,silent){
+        var h=customHandout();
+        if(!h){
+            CUSTOM_DATA=[];
+            buildIndex();
+            if(!silent&&pid)whisper(pid,panel('Custom Library','Постоянный Handout пока не создан.'));
+            return;
+        }
+        h.get('gmnotes',function(raw){
+            try{
+                var text=decodeNotes(raw),parsed=text?JSON.parse(text):[];
+                if(!Array.isArray(parsed))parsed=[parsed];
+                var next=parsed.map(normalizeCustomSpell),seen={};
+                next.forEach(function(s){
+                    if(seen[s.id])throw new Error('Повторяющийся custom id: '+s.id);
+                    seen[s.id]=true;
+                });
+                CUSTOM_DATA=next;
+                buildIndex();
+                log(SCRIPT+' '+VERSION+': custom spells loaded='+CUSTOM_DATA.length+'; effective='+Object.keys(DB).length+'.');
+                if(!silent&&pid)whisper(pid,panel('Custom Library',
+                    'Пользовательских/изменённых записей: <b>'+CUSTOM_DATA.length+'</b>.<br>'+
+                    'Эффективных заклинаний в поиске: <b>'+Object.keys(DB).length+'</b>.'));
+            }catch(e){
+                log(SCRIPT+' '+VERSION+' custom load error: '+(e.stack||e.message||e));
+                if(!silent&&pid)whisper(pid,panel('Ошибка Custom Library',esc(e.message||e)));
+            }
+        });
+    }
+
+    function clone(x){return x==null?x:JSON.parse(JSON.stringify(x));}
+    function plainObject(x){return !!x&&typeof x==='object'&&!Array.isArray(x);}
+    function mergePatch(base,patch){
+        var out=plainObject(base)?clone(base):{};
+        Object.keys(patch||{}).forEach(function(k){
+            if(['mode','reset','delete','remove'].indexOf(k)>=0)return;
+            var v=patch[k];
+            if(plainObject(v)&&plainObject(out[k]))out[k]=mergePatch(out[k],v);
+            else out[k]=clone(v);
+        });
+        return out;
+    }
+    function currentEffectiveMap(){
+        var map=Object.create(null);
+        Object.keys(DB).forEach(function(id){map[id]=clone(DB[id]);});
+        return map;
+    }
+    function currentCustomMap(){
+        var map=Object.create(null);
+        (CUSTOM_DATA||[]).forEach(function(s){map[s.id]=clone(s);});
+        return map;
+    }
+    function resolveExistingId(spec,effective,index){
+        if(spec.id!==undefined&&String(spec.id).trim()){
+            var explicit=String(spec.id).trim();
+            return {id:explicit,exists:!!effective[explicit],by:'id'};
+        }
+        var name=String(spec.name||'').trim();
+        if(!name)throw new Error('Запись '+(index+1)+': укажите id или name.');
+        var wanted=norm(name),exact=[],alias=[];
+        Object.keys(effective).forEach(function(id){
+            var s=effective[id];
+            if(norm(s.name)===wanted)exact.push(id);
+            else if((s.aliases||[]).some(function(a){return norm(a)===wanted;}))alias.push(id);
+        });
+        var hits=exact.length?exact:alias;
+        if(hits.length>1)
+            throw new Error('Запись '+(index+1)+': имя «'+name+'» неоднозначно. Укажите id. Совпадения: '+hits.join(', ')+'.');
+        if(hits.length===1)return {id:hits[0],exists:true,by:exact.length?'name':'alias'};
+        return {id:customId(name),exists:false,by:'new'};
+    }
+    function importBatch(data){
+        var list=Array.isArray(data)?data:[data];
+        if(!list.length)throw new Error('Массив заклинаний пуст.');
+        if(list.length>MAX_IMPORT)throw new Error('За один импорт разрешено не более '+MAX_IMPORT+' записей.');
+
+        var effective=currentEffectiveMap(),custom=currentCustomMap(),results=[];
+        list.forEach(function(raw,index){
+            if(!plainObject(raw))throw new Error('Запись '+(index+1)+': ожидается JSON-объект.');
+            var spec=clone(raw),resolved=resolveExistingId(spec,effective,index),id=resolved.id;
+            var reset=bool(spec.reset,false)||bool(spec.delete,false)||bool(spec.remove,false);
+            if(reset){
+                if(custom[id])delete custom[id];
+                var builtin=BUILTIN_DATA.filter(function(s){return s.id===id;})[0]||null;
+                if(builtin)effective[id]=clone(builtin);else delete effective[id];
+                results.push({id:id,name:(effective[id]&&effective[id].name)||String(spec.name||id),status:builtin?'reset':'deleted'});
+                return;
+            }
+
+            var mode=String(spec.mode||'patch').toLowerCase();
+            if(mode!=='patch'&&mode!=='replace')throw new Error('Запись '+(index+1)+': mode должен быть patch или replace.');
+            var base=(mode==='replace')?{}:(effective[id]||{});
+            var merged=mergePatch(base,spec);
+            merged.id=id;
+            if(!merged.name&&spec.name)merged.name=spec.name;
+            var normalized=normalizeCustomSpell(merged,index);
+            custom[id]=normalized;
+            effective[id]=clone(normalized);
+            results.push({
+                id:id,
+                name:normalized.name,
+                status:resolved.exists?'updated':'created',
+                mode:mode
+            });
+        });
+
+        var next=Object.keys(custom).map(function(id){return custom[id];}).sort(function(a,b){
+            return Number(a.level)-Number(b.level)||String(a.name).localeCompare(String(b.name),'ru');
+        });
+        return {next:next,results:results};
+    }
+    function persistCustom(list,done){
+        var h=ensureCustomHandout();
+        try{
+            h.set('gmnotes',JSON.stringify(list,null,2));
+            CUSTOM_DATA=list.map(function(s){return clone(s);});
+            buildIndex();
+            setTimeout(function(){done(null);},25);
+        }catch(e){done(e);}
+    }
+    function parseImportBuffer(raw){
+        var text=decodeNotes(raw);
+        if(!text)throw new Error('JSON-буфер пуст.');
+        if(text.length>350000)throw new Error('JSON слишком большой: максимум 350000 символов.');
+        try{return JSON.parse(text);}
+        catch(e){throw new Error('Некорректный JSON: '+e.message);}
+    }
+    function importFromBuffer(pid){
+        var h=ensureImportHandout();
+        h.get('gmnotes',function(raw){
+            try{
+                var data=parseImportBuffer(raw),prepared=importBatch(data);
+                persistCustom(prepared.next,function(err){
+                    if(err){whisper(pid,panel('Ошибка сохранения',esc(err.message||err)));return;}
+                    var created=prepared.results.filter(function(x){return x.status==='created';}).length;
+                    var updated=prepared.results.filter(function(x){return x.status==='updated';}).length;
+                    var reset=prepared.results.filter(function(x){return x.status==='reset'||x.status==='deleted';}).length;
+                    var lines=prepared.results.slice(0,30).map(function(x){
+                        var label=x.status==='created'?'добавлено':x.status==='updated'?'обновлено':x.status==='reset'?'сброшено к встроенной версии':'удалено';
+                        return '<code>'+esc(x.id)+'</code> — '+esc(x.name)+' — <b>'+label+'</b>';
+                    });
+                    if(prepared.results.length>30)lines.push('… ещё '+(prepared.results.length-30)+' записей.');
+                    whisper(pid,panel('AD5 Spell Library — импорт завершён',
+                        'Добавлено: <b>'+created+'</b> · обновлено: <b>'+updated+'</b> · сброшено/удалено: <b>'+reset+'</b><br>'+
+                        'Эффективных заклинаний: <b>'+Object.keys(DB).length+'</b>.<br><br>'+
+                        lines.join('<br>')));
+                });
+            }catch(e){
+                whisper(pid,panel('Ошибка JSON-импорта',esc(e.message||e)));
+            }
+        });
+    }
+    function clearImportBuffer(pid){
+        var h=ensureImportHandout();
+        h.set('gmnotes','');
+        whisper(pid,panel('JSON-буфер очищен','Handout <b>'+esc(IMPORT_HANDOUT)+'</b> готов к следующему импорту.'));
+    }
+    function resetImportTemplate(pid){
+        var h=ensureImportHandout();
+        h.set('gmnotes',JSON.stringify(customTemplate(),null,2));
+        whisper(pid,panel('Шаблон восстановлен','В JSON-буфер записан пример нового заклинания.'));
+    }
+    function requestJsonWindow(pid){
+        var ih=ensureImportHandout(),ch=ensureCustomHandout();
+        var body=
+            '<p><b>Добавление и изменение библиотеки</b></p>'+
+            handoutLink(ih,'Открыть JSON-буфер')+
+            button('Добавить / обновить','!ad5spell-json-import')+
+            button('Очистить буфер','!ad5spell-json-clear')+
+            button('Шаблон','!ad5spell-json-template')+
+            '<hr>'+
+            handoutLink(ch,'Открыть постоянную Custom Library')+
+            button('Статус','!ad5spell-admin status')+
+            '<p style="font-size:11px;color:#666">'+
+            'Один объект или массив до '+MAX_IMPORT+' записей. Существующее заклинание можно менять только указанными полями — остальные сохраняются.'+
+            '</p>';
+        whisper(pid,panel(ADMIN_MACRO+' · библиотека заклинаний',body));
+    }
+    function setupAdmin(pid){
+        var macro=ensureAdminMacro(),ih=ensureImportHandout(),ch=ensureCustomHandout();
+        whisper(pid,panel('AD5 Spell Library '+VERSION,
+            'Макрос <b>'+ADMIN_MACRO+'</b>: создано '+macro.made+', обновлено '+macro.updated+'.<br>'+
+            handoutLink(ih,'JSON-буфер')+handoutLink(ch,'Custom Library')+
+            '<br>Готово к массовому добавлению и patch-обновлению.'));
+    }
+    function customStatus(pid){
+        whisper(pid,panel('AD5 Spell Library '+VERSION,
+            'Встроено: <b>'+BUILTIN_DATA.length+'</b><br>'+
+            'Пользовательских/изменённых: <b>'+CUSTOM_DATA.length+'</b><br>'+
+            'Эффективных записей: <b>'+Object.keys(DB).length+'</b><br>'+
+            button('JSON Manager','!ad5spell-json')+
+            button('Перезагрузить Custom','!ad5spell-admin reload')+
+            button('Восстановить макрос','!ad5spell-admin setup')));
+    }
+    function handleAdmin(msg){
+        if(!playerIsGM(msg.playerid))throw new Error('Управление библиотекой доступно только GM.');
+        var args=String(msg.content||'').trim().split(/\s+/),sub=String(args[1]||'status').toLowerCase();
+        if(sub==='setup'||sub==='создать'||sub==='macro'||sub==='макрос'){setupAdmin(msg.playerid);return;}
+        if(sub==='reload'||sub==='load'||sub==='загрузить'){loadCustom(msg.playerid,false);return;}
+        if(sub==='status'||sub==='статус'){customStatus(msg.playerid);return;}
+        throw new Error('Используйте !ad5spell-admin setup | reload | status.');
+    }
+    function handle(msg){
+        if(!msg||msg.type!=='api')return;
+        var content=String(msg.content||'').trim();
+        if(!/^!ad5spell(?:\s|$)/i.test(content)&&
+           !/^!ad5spell-(?:search|add)(?:\s|$)/i.test(content)&&
+           !/^!ad5spell-admin(?:\s|$)/i.test(content)&&
+           !/^!ad5spell-json(?:\s|$|-)/i.test(content))return;
+        if(String(msg.playerid||'').toUpperCase()==='API')return;
+        try{
+            if(/^!ad5spell-json\s*$/i.test(content)){
+                if(!playerIsGM(msg.playerid))throw new Error('JSON Manager доступен только GM.');
+                requestJsonWindow(msg.playerid);return;
+            }
+            if(/^!ad5spell-json-import(?:\s|$)/i.test(content)){
+                if(!playerIsGM(msg.playerid))throw new Error('JSON Manager доступен только GM.');
+                importFromBuffer(msg.playerid);return;
+            }
+            if(/^!ad5spell-json-clear(?:\s|$)/i.test(content)){
+                if(!playerIsGM(msg.playerid))throw new Error('JSON Manager доступен только GM.');
+                clearImportBuffer(msg.playerid);return;
+            }
+            if(/^!ad5spell-json-template(?:\s|$)/i.test(content)){
+                if(!playerIsGM(msg.playerid))throw new Error('JSON Manager доступен только GM.');
+                resetImportTemplate(msg.playerid);return;
+            }
+            if(/^!ad5spell-admin(?:\s|$)/i.test(content)){handleAdmin(msg);return;}
+            if(/^!ad5spell-add(?:\s|$)/i.test(content)){
+                var am=/^!ad5spell-add\s+(\S+)\s+(\S+)\s*$/i.exec(content);
+                if(!am)throw new Error('Повреждена команда добавления.');
+                var at=getObj('graphic',am[1]);addSpell(msg.playerid,at,am[2]);return;
+            }
+            if(/^!ad5spell-search(?:\s|$)/i.test(content)){
+                var sm=/^!ad5spell-search\s+(\S+)\s+([\s\S]+)$/i.exec(content);
+                if(!sm)throw new Error('Введите название заклинания.');
+                var st=getObj('graphic',sm[1]);showSearch(msg.playerid,st,sm[2]);return;
+            }
+
+            var token=selectedToken(msg),query=content.replace(/^!ad5spell\b/i,'').trim();
+            if(!query){showMenu(msg.playerid,token);return;}
+            if(/^find\s+/i.test(query))query=query.replace(/^find\s+/i,'').trim();
+            showSearch(msg.playerid,token,query);
+        }catch(e){
+            whisper(msg.playerid,panel('AD5 Spell Library · ошибка',esc(e.message||e)));
+        }
+    }
+
+    buildIndex();
+    if(typeof on==='function'){
+        on('ready',function(){
+            log(SCRIPT+' '+VERSION+' ready; templates='+BUILTIN_DATA.length+'; IMPORT ONLY / SHEET FIRST; МУЛЬТИ -> Native SpellCard; no runtime DB binding, no attribute listeners.');
+            on('chat:message',handle);
+            loadCustom(null,true);
+            try{ensureAdminMacro();ensureImportHandout();}
+            catch(e){log(SCRIPT+' '+VERSION+' admin asset setup error: '+(e.stack||e.message||e));}
+        });
+    }
+
+    // Public API deliberately exposes no template lookup/getter. The internal DB
+    // exists only to power search/import chat commands. Runtime automation must read
+    // repeating_spell / repeating_attack fields from the character sheet.
+    return {
+        version:VERSION,
+        _test:{waitAd5Patch:waitAd5Patch,afterOutputWorker:afterOutputWorker},
+        count:function(){return DATA.length;},
+        search:search
+    };
+}());
+}
