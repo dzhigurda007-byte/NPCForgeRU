@@ -1,0 +1,621 @@
+/* Installation guard: disable old unguarded versions before installing. */
+if(typeof AD5Movement!=='undefined'&&AD5Movement) {
+    log('AD5Movement: duplicate module skipped; keep one installed copy.');
+} else {
+/*
+ * AD5 Movement Engine v2.3.5
+ * Companion for AD5 4.3.68 + AD5 Areas 2.23.5 + AD5 Reactions 1.4.1 + AD5 Condition Engine 1.0.0.
+ *
+ * Core path model:
+ * - Plain LMB drag without waypoints = one straight segment from previous token
+ *   position to the final position.
+ * - LMB drag with RMB waypoints = routed movement through every point stored in
+ *   Roll20 `lastmove`, followed by the final token position.
+ * - API/forced movement is still represented as a straight segment for Areas,
+ *   but is marked `manual:false` and therefore must not provoke opportunity
+ *   attacks.
+ * - Boundary tests use the complete continuous segment, not just waypoint
+ *   endpoints. A direct line can therefore enter and then leave an NPC reach
+ *   even when both start and finish are outside it.
+ * - AD5 Environment СОЛИД / SOLID areas clip movement at the first boundary.
+ *   The legal part of the route is retained and only that distance is charged.
+ * - Scripted push/pull and SOLID ejection destinations snap to the Roll20 grid.
+ * - ТЯГ/ТОЛЧ captures the starting terrain before movement and, after the final
+ *   snapped/SOLID-clipped cell, explicitly resolves terrain falling through Environment.
+ *
+ * Compatibility:
+ * - preserves beginGraphicMove/endGraphicMove API used by AD5 Areas;
+ * - preserves speed/undo/redo helpers from Movement 1.x;
+ * - exposes onMove/offMove and reachCrossings for companion modules.
+ * - 2.3.5 adds same-vector forced translation for grapple carry and a movement-cost helper for standing from Prone.
+ */
+var AD5Movement=(function(){
+    'use strict';
+
+    var VERSION='2.3.7',SCRIPT='AD5 Movement';
+    var runtimeLastGroup=Object.create(null),suppressed=Object.create(null),recentMoveByToken=Object.create(null),pendingForced=Object.create(null),listeners=[];
+
+    function root(){
+        if(!state.AD5Movement||typeof state.AD5Movement!=='object')state.AD5Movement={};
+        var r=state.AD5Movement;
+        r.version=2;
+        r.tokens=r.tokens&&typeof r.tokens==='object'?r.tokens:{};
+        r.moves=r.moves&&typeof r.moves==='object'?r.moves:{};
+        r.order=Array.isArray(r.order)?r.order:[];
+        r.sequence=Number(r.sequence)||0;
+        r.lastByToken=r.lastByToken&&typeof r.lastByToken==='object'?r.lastByToken:{};
+        return r;
+    }
+    function clone(x){return x==null?x:JSON.parse(JSON.stringify(x));}
+    function versionAtLeast(actual,required){
+        var a=String(actual==null?'':actual).split('.').map(function(x){var n=parseInt(x,10);return Number.isFinite(n)?n:0;});
+        var b=String(required==null?'':required).split('.').map(function(x){var n=parseInt(x,10);return Number.isFinite(n)?n:0;});
+        var n=Math.max(a.length,b.length);
+        for(var i=0;i<n;i++){var av=a[i]||0,bv=b[i]||0;if(av>bv)return true;if(av<bv)return false;}
+        return true;
+    }
+    function norm(s){try{if(typeof AD5Syntax!=='undefined'&&AD5Syntax&&typeof AD5Syntax.normalize==='function')return AD5Syntax.normalize(String(s==null?'':s).replace(/<[^>]*>/g,' '));}catch(ignoreSyntax){}return String(s==null?'':s).replace(/<[^>]*>/g,' ').replace(/&nbsp;|&#160;/gi,' ').replace(/[‐‑‒–—―]/g,'-').replace(/\s+/g,' ').trim().toLocaleLowerCase('ru-RU').replace(/ё/g,'е');}
+    function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+    function fmt(n){n=Number(n)||0;var r=Math.round(n*10)/10;return Math.abs(r-Math.round(r))<1e-9?String(Math.round(r)):String(r).replace('.',',');}
+    function numeric(v){if(v===null||v===undefined)return null;var m=String(v).replace(',','.').match(/[-+]?\d+(?:\.\d+)?/);if(!m)return null;var n=Number(m[0]);return Number.isFinite(n)?n:null;}
+    function partyPageId(){return Campaign().get('playerpageid')||'';}
+    function attr(cid,name){
+        if(!cid)return null;
+        var exact=findObjs({_type:'attribute',_characterid:cid,name:name})[0];if(exact)return exact;
+        var low=String(name).toLowerCase();
+        return findObjs({_type:'attribute',_characterid:cid}).filter(function(a){return String(a.get('name')||'').toLowerCase()===low;})[0]||null;
+    }
+    function npcToken(token){var cid=token&&token.get('represents'),a=cid&&attr(cid,'npc');return !!(a&&/^(?:1|on|true|yes|да)$/i.test(String(a.get('current')||'').trim()));}
+    function tokenHp(token){var v=token&&token.get('bar1_value');if(v===undefined||v===null||String(v).trim()==='')return null;var n=Number(String(v).trim().replace(',','.'));return Number.isFinite(n)?n:null;}
+    function combatToken(token,page){
+        return !!(token&&token.get('_subtype')==='token'&&!token.get('isdrawing')&&token.get('layer')==='objects'&&(!page||token.get('_pageid')===page)&&getObj('character',token.get('represents'))&&String(token.get('name')||'').trim()&&tokenHp(token)!==null);
+    }
+    function groupName(name){return norm(name).replace(/\s*(?:[x×]\s*\d+|\(\s*\d+\s*\)|\[\s*\d+\s*\])\s*$/,'').trim();}
+    function groupKey(token){
+        if(typeof NPCGroupInitiative!=='undefined'&&NPCGroupInitiative&&typeof NPCGroupInitiative.groupKey==='function')return NPCGroupInitiative.groupKey(token);
+        try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.groupKey==='function')return AD5EffectTurns.groupKey(token);}catch(ignore){}
+        if(npcToken(token)){var cid=token.get('represents'),c=getObj('character',cid);return 'npc:'+groupName((c&&c.get('name'))||token.get('name')||token.id);}
+        return 'token:'+token.id;
+    }
+    function currentTurnInfo(){
+        var rows=[];try{rows=JSON.parse(Campaign().get('turnorder')||'[]')||[];}catch(ignore){}
+        if(!rows.length)return null;
+        var page=partyPageId(),row=rows[0];
+        if(row.id&&row.id!=='-1'){var t=getObj('graphic',row.id);if(t&&combatToken(t,page))return {page:page,key:groupKey(t),token:t};}
+        if(row.id==='-1'&&row.custom&&page)return {page:page,key:'npc:'+groupName(row.custom),token:null};
+        return null;
+    }
+    function isCurrentTurn(token){var info=currentTurnInfo();return !!(info&&token&&token.get('_pageid')===info.page&&groupKey(token)===info.key);}
+    function baseSpeedForToken(token){
+        if(typeof token==='string')token=getObj('graphic',token);
+        var cid=token&&token.get('represents');if(!cid)return null;
+        var names=npcToken(token)?['npc_speed','speed']:['speed','npc_speed'];
+        for(var i=0;i<names.length;i++){var a=attr(cid,names[i]),n=a&&numeric(a.get('current'));if(n!==null&&n>=0)return n;}
+        return null;
+    }
+    function speedInfo(token){
+        var base=baseSpeedForToken(token),penalty={active:false,loss:0,effective:base,half:false};
+        if(base!==null){try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.movementPenaltyForToken==='function')penalty=AD5EffectTurns.movementPenaltyForToken(token.id,base)||penalty;}catch(ignore){}}
+        var effective=base===null?null:(Number.isFinite(Number(penalty.effective))?Math.max(0,Number(penalty.effective)):base),condition=null;
+        if(effective!==null){try{if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.movementRule==='function'){condition=AD5ConditionEngine.movementRule(token,effective)||null;if(condition&&Number.isFinite(Number(condition.effective)))effective=Math.max(0,Number(condition.effective));}}catch(ignoreConditionEngine){}}
+        return {base:base,effective:effective,loss:base===null?0:Math.max(0,base-effective),slowed:!!penalty.active,half:!!penalty.half||!!(condition&&condition.half),condition:condition};
+    }
+    function tokenState(token){var r=root(),s=r.tokens[token.id];if(!s||typeof s!=='object')s=r.tokens[token.id]={spent:0};if(!Number.isFinite(Number(s.spent))||Number(s.spent)<0)s.spent=0;return s;}
+    function remainingSpeed(token){var si=speedInfo(token),s=tokenState(token);return si.effective===null?null:Math.max(0,si.effective-Number(s.spent||0));}
+
+    function spendMovement(tokenOrId,feet,reason){
+        var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;
+        if(!token)return {ok:false,reason:'token',cost:0,charged:0};
+        feet=Math.max(0,Number(feet)||0);
+        var si=speedInfo(token),st=tokenState(token),active=isCurrentTurn(token);
+        if(si.effective===null)return {ok:true,reason:'untracked',cost:feet,charged:0,activeTurn:active,remaining:null};
+        if(si.effective<=0)return {ok:false,reason:'speed-zero',cost:feet,charged:0,activeTurn:active,remaining:0};
+        var remaining=Math.max(0,si.effective-Number(st.spent||0));
+        if(active&&remaining+1e-9<feet)return {ok:false,reason:'not-enough',cost:feet,charged:0,activeTurn:true,remaining:remaining};
+        if(active&&feet>0)st.spent=Number(st.spent||0)+feet;
+        return {ok:true,reason:String(reason||''),cost:feet,charged:active?feet:0,activeTurn:active,remaining:active?Math.max(0,si.effective-Number(st.spent||0)):remaining,effective:si.effective};
+    }
+    function spendStandCost(tokenOrId){
+        var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;
+        if(!token)return {ok:false,reason:'token',cost:0,charged:0};
+        var si=speedInfo(token);
+        if(si.effective===null)return {ok:true,reason:'untracked',cost:0,charged:0,activeTurn:isCurrentTurn(token),remaining:null};
+        if(si.effective<=0)return {ok:false,reason:'speed-zero',cost:0,charged:0,activeTurn:isCurrentTurn(token),remaining:0};
+        return spendMovement(token,si.effective/2,'Встать из положения Сбит с ног');
+    }
+
+    function removeLegacyProxyById(proxyId){if(!proxyId)return;var p=getObj('graphic',proxyId);if(p)try{p.remove();}catch(ignore){}}
+    function cleanupLegacyDisplays(){
+        var r=root(),removed=0;
+        Object.keys(r.tokens).forEach(function(id){var st=r.tokens[id];if(st&&st.proxyId){removeLegacyProxyById(st.proxyId);delete st.proxyId;removed++;}});
+        findObjs({_type:'graphic',_subtype:'token'}).forEach(function(t){if(/^\[AD5MOVE_PROXY:[^\]]+\]$/.test(String(t.get('gmnotes')||'').trim())){try{t.remove();removed++;}catch(ignore){}}});
+        return removed;
+    }
+    function refreshToken(token){if(typeof token==='string')token=getObj('graphic',token);if(!token)return;var st=root().tokens[token.id];if(st&&st.proxyId){removeLegacyProxyById(st.proxyId);delete st.proxyId;}}
+    function refreshPage(){cleanupLegacyDisplays();}
+
+    // ---------- Path construction ----------
+    function parseLastMove(raw){
+        var nums=String(raw||'').split(',').map(function(x){return Number(String(x).trim());}).filter(function(x){return Number.isFinite(x);}),out=[];
+        for(var i=0;i+1<nums.length;i+=2)out.push({left:nums[i],top:nums[i+1]});
+        return out;
+    }
+    function samePoint(a,b,eps){eps=eps===undefined?1:eps;return !!(a&&b&&Math.abs(Number(a.left)-Number(b.left))<=eps&&Math.abs(Number(a.top)-Number(b.top))<=eps);}
+    function routeFromMove(token,prev){
+        var raw=String(token.get('lastmove')||''),parsed=parseLastMove(raw);
+        var start={left:Number(prev&&prev.left!==undefined?prev.left:token.get('left')),top:Number(prev&&prev.top!==undefined?prev.top:token.get('top'))};
+        var end={left:Number(token.get('left')),top:Number(token.get('top'))};
+        var manual=!!raw&&parsed.length>0&&samePoint(parsed[0],start,1);
+        var hasWaypoints=manual&&parsed.length>=2;
+        var points;
+        if(hasWaypoints){
+            points=parsed.slice();
+            if(!samePoint(points[0],start,1))points.unshift(start);
+        }else{
+            // Plain LMB drag is always interpreted as a straight line. Stale or
+            // absent lastmove data must never invent bends in the trajectory.
+            points=[start];
+        }
+        var last=points[points.length-1];if(!samePoint(last,end,0.01))points.push(end);
+        // Remove duplicate consecutive points created by Roll20 at tiny moves.
+        var clean=[];points.forEach(function(p){if(!clean.length||!samePoint(clean[clean.length-1],p,0.01))clean.push({left:Number(p.left),top:Number(p.top)});});
+        if(clean.length<2)clean=[start,end];
+        return {points:clean,hasWaypoints:hasWaypoints,mode:hasWaypoints?'waypoints':'direct',manual:manual,raw:raw,start:start,end:end};
+    }
+    function segmentUnits(a,b,page){
+        var dx=Math.abs(Number(b.left)-Number(a.left))/70,dy=Math.abs(Number(b.top)-Number(a.top))/70,type=String(page&&page.get('diagonaltype')||'foure').toLowerCase();
+        if(type==='manhattan')return dx+dy;
+        if(type==='threefive'){var diag=Math.min(dx,dy),straight=Math.max(dx,dy)-diag;return straight+diag*1.5;}
+        if(type==='pythagorean')return Math.sqrt(dx*dx+dy*dy);
+        return Math.max(dx,dy);
+    }
+    function routeDistance(points,page){
+        if(!page||!points||points.length<2)return 0;
+        var units=0;for(var i=1;i<points.length;i++)units+=segmentUnits(points[i-1],points[i],page);
+        var scale=numeric(page.get('scale_number'));if(scale===null||scale<=0)scale=5;
+        return Math.max(0,Math.round(units*scale*100)/100);
+    }
+    function buildSegments(points,page){
+        var out=[],travel=0;
+        for(var i=1;i<points.length;i++){
+            var d=routeDistance([points[i-1],points[i]],page);
+            out.push({index:i-1,from:clone(points[i-1]),to:clone(points[i]),distance:d,startDistance:travel,endDistance:travel+d});travel+=d;
+        }
+        return out;
+    }
+
+    function heightFeet(token){
+        try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.heightFeet==='function'){var h=Number(AD5Height.heightFeet(token));return Number.isFinite(h)?h:0;}}catch(ignoreHeight){}
+        var f=token&&token.get?Number(String(token.get('bar3_value')==null?'0':token.get('bar3_value')).replace(',','.')):0,t=0;
+        try{if(typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.terrainHeightFeet==='function')t=Number(AD5Environment.terrainHeightFeet(token))||0;}catch(ignoreTerrain){}
+        return (Number.isFinite(f)?Math.max(0,f):0)+(Number.isFinite(t)?t:0);
+    }
+    function rangeFeet(a,b){
+        try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.rangeFeet==='function')return Number(AD5Height.rangeFeet(a,b));}catch(ignoreHeightRange){}
+        if(!a||!b||a.get('_pageid')!==b.get('_pageid'))return Infinity;
+        if(a.id===b.id)return 0;
+        var h=distanceAtPoint(a,b,{left:Number(b.get('left')),top:Number(b.get('top'))}),dz=Math.abs(heightFeet(a)-heightFeet(b));
+        return Math.round(Math.sqrt(h*h+dz*dz)*100)/100;
+    }
+
+    // ---------- Continuous reach geometry ----------
+    function pageScale(page){var n=Number(page&&page.get('scale_number'));return Number.isFinite(n)&&n>0?n:5;}
+    function reachRect(npc,mover,reach){
+        if(!npc||!mover||npc.get('_pageid')!==mover.get('_pageid'))return null;
+        var page=getObj('page',npc.get('_pageid')),scale=pageScale(page),r=Math.max(0,Number(reach)||0),extra=Math.max(0,r/scale-1);
+        var npcHalfX=Math.max(0,Number(npc.get('width')||70)/2),npcHalfY=Math.max(0,Number(npc.get('height')||70)/2);
+        var movHalfX=Math.max(0,Number(mover.get('width')||70)/2),movHalfY=Math.max(0,Number(mover.get('height')||70)/2);
+        var ex=(extra*70),ey=(extra*70),cx=Number(npc.get('left')||0),cy=Number(npc.get('top')||0);
+        return {minX:cx-npcHalfX-movHalfX-ex,maxX:cx+npcHalfX+movHalfX+ex,minY:cy-npcHalfY-movHalfY-ey,maxY:cy+npcHalfY+movHalfY+ey,scale:scale,reach:r};
+    }
+    function pointInRect(p,r){return !!(p&&r&&Number(p.left)>=r.minX-1e-7&&Number(p.left)<=r.maxX+1e-7&&Number(p.top)>=r.minY-1e-7&&Number(p.top)<=r.maxY+1e-7);}
+    // Liang-Barsky/slab interval for an axis-aligned rectangle. Returns the
+    // inclusive t interval where p(t)=a+(b-a)t lies inside the reach rectangle.
+    function segmentRectInterval(a,b,r){
+        if(!a||!b||!r)return null;
+        var x0=Number(a.left),y0=Number(a.top),dx=Number(b.left)-x0,dy=Number(b.top)-y0,t0=0,t1=1,EPS=1e-12;
+        function slab(p,d,min,max){
+            if(Math.abs(d)<EPS){if(p<min-EPS||p>max+EPS)return false;return true;}
+            var u0=(min-p)/d,u1=(max-p)/d;if(u0>u1){var q=u0;u0=u1;u1=q;}
+            if(u0>t0)t0=u0;if(u1<t1)t1=u1;return t0<=t1+EPS;
+        }
+        if(!slab(x0,dx,r.minX,r.maxX)||!slab(y0,dy,r.minY,r.maxY))return null;
+        t0=Math.max(0,Math.min(1,t0));t1=Math.max(0,Math.min(1,t1));if(t1<t0-1e-9)return null;
+        return {enter:t0,exit:t1};
+    }
+    function interpolate(a,b,t){return {left:Number(a.left)+(Number(b.left)-Number(a.left))*t,top:Number(a.top)+(Number(b.top)-Number(a.top))*t};}
+    function resolveMoveContext(move){
+        if(!move)return null;
+        if(typeof move==='string')move=root().moves[move];
+        if(move&&move.movementTxn&&!move.points)move=root().moves[String(move.movementTxn)]||move;
+        return move||null;
+    }
+    function reachCrossings(npc,mover,reach,move){
+        var ctx=resolveMoveContext(move),pts=ctx&&Array.isArray(ctx.points)?ctx.points:[],events=[];
+        if(Math.abs(heightFeet(npc)-heightFeet(mover))>1e-9)return heightAwareReachCrossings(npc,mover,reach,ctx);
+        var rect=reachRect(npc,mover,reach);
+        if(!rect||pts.length<2)return events;
+        var total=0,page=getObj('page',mover.get('_pageid'));
+        for(var i=1;i<pts.length;i++){
+            var a=pts[i-1],b=pts[i],segDist=routeDistance([a,b],page),insideA=pointInRect(a,rect),insideB=pointInRect(b,rect),iv=segmentRectInterval(a,b,rect);
+            if(iv){
+                var span=iv.exit-iv.enter;
+                // Starting exactly on the reach boundary still counts as being in
+                // reach. Moving outward from that square therefore creates an exit
+                // even when the mathematical interior interval begins at t=0 and
+                // has zero width. By contrast, an outside→outside tangent touch is
+                // ignored unless the segment actually spends non-zero length inside.
+                if(insideA&&!insideB){
+                    events.push({type:'exit',segment:i-1,t:iv.exit,point:interpolate(a,b,iv.exit),distanceAlong:total+segDist*iv.exit});
+                }else if(!insideA&&insideB){
+                    events.push({type:'enter',segment:i-1,t:iv.enter,point:interpolate(a,b,iv.enter),distanceAlong:total+segDist*iv.enter});
+                }else if(!insideA&&!insideB&&span>1e-7){
+                    events.push({type:'enter',segment:i-1,t:iv.enter,point:interpolate(a,b,iv.enter),distanceAlong:total+segDist*iv.enter});
+                    events.push({type:'exit',segment:i-1,t:iv.exit,point:interpolate(a,b,iv.exit),distanceAlong:total+segDist*iv.exit});
+                }
+            }
+            total+=segDist;
+        }
+        // Dedupe identical boundary events at waypoint joins.
+        var out=[];events.sort(function(x,y){return x.distanceAlong-y.distanceAlong;}).forEach(function(e){var last=out[out.length-1];if(last&&last.type===e.type&&Math.abs(last.distanceAlong-e.distanceAlong)<0.01)return;out.push(e);});
+        return out;
+    }
+    function distanceAtPoint(npc,mover,point){
+        if(!npc||!mover||!point||npc.get('_pageid')!==mover.get('_pageid'))return Infinity;
+        var page=getObj('page',npc.get('_pageid')),scale=pageScale(page);
+        var dx=Math.abs(Number(npc.get('left')||0)-Number(point.left))/70,dy=Math.abs(Number(npc.get('top')||0)-Number(point.top))/70;
+        var ax=Math.max(0,Number(npc.get('width')||70)/140),ay=Math.max(0,Number(npc.get('height')||70)/140),bx=Math.max(0,Number(mover.get('width')||70)/140),by=Math.max(0,Number(mover.get('height')||70)/140);
+        var gapX=Math.max(0,dx-ax-bx),gapY=Math.max(0,dy-ay-by),gap=Math.max(gapX,gapY);
+        return gap<=1e-9?scale:Math.round((gap+1)*scale*100)/100;
+    }
+
+    function distanceAtPoint3D(npc,mover,point){
+        if(!npc||!mover||!point||npc.get('_pageid')!==mover.get('_pageid'))return Infinity;
+        var horizontal=distanceAtPoint(npc,mover,point),sameCenter=Math.abs(Number(npc.get('left')||0)-Number(point.left))<1e-7&&Math.abs(Number(npc.get('top')||0)-Number(point.top))<1e-7;
+        if(sameCenter)horizontal=0;
+        var dz=Math.abs(heightFeet(npc)-heightFeet(mover));
+        return Math.sqrt(horizontal*horizontal+dz*dz);
+    }
+    function heightAwareReachCrossings(npc,mover,reach,ctx){
+        var pts=ctx&&Array.isArray(ctx.points)?ctx.points:[],events=[];if(pts.length<2)return events;
+        var page=getObj('page',mover.get('_pageid')),total=0,inside=distanceAtPoint3D(npc,mover,pts[0])<=Number(reach)+1e-7;
+        for(var i=1;i<pts.length;i++){
+            var a=pts[i-1],b=pts[i],dx=Number(b.left)-Number(a.left),dy=Number(b.top)-Number(a.top),pixels=Math.sqrt(dx*dx+dy*dy),segDist=routeDistance([a,b],page),steps=Math.max(1,Math.ceil(pixels/4));
+            for(var n=1;n<=steps;n++){
+                var f=n/steps,p={left:Number(a.left)+dx*f,top:Number(a.top)+dy*f},now=distanceAtPoint3D(npc,mover,p)<=Number(reach)+1e-7;
+                if(now!==inside){events.push({type:now?'enter':'exit',segment:i-1,t:f,point:p,distanceAlong:total+segDist*f});inside=now;}
+            }
+            total+=segDist;
+        }
+        var out=[];events.forEach(function(e){var last=out[out.length-1];if(last&&last.type===e.type&&Math.abs(last.distanceAlong-e.distanceAlong)<0.01)return;out.push(e);});return out;
+    }
+
+    // ---------- Grid snapping for scripted movement ----------
+    function gridStep(page){
+        if(!page)return 0;
+        var inc=numeric(page.get('snapping_increment'));
+        if(inc===null||inc<=0)return 0;
+        return 70*inc;
+    }
+    function gridOffset(page,axis){
+        if(!page)return 0;
+        var names=axis==='x'?['grid_offset_x','gridOffsetX']:['grid_offset_y','gridOffsetY'];
+        for(var i=0;i<names.length;i++){
+            try{var n=numeric(page.get(names[i]));if(n!==null&&Number.isFinite(n))return n;}catch(ignore){}
+        }
+        return 0;
+    }
+    function snappedAxis(value,size,step,offset){
+        value=Number(value)||0;size=Math.max(0,Number(size)||0);step=Number(step)||0;offset=Number(offset)||0;
+        if(step<=0)return value;
+        var origin=offset+size/2;
+        return origin+Math.round((value-origin)/step)*step;
+    }
+    function snapPointToGrid(token,point,page){
+        var step=gridStep(page);if(step<=0)return {left:Number(point.left),top:Number(point.top),snapped:false,step:0};
+        return {
+            left:snappedAxis(point.left,token.get('width'),step,gridOffset(page,'x')),
+            top:snappedAxis(point.top,token.get('height'),step,gridOffset(page,'y')),
+            snapped:true,step:step
+        };
+    }
+    function gridCandidates(token,point,page,rings){
+        var base=snapPointToGrid(token,point,page),step=base.step;if(!base.snapped||step<=0)return [base];
+        rings=Math.max(0,Number(rings)||0);var out=[],seen=Object.create(null);
+        for(var r=0;r<=rings;r++){
+            for(var ix=-r;ix<=r;ix++)for(var iy=-r;iy<=r;iy++){
+                if(Math.max(Math.abs(ix),Math.abs(iy))!==r)continue;
+                var p={left:base.left+ix*step,top:base.top+iy*step,snapped:true,step:step};
+                var key=Math.round(p.left*1000)+'|'+Math.round(p.top*1000);if(seen[key])continue;seen[key]=true;
+                p.error=Math.pow(p.left-Number(point.left),2)+Math.pow(p.top-Number(point.top),2);out.push(p);
+            }
+        }
+        out.sort(function(a,b){return a.error-b.error;});return out;
+    }
+    function routeClearOfSolid(token,from,to){
+        try{
+            if(typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.clipMovementRoute==='function'){
+                var test=AD5Environment.clipMovementRoute(token,{points:[{left:Number(from.left),top:Number(from.top)},{left:Number(to.left),top:Number(to.top)}]});
+                return !(test&&test.blocked);
+            }
+        }catch(ignoreSolid){}
+        return true;
+    }
+    function snapSolidStop(token,point,incomingFrom,page){
+        var candidates=gridCandidates(token,point,page,8),vx=Number(point.left)-Number(incomingFrom.left),vy=Number(point.top)-Number(incomingFrom.top),len2=vx*vx+vy*vy;
+        for(var i=0;i<candidates.length;i++){
+            var c=candidates[i];
+            // Never snap beyond the collision point in the incoming direction.
+            if(len2>1e-9){var beyond=(c.left-Number(point.left))*vx+(c.top-Number(point.top))*vy;if(beyond>0.001)continue;}
+            if(routeClearOfSolid(token,incomingFrom,c))return c;
+        }
+        // Fallback: find any nearby grid cell reachable from the incoming side.
+        for(var j=0;j<candidates.length;j++)if(routeClearOfSolid(token,incomingFrom,candidates[j]))return candidates[j];
+        return snapPointToGrid(token,incomingFrom,page);
+    }
+    function tokensOverlapAt(a,b,point){
+        var ax=Number(point.left),ay=Number(point.top),bx=Number(b.get('left')||0),by=Number(b.get('top')||0),hw=(Math.max(0,Number(a.get('width')||70))+Math.max(0,Number(b.get('width')||70)))/2,hh=(Math.max(0,Number(a.get('height')||70))+Math.max(0,Number(b.get('height')||70)))/2;
+        return Math.abs(ax-bx)<hw-0.01&&Math.abs(ay-by)<hh-0.01;
+    }
+    function snapForcedDestination(target,source,desired,start,page,kind,ux,uy){
+        var candidates=gridCandidates(target,desired,page,5),desiredDx=Number(desired.left)-Number(start.left),desiredDy=Number(desired.top)-Number(start.top),desiredProgress=desiredDx*ux+desiredDy*uy;
+        for(var i=0;i<candidates.length;i++){
+            var c=candidates[i],dx=c.left-Number(start.left),dy=c.top-Number(start.top),progress=dx*ux+dy*uy;
+            if(progress<-0.01)continue;
+            // Do not let snapping turn a pull into an overlap with the source token.
+            if(kind==='pull'&&tokensOverlapAt(target,source,c))continue;
+            // Prefer cells no farther along the force vector than roughly half a grid beyond the calculated endpoint.
+            if(c.step>0&&progress>desiredProgress+c.step*0.51)continue;
+            return c;
+        }
+        var fallback=snapPointToGrid(target,desired,page);
+        if(kind==='pull'&&tokensOverlapAt(target,source,fallback))return {left:Number(start.left),top:Number(start.top),snapped:true,step:fallback.step||0};
+        return fallback;
+    }
+
+    // ---------- Forced movement ----------
+    function forcedMetaFor(tokenId){
+        var x=pendingForced[String(tokenId||'')];
+        if(!x)return null;
+        if(Date.now()-Number(x.created||0)>3000){delete pendingForced[String(tokenId||'')];return null;}
+        return x;
+    }
+    function pointAlongByFeet(start,dx,dy,feet,page){
+        feet=Math.max(0,Number(feet)||0);var len=Math.sqrt(dx*dx+dy*dy);if(!len||feet<=0)return {left:Number(start.left),top:Number(start.top),pixels:0};
+        var ux=dx/len,uy=dy/len,lo=0,hi=70;
+        function dist(px){return routeDistance([start,{left:Number(start.left)+ux*px,top:Number(start.top)+uy*px}],page);}
+        while(dist(hi)<feet&&hi<100000)hi*=2;
+        for(var i=0;i<40;i++){var mid=(lo+hi)/2;if(dist(mid)<feet)lo=mid;else hi=mid;}
+        var px=hi;return {left:Number(start.left)+ux*px,top:Number(start.top)+uy*px,pixels:px};
+    }
+    function pullContactPixels(source,target,ux,uy){
+        var dx=Number(source.get('left')||0)-Number(target.get('left')||0),dy=Number(source.get('top')||0)-Number(target.get('top')||0),center=Math.sqrt(dx*dx+dy*dy);if(center<=0)return 0;
+        var shw=Math.max(0,Number(source.get('width')||70)/2),shh=Math.max(0,Number(source.get('height')||70)/2),thw=Math.max(0,Number(target.get('width')||70)/2),thh=Math.max(0,Number(target.get('height')||70)/2);
+        var contact=(Math.abs(ux)*(shw+thw))+(Math.abs(uy)*(shh+thh));
+        return Math.max(0,center-contact);
+    }
+    function forceMove(targetOrId,sourceOrId,feet,kind,meta){
+        var target=typeof targetOrId==='string'?getObj('graphic',targetOrId):targetOrId,source=typeof sourceOrId==='string'?getObj('graphic',sourceOrId):sourceOrId;
+        if(!target||!source)throw new Error('ТОЛЧ/ТЯГ: не найден токен источника или цели.');
+        if(target.id===source.id)return {moved:false,reason:'same-token',requested:Math.max(0,Number(feet)||0),actual:0};
+        if(target.get('_pageid')!==source.get('_pageid'))throw new Error('ТОЛЧ/ТЯГ: источник и цель находятся на разных страницах.');
+        feet=Math.max(0,Number(feet)||0);if(feet<=0)return {moved:false,reason:'zero',requested:feet,actual:0};
+        kind=String(kind||'push').toLowerCase();if(kind!=='push'&&kind!=='pull')throw new Error('ТОЛЧ/ТЯГ: неизвестный тип принудительного движения.');
+        var page=getObj('page',target.get('_pageid')),start={left:Number(target.get('left')),top:Number(target.get('top'))},sx=Number(source.get('left')),sy=Number(source.get('top'));
+        var dx=kind==='push'?(start.left-sx):(sx-start.left),dy=kind==='push'?(start.top-sy):(sy-start.top),len=Math.sqrt(dx*dx+dy*dy);
+        if(!len)return {moved:false,reason:'same-position',requested:feet,actual:0};
+        var plan=pointAlongByFeet(start,dx,dy,feet,page),ux=dx/len,uy=dy/len;
+        if(kind==='pull'){
+            var maxPx=pullContactPixels(source,target,ux,uy);if(plan.pixels>maxPx){plan.left=start.left+ux*maxPx;plan.top=start.top+uy*maxPx;plan.pixels=maxPx;}
+        }
+        // Every scripted push/pull ends on a Roll20 grid position. The source/target
+        // geometry remains authoritative for pull overlap prevention.
+        var snappedPlan=snapForcedDestination(target,source,plan,start,page,kind,ux,uy);plan.left=Number(snappedPlan.left);plan.top=Number(snappedPlan.top);
+        var actual=routeDistance([start,{left:plan.left,top:plan.top}],page);if(actual<=0.0001)return {moved:false,reason:'blocked-by-source',requested:feet,actual:0};
+        var key=String(target.id),fm={kind:kind,sourceTokenId:source.id,requestedFeet:feet,actualFeet:actual,reason:String(meta&&meta.reason||'AD5 effect'),created:Date.now(),meta:clone(meta||{})};pendingForced[key]=fm;
+        // Capture the starting support before any token.set. Environment suppresses its
+        // ordinary move watcher until the final grid/SOLID-adjusted cell is known.
+        var envMove=null;
+        try{if(typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.beginForcedMove==='function')envMove=AD5Environment.beginForcedMove(target);}catch(envBeginError){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' fall:</b> '+esc(envBeginError.message||envBeginError),null,{noarchive:true});}
+        try{target.set({left:plan.left,top:plan.top,lastmove:''});}
+        catch(moveError){try{if(envMove&&typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.cancelForcedMove==='function')AD5Environment.cancelForcedMove(target,envMove);}catch(ignoreCancel){}throw moveError;}
+        setTimeout(function(){
+            try{
+                var liveTarget=getObj('graphic',key);
+                if(envMove&&liveTarget&&typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.endForcedMove==='function'){
+                    var label=kind==='pull'?'ТЯГ':'ТОЛЧ';
+                    AD5Environment.endForcedMove(liveTarget,envMove,label+': падение после принудительного перемещения');
+                }
+            }catch(envEndError){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' fall:</b> '+esc(envEndError.message||envEndError),null,{noarchive:true});}
+        },25);
+        setTimeout(function(){var live=pendingForced[key];if(live===fm)delete pendingForced[key];},1000);
+        return {moved:true,kind:kind,sourceTokenId:source.id,targetTokenId:target.id,requested:feet,actual:actual,to:{left:plan.left,top:plan.top}};
+    }
+
+    // Move a token by the exact same map-space vector as another token. This is
+    // used for carrying/dragging a grappled creature. It is forced movement:
+    // it spends none of the carried creature's speed and does not provoke AOO,
+    // but still goes through Areas/Environment/SOLID/fall processing.
+    function translateForcedMove(targetOrId,deltaLeft,deltaTop,meta){
+        var target=typeof targetOrId==='string'?getObj('graphic',targetOrId):targetOrId;
+        if(!target)throw new Error('Перенос захваченной цели: токен не найден.');
+        deltaLeft=Number(deltaLeft);deltaTop=Number(deltaTop);if(!Number.isFinite(deltaLeft)||!Number.isFinite(deltaTop))throw new Error('Перенос захваченной цели: неверный вектор.');
+        if(Math.abs(deltaLeft)<0.001&&Math.abs(deltaTop)<0.001)return {moved:false,reason:'zero-vector',actual:0};
+        var page=getObj('page',target.get('_pageid')),start={left:Number(target.get('left')),top:Number(target.get('top'))},dest={left:Number(target.get('left'))+deltaLeft,top:Number(target.get('top'))+deltaTop};
+        var requested=routeDistance([start,dest],page),key=String(target.id),fm={kind:'carry',sourceTokenId:String(meta&&meta.sourceTokenId||''),requestedFeet:requested,actualFeet:requested,reason:String(meta&&meta.reason||'Grapple carry'),created:Date.now(),meta:clone(meta||{})};pendingForced[key]=fm;
+        var envMove=null;
+        try{if(typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.beginForcedMove==='function')envMove=AD5Environment.beginForcedMove(target);}catch(envBeginError){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' carry/fall:</b> '+esc(envBeginError.message||envBeginError),null,{noarchive:true});}
+        try{target.set({left:dest.left,top:dest.top,lastmove:''});}
+        catch(moveError){try{if(envMove&&typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.cancelForcedMove==='function')AD5Environment.cancelForcedMove(target,envMove);}catch(ignoreCancel){}delete pendingForced[key];throw moveError;}
+        var finalPos={left:Number(target.get('left')),top:Number(target.get('top'))},actual=routeDistance([start,finalPos],page);
+        setTimeout(function(){
+            try{
+                var liveTarget=getObj('graphic',key);
+                if(envMove&&liveTarget&&typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.endForcedMove==='function')AD5Environment.endForcedMove(liveTarget,envMove,'Захват: падение после перемещения вместе с хватающим');
+            }catch(envEndError){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' carry/fall:</b> '+esc(envEndError.message||envEndError),null,{noarchive:true});}
+        },25);
+        setTimeout(function(){var live=pendingForced[key];if(live===fm)delete pendingForced[key];},1000);
+        return {moved:actual>0.0001,kind:'carry',sourceTokenId:fm.sourceTokenId,targetTokenId:target.id,requested:requested,actual:actual,to:finalPos};
+    }
+
+    // ---------- Movement transactions ----------
+    function newMoveId(){var r=root();return Date.now().toString(36)+'-'+(++r.sequence);}
+    function pruneMoves(){var r=root();while(r.order.length>150){var id=r.order.shift();delete r.moves[id];}}
+    function isSuppressed(tokenId){return !!suppressed[String(tokenId||'')];}
+    function withSuppressed(tokenId,fn){tokenId=String(tokenId||'');suppressed[tokenId]=(suppressed[tokenId]||0)+1;try{return fn();}finally{suppressed[tokenId]--;if(suppressed[tokenId]<=0)delete suppressed[tokenId];}}
+    function beginGraphicMove(token,prev){
+        // AD5 Floors teleports are map transitions, not ordinary movement. They must
+        // not spend speed, cross SOLID geometry, provoke movement reactions, or create
+        // a giant route between physically separated floor regions.
+        try{if(typeof AD5Floors!=='undefined'&&AD5Floors&&typeof AD5Floors.isTeleporting==='function'&&AD5Floors.isTeleporting(token.id))return null;}catch(ignoreFloorTeleport){}
+        if(isSuppressed(token.id)||!combatToken(token,partyPageId()))return null;
+        var fromLeft=Number(prev&&prev.left!==undefined?prev.left:token.get('left')),fromTop=Number(prev&&prev.top!==undefined?prev.top:token.get('top'));
+        if(fromLeft===Number(token.get('left'))&&fromTop===Number(token.get('top')))return null;
+        var toLeft=Number(token.get('left')),toTop=Number(token.get('top')),lastmove=String(token.get('lastmove')||'');
+        var signature=[fromLeft,fromTop,toLeft,toTop,lastmove].join('|'),now=Date.now(),recent=recentMoveByToken[token.id];
+        if(recent&&recent.signature===signature&&(now-recent.time)<350){
+            var existing=root().moves[recent.id];
+            if(existing)return {movementTxn:recent.id,tokenId:existing.tokenId,points:clone(existing.points),segments:clone(existing.segments),distance:existing.distance,charged:existing.charged,mode:existing.mode,manual:existing.manual,reused:true};
+        }
+        var page=getObj('page',token.get('_pageid')),forced=forcedMetaFor(token.id),route=routeFromMove(token,prev);
+        if(!forced&&typeof AD5SpellEffects!=='undefined'&&AD5SpellEffects.gateMove(token,prev,route))return {blocked:true,tokenId:token.id,points:[{left:fromLeft,top:fromTop},{left:fromLeft,top:fromTop}],segments:[],distance:0};
+        if(forced){route={points:[{left:fromLeft,top:fromTop},{left:toLeft,top:toTop}],hasWaypoints:false,mode:'forced',manual:false,raw:'',start:{left:fromLeft,top:fromTop},end:{left:toLeft,top:toTop}};delete pendingForced[token.id];}
+        var solidBlock=null;
+        try{
+            if(typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.clipMovementRoute==='function'){
+                solidBlock=AD5Environment.clipMovementRoute(token,route);
+                if(solidBlock&&solidBlock.blocked){
+                    toLeft=Number(solidBlock.left);toTop=Number(solidBlock.top);
+                    route.points=(solidBlock.points||route.points).map(function(p){return {left:Number(p.left),top:Number(p.top)};});
+                    // SOLID ejection must also finish on the grid. Pick the nearest grid cell
+                    // reachable from the side from which the blocked segment entered.
+                    var incoming=route.points.length>1?route.points[route.points.length-2]:{left:fromLeft,top:fromTop};
+                    var gridStop=snapSolidStop(token,{left:toLeft,top:toTop},incoming,page);toLeft=Number(gridStop.left);toTop=Number(gridStop.top);
+                    if(route.points.length)route.points[route.points.length-1]={left:toLeft,top:toTop};else route.points=[{left:fromLeft,top:fromTop},{left:toLeft,top:toTop}];
+                    route.end={left:toLeft,top:toTop};route.solidBlocked=true;route.solidAreaId=String(solidBlock.areaId||'');
+                    // Reposition before any Areas/Reactions listener sees the route.
+                    withSuppressed(token.id,function(){token.set({left:toLeft,top:toTop,lastmove:''});});
+                    sendChat(SCRIPT,String(solidBlock.message||'невозможно встать в эту область'),null,{noarchive:true});
+                }
+            }
+        }catch(solidError){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' SOLID:</b> '+esc(solidError.message||solidError),null,{noarchive:true});}
+        var distance=routeDistance(route.points,page),segments=buildSegments(route.points,page),si=speedInfo(token),st=tokenState(token),beforeSpent=Number(st.spent||0),active=isCurrentTurn(token);
+        // Оглушение / Опутывание / Окаменение: effective speed is 0. A manual
+        // drag is voluntary movement, so snap the token back before Areas/Reactions
+        // can treat the drag as a real path. Forced/API movement is not blocked.
+        if(!forced&&route.manual&&si.effective!==null&&si.effective<=0){
+            withSuppressed(token.id,function(){token.set({left:fromLeft,top:fromTop,lastmove:String(prev&&prev.lastmove!==undefined?prev.lastmove:'')});});
+            sendChat(SCRIPT,'/w gm <b>'+esc(token.get('name')||token.id)+'</b>: скорость 0 — добровольное перемещение отменено.',null,{noarchive:true});
+            return {blocked:true,tokenId:token.id,points:[{left:fromLeft,top:fromTop},{left:fromLeft,top:fromTop}],segments:[],distance:0,charged:false,mode:'blocked',manual:true,forced:false};
+        }
+        // Both user movement modes are real movement. Direct LMB drag spends the
+        // straight-line distance; waypoint movement spends the routed distance.
+        // API/forced movement never spends the creature's voluntary speed.
+        var charged=!!(route.manual&&active&&si.effective!==null),afterSpent=charged?beforeSpent+distance:beforeSpent;st.spent=afterSpent;
+        var id=newMoveId(),r=root(),tx={
+            id:id,movementTxn:id,tokenId:token.id,page:token.get('_pageid'),name:String(token.get('name')||token.id),
+            from:{left:fromLeft,top:fromTop,lastmove:String(prev&&prev.lastmove!==undefined?prev.lastmove:'')},to:{left:toLeft,top:toTop,lastmove:lastmove},
+            points:clone(route.points),segments:segments,distance:distance,hasWaypoints:route.hasWaypoints,mode:route.mode,manual:route.manual,rawLastmove:route.raw,
+            forced:!!forced,forcedKind:forced?String(forced.kind||''):'',forcedSourceTokenId:forced?String(forced.sourceTokenId||''):'',forcedReason:forced?String(forced.reason||''):'',requestedFeet:forced?Number(forced.requestedFeet)||0:0,solidBlocked:!!(solidBlock&&solidBlock.blocked),solidAreaId:solidBlock&&solidBlock.areaId?String(solidBlock.areaId):'',
+            charged:charged,activeTurn:active,beforeSpent:beforeSpent,afterSpent:afterSpent,effective:si.effective,base:si.base,status:'applied',created:now,summaryScheduled:false,emitted:false
+        };
+        r.moves[id]=tx;r.order.push(id);r.lastByToken[token.id]=id;pruneMoves();
+        recentMoveByToken[token.id]={signature:signature,time:now,id:id};
+        return {movementTxn:id,tokenId:token.id,points:clone(tx.points),segments:clone(tx.segments),distance:distance,charged:charged,mode:tx.mode,manual:tx.manual};
+    }
+    function publicMove(tx){return tx?{movementTxn:tx.id,id:tx.id,tokenId:tx.tokenId,page:tx.page,name:tx.name,from:clone(tx.from),to:clone(tx.to),points:clone(tx.points),segments:clone(tx.segments),distance:tx.distance,hasWaypoints:tx.hasWaypoints,mode:tx.mode,manual:tx.manual,forced:!!tx.forced,forcedKind:tx.forcedKind||'',forcedSourceTokenId:tx.forcedSourceTokenId||'',forcedReason:tx.forcedReason||'',requestedFeet:Number(tx.requestedFeet)||0,charged:tx.charged,activeTurn:tx.activeTurn,created:tx.created,solidBlocked:!!tx.solidBlocked,solidAreaId:tx.solidAreaId||''}:null;}
+    function onMove(fn){if(typeof fn!=='function')return false;if(listeners.indexOf(fn)<0)listeners.push(fn);return true;}
+    function offMove(fn){var i=listeners.indexOf(fn);if(i<0)return false;listeners.splice(i,1);return true;}
+    function emitMove(tx){
+        if(!tx||tx.emitted)return;tx.emitted=true;
+        var payload=publicMove(tx);listeners.slice().forEach(function(fn){try{fn(payload);}catch(e){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' listener:</b> '+esc(e.message||e),null,{noarchive:true});}});
+    }
+    function moveSummary(tx){var label=tx.forced?(tx.forcedKind==='pull'?'ТЯГ':'ТОЛЧ'):(tx.mode==='waypoints'?'маршрут':'прямая');return '<b>'+esc(tx.name)+'</b>: '+label+' · <b>'+fmt(tx.distance)+' фт.</b> [Отменить](!ad5move undo '+tx.id+') [Восстановить](!ad5move redo '+tx.id+')';}
+    function endGraphicMove(ctx){
+        if(!ctx||!ctx.movementTxn)return;
+        var id=String(ctx.movementTxn),tx=root().moves[id];if(!tx)return;
+        emitMove(tx);
+        if(tx.summaryScheduled)return;tx.summaryScheduled=true;
+        setTimeout(function(){var live=root().moves[id];if(live&&live.status==='applied')sendChat(SCRIPT,'/w gm '+moveSummary(live),null,{noarchive:true});},120);
+    }
+    function lastMove(tokenOrId){var id=typeof tokenOrId==='string'?tokenOrId:(tokenOrId&&tokenOrId.id)||'';var mid=root().lastByToken[String(id||'')];return mid&&root().moves[mid]?publicMove(root().moves[mid]):null;}
+
+    function assertLatestPosition(tx,want){
+        var token=getObj('graphic',tx.tokenId);if(!token)throw new Error('Токен передвижения больше не существует.');
+        if(token.get('_pageid')!==tx.page)throw new Error('Токен находится на другой карте.');
+        if(Math.abs(Number(token.get('left'))-Number(want.left))>0.1||Math.abs(Number(token.get('top'))-Number(want.top))>0.1)throw new Error('После этого токен уже перемещался. Сначала отмените более позднее передвижение.');
+        return token;
+    }
+    function undoMove(id,pid){
+        if(!playerIsGM(pid))throw new Error('Отмена передвижения доступна только GM.');
+        var tx=root().moves[id];if(!tx)throw new Error('Передвижение не найдено.');if(tx.status==='undone')throw new Error('Передвижение уже отменено.');
+        var token=assertLatestPosition(tx,tx.to),result={keys:[],pendingCancelled:0};
+        if(typeof AD5==='undefined'||!AD5||!AD5.movement||typeof AD5.movement.undo!=='function')throw new Error('Для полной отмены передвижения нужен совместимый AD5.');
+        result=AD5.movement.undo(tx.id,pid)||result;
+        try{if(typeof AD5Areas!=='undefined'&&AD5Areas&&AD5Areas.movement&&typeof AD5Areas.movement.undo==='function')AD5Areas.movement.undo(tx.id);}catch(areaUndoError){throw new Error('Не удалось восстановить счётчик МУВ области: '+(areaUndoError.message||areaUndoError));}
+        withSuppressed(token.id,function(){token.set({left:tx.from.left,top:tx.from.top,lastmove:tx.from.lastmove||''});});
+        tokenState(token).spent=tx.beforeSpent;tx.status='undone';tx.pendingCancelled=Number(result.pendingCancelled)||0;tx.undoneKeys=Array.isArray(result.keys)?result.keys.slice():[];
+        sendChat(SCRIPT,'/w gm <b>'+esc(tx.name)+'</b>: передвижение отменено.'+(tx.undoneKeys.length?' Эффектов отменено: '+tx.undoneKeys.length+'.':'')+' [Восстановить](!ad5move redo '+tx.id+')',null,{noarchive:true});
+    }
+    function redoMove(id,pid){
+        if(!playerIsGM(pid))throw new Error('Восстановление передвижения доступно только GM.');
+        var tx=root().moves[id];if(!tx)throw new Error('Передвижение не найдено.');if(tx.status!=='undone')throw new Error('Передвижение не отменено.');
+        var token=assertLatestPosition(tx,tx.from);
+        withSuppressed(token.id,function(){token.set({left:tx.to.left,top:tx.to.top,lastmove:tx.to.lastmove||''});});
+        try{if(typeof AD5!=='undefined'&&AD5&&AD5.movement&&typeof AD5.movement.redo==='function')AD5.movement.redo(tx.id,pid);if(typeof AD5Areas!=='undefined'&&AD5Areas&&AD5Areas.movement&&typeof AD5Areas.movement.redo==='function')AD5Areas.movement.redo(tx.id);}catch(e){withSuppressed(token.id,function(){token.set({left:tx.from.left,top:tx.from.top,lastmove:tx.from.lastmove||''});});throw e;}
+        tokenState(token).spent=tx.afterSpent;tx.status='applied';
+        sendChat(SCRIPT,'/w gm <b>'+esc(tx.name)+'</b>: передвижение восстановлено. [Отменить](!ad5move undo '+tx.id+')',null,{noarchive:true});
+    }
+
+    // ---------- Turn / speed ----------
+    function resetGroup(page,key){if(!page||!key)return;findObjs({_type:'graphic',_subtype:'token',_pageid:page,layer:'objects'}).forEach(function(t){if(combatToken(t,page)&&groupKey(t)===key)tokenState(t).spent=0;});}
+    function parseRows(raw){try{return JSON.parse(raw||'[]')||[];}catch(ignore){return [];}}
+    function infoFromRow(row){var page=partyPageId();if(!row||!page)return null;if(row.id&&row.id!=='-1'){var t=getObj('graphic',row.id);if(t&&combatToken(t,page))return {page:page,key:groupKey(t)};}if(row.id==='-1'&&row.custom)return {page:page,key:'npc:'+groupName(row.custom)};return null;}
+    function turnChanged(campaign,prev){var after=parseRows(Campaign().get('turnorder')),now=after.length?infoFromRow(after[0]):null;if(!now)return;var last=runtimeLastGroup[now.page]||'';if(!last){runtimeLastGroup[now.page]=now.key;resetGroup(now.page,now.key);return;}if(last===now.key)return;runtimeLastGroup[now.page]=now.key;resetGroup(now.page,now.key);}
+    function initializeTurnRuntime(){var info=currentTurnInfo();if(info)runtimeLastGroup[info.page]=info.key;}
+    function cleanupDestroyed(token){if(!token)return;var r=root(),s=r.tokens[token.id];if(s&&s.proxyId)removeLegacyProxyById(s.proxyId);delete r.tokens[token.id];delete r.lastByToken[token.id];}
+
+    function command(msg){
+        if(msg.type!=='api'||!/^!ad5move(?:\s|$)/i.test(msg.content))return;
+        var a=msg.content.trim().split(/\s+/),sub=norm(a[1]||'help');
+        try{
+            if(sub==='ping'){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' '+VERSION+'</b> активен. Слушателей маршрута: '+listeners.length+'.');return;}
+            if(sub==='undo'){undoMove(a[2],msg.playerid);return;}
+            if(sub==='redo'){redoMove(a[2],msg.playerid);return;}
+            if(sub==='refresh'){if(!playerIsGM(msg.playerid))throw new Error('Только GM.');var removed=cleanupLegacyDisplays();sendChat(SCRIPT,'/w gm Старые индикаторы скорости удалены: '+removed+'.');return;}
+            if(sub==='reset'){if(!playerIsGM(msg.playerid))throw new Error('Только GM.');var info=currentTurnInfo();if(info)resetGroup(info.page,info.key);sendChat(SCRIPT,'/w gm Расход движения текущего хода сброшен.');return;}
+            if(sub==='status'||sub==='path'){
+                var sel=(msg.selected||[]).filter(function(x){return x._type==='graphic';}).map(function(x){return getObj('graphic',x._id);}).filter(Boolean);if(!sel.length)throw new Error('Выделите токен.');
+                sel.forEach(function(t){
+                    if(sub==='status'){var si=speedInfo(t),st=tokenState(t);sendChat(SCRIPT,'/w gm <b>'+esc(t.get('name')||t.id)+'</b>: база '+(si.base===null?'—':fmt(si.base))+'; текущая '+(si.effective===null?'—':fmt(si.effective))+'; потрачено '+fmt(st.spent)+'; осталось '+(remainingSpeed(t)===null?'—':fmt(remainingSpeed(t)))+'.');}
+                    else {var m=lastMove(t);if(!m){sendChat(SCRIPT,'/w gm <b>'+esc(t.get('name')||t.id)+'</b>: движение ещё не зафиксировано.');return;}sendChat(SCRIPT,'/w gm <b>'+esc(t.get('name')||t.id)+'</b>: '+(m.forced?(m.forcedKind==='pull'?'ТЯГ':'ТОЛЧ'):(m.mode==='waypoints'?'маршрут с waypoint':'прямая ЛКМ'))+' · '+fmt(m.distance)+' фт · сегментов '+m.segments.length+' · '+(m.manual?'ручное':'API/принудительное')+'.');}
+                });return;
+            }
+            sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' '+VERSION+'</b><br><code>!ad5move ping</code> · <code>path</code> · <code>status</code> · <code>undo</code> · <code>redo</code>.<br>ЛКМ без waypoint = прямая; ЛКМ+ПКМ = маршрут через точки.');
+        }catch(e){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+'</b>: '+esc(e.message||e));}
+    }
+
+    // AD5 Areas remains the primary change:graphic owner so all area boundary
+    // effects and Movement Engine share one movement transaction. If Areas is not
+    // installed, Movement handles the event itself.
+    on('change:graphic',function(token,prev){
+        try{
+            if(typeof AD5Areas!=='undefined'&&AD5Areas&&versionAtLeast(AD5Areas.version,'2.6'))return;
+            var ctx=beginGraphicMove(token,prev);if(ctx)endGraphicMove(ctx);
+        }catch(e){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+'</b>: '+esc(e.message||e));}
+    });
+    on('chat:message',command);
+    on('change:campaign:turnorder',turnChanged);
+    on('change:campaign:playerpageid',function(){runtimeLastGroup=Object.create(null);initializeTurnRuntime();cleanupLegacyDisplays();});
+    on('destroy:graphic',cleanupDestroyed);
+    on('ready',function(){root();initializeTurnRuntime();var removed=cleanupLegacyDisplays();sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' '+VERSION+'</b> запущен. Condition Engine учитывается в скорости; перенос схваченных целей и стоимость вставания поддерживаются. ЛКМ = прямой путь; ЛКМ+ПКМ = waypoint-маршрут; СОЛИД блокирует маршрут на первой границе и выталкивает на сетку; ТОЛЧ/ТЯГ = принудительное движение без реакций токенов с выравниванием по сетке; после финальной клетки проверяется падение с местности; переходы AD5 Floors не считаются обычным перемещением; bar3 учитывается как высота при проверке reach.'+(removed?' Удалено старых индикаторов: '+removed+'.':''));});
+
+    return {
+        version:VERSION,
+        beginGraphicMove:beginGraphicMove,endGraphicMove:endGraphicMove,isSuppressed:isSuppressed,withSuppressed:withSuppressed,refreshToken:refreshToken,
+        baseSpeedForToken:baseSpeedForToken,remainingSpeed:remainingSpeed,distanceForPoints:routeDistance,rangeFeet:rangeFeet,heightFeet:heightFeet,
+        onMove:onMove,offMove:offMove,lastMove:lastMove,reachCrossings:reachCrossings,distanceAtPoint:distanceAtPoint,forceMove:forceMove,translateForcedMove:translateForcedMove,spendMovement:spendMovement,spendStandCost:spendStandCost,
+        _test:{routeFromMove:routeFromMove,parseLastMove:parseLastMove,routeDistance:routeDistance,segmentUnits:segmentUnits,buildSegments:buildSegments,speedInfo:speedInfo,groupKey:groupKey,reachRect:reachRect,pointInRect:pointInRect,segmentRectInterval:segmentRectInterval,reachCrossings:reachCrossings,distanceAtPoint3D:distanceAtPoint3D,heightAwareReachCrossings:heightAwareReachCrossings,rangeFeet:rangeFeet,gridStep:gridStep,snapPointToGrid:snapPointToGrid,gridCandidates:gridCandidates,snapSolidStop:snapSolidStop,snapForcedDestination:snapForcedDestination}
+    };
+}());
+}
