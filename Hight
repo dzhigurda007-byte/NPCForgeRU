@@ -1,0 +1,488 @@
+/* Installation guard: disable old unguarded versions before installing. */
+if(typeof AD5Height!=='undefined'&&AD5Height) {
+    log('AD5Height: duplicate module skipped; keep one installed copy.');
+} else {
+/*
+ * AD5 Height Engine 1.4.8
+ * Вертикальная модель Roll20 / AD5.
+ *
+ * Правила:
+ * - bar3_value = только высота полёта НАД текущей местностью; отрицательный bar3 запрещён;
+ * - bar4_value = высота местности/поверхности на Jumpgate/современном Roll20;
+ *   Environment зеркалирует значение в state как резерв и снимок высоты перед перемещением;
+ * - итоговая мировая высота = bar3 (полёт) + bar4 (местность);
+ * - fluffy-wing зависит только от bar3 > 0; высота местности маркер не создаёт;
+ * - FALL и состояния потери полёта роняют только bar3 до 0, урон считается только от высоты полёта;
+ * - rangeFeet(a,b) возвращает 3D-дистанцию для AD5/Reactions;
+ * - Areas использует heightFeet() для вертикальной проверки областей.
+ * - Оглушение, Опутывание и Окаменение сбрасывают высоту до 0 и вызывают падение.
+ * - Сбит с ног уменьшает текущую высоту вдвое с округлением вниз.
+ * - ручное изменение bar3 никогда само по себе не наносит урон от падения.
+ * - урон от падения вызывают состояния потери полёта, GM macro FALL и сход с более высокой опорной поверхности на более низкую.
+ * - перед уроном от падения PC и NPC могут потратить реакцию «Падение перышком»; падение происходит, но урон полностью отменяется.
+ * - при падении учитывается самая высокая поверхность/дно пропасти под токеном; урон считается только за реально пройденную вниз дистанцию.
+ * - GM macro FALL = !ad5height fall для выбранного токена.
+ * - Безопасная высота падения = значение Телосложения (ТЕЛ) в футах. Если высота не превышает ТЕЛ, урона нет; при превышении считается полный урон со всей высоты.
+ * - Падение: 1d6 за каждые полные 10 фт, затем результат умножается на модификатор размера; число d6 ограничено размером.
+ * - 1.4.6: урон падения PC подтверждается через committed-транзакцию AD5 4.3.62; отчёт показывает фактически списанные HP/временные HP.
+ * - 1.4.8: добавлена диагностика !ad5height doctor и жёсткая проверка моста AD5.environment.damage для TESTFALL.
+ */
+var AD5Height=(function(){
+    'use strict';
+    var VERSION='1.4.10',SCRIPT='AD5 Height',MARKER_NAME='fluffy-wing',LEGACY_MARKER_NAMES=['Fluffy-wnig','fluffy-wnig'],listeners=[],falling=Object.create(null),syncingMarkers=Object.create(null);
+
+    function root(){
+        if(!state.AD5Height||typeof state.AD5Height!=='object')state.AD5Height={};
+        state.AD5Height.version=VERSION;
+        return state.AD5Height;
+    }
+    function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+    function norm(s){try{if(typeof AD5Syntax!=='undefined'&&AD5Syntax&&typeof AD5Syntax.normalize==='function')return AD5Syntax.normalize(s);}catch(ignoreSyntax){}return String(s==null?'':s).replace(/&nbsp;|&#160;/gi,' ').replace(/\s+/g,' ').trim().toLocaleLowerCase('ru-RU').replace(/ё/g,'е');}
+    function number(v){
+        if(v===null||v===undefined||String(v).trim()==='')return 0;
+        var m=String(v).replace(',','.').match(/[-+]?\d+(?:\.\d+)?/),n=m?Number(m[0]):0;
+        return Number.isFinite(n)?n:0;
+    }
+    function isToken(t){return !!(t&&t.get&&(t.get('_subtype')==='token'||t.get('subtype')==='token')&&!t.get('isdrawing'));}
+    function tokenBarNumber(token,index){
+        if(!isToken(token))return 0;
+        var raw=number(token.get('bar'+index+'_value')),linked=NaN,link='';
+        try{link=String(token.get('bar'+index+'_link')||'').trim();}catch(ignoreLink){}
+        if(link){
+            try{var a=getObj('attribute',link);if(a)linked=number(a.get('current'));}catch(ignoreAttr){}
+        }
+        // Roll20/Jumpgate can update a linked radial bubble and its backing
+        // attribute on adjacent ticks. A positive value visible in either source
+        // must never be mistaken for zero by FALL/range logic.
+        if(Number.isFinite(linked)){
+            if(raw>0||linked>0)return Math.max(raw,linked);
+            if(raw<0||linked<0)return Math.min(raw,linked);
+            return 0;
+        }
+        return raw;
+    }
+    function writeTokenBarNumber(token,index,value){
+        if(!isToken(token))return;
+        value=Number(value);if(!Number.isFinite(value))value=0;
+        var link='';try{link=String(token.get('bar'+index+'_link')||'').trim();}catch(ignoreLink){}
+        if(link){try{var a=getObj('attribute',link);if(a)a.set('current',value);}catch(ignoreAttr){}}
+        token.set('bar'+index+'_value',value);
+    }
+    function flightHeightFeet(tokenOrId){
+        var t=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;
+        if(!isToken(t))return 0;
+        return Math.max(0,tokenBarNumber(t,3));
+    }
+    function terrainHeightFeet(tokenOrId){
+        var t=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;
+        if(!isToken(t))return 0;
+        try{
+            if(typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.terrainHeightFeet==='function'){
+                var eh=Number(AD5Environment.terrainHeightFeet(t));
+                if(Number.isFinite(eh))return eh;
+            }
+        }catch(ignore){}
+        // Current Roll20 Graphic exposes a native fourth token bar. Use it directly when
+        // Environment is absent; linked bars are resolved as well.
+        try{var raw4=t.get('bar4_value');if(raw4!==undefined&&raw4!==null&&String(raw4).trim()!=='')return tokenBarNumber(t,4);}catch(ignoreBar4){}
+        return 0;
+    }
+    function heightFeet(tokenOrId){return flightHeightFeet(tokenOrId)+terrainHeightFeet(tokenOrId);}
+    function isSupported(tokenOrId){
+        try{if(typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.isSupported==='function')return !!AD5Environment.isSupported(tokenOrId);}catch(ignore){}
+        return false;
+    }
+    function isFlying(tokenOrId){return flightHeightFeet(tokenOrId)>0;}
+    function pageScale(token){
+        var pageId=token&&token.get&&(token.get('_pageid')||token.get('pageid')),p=pageId&&getObj('page',pageId),n=Number(p&&p.get('scale_number'));
+        return Number.isFinite(n)&&n>0?n:5;
+    }
+    function horizontalFeet(a,b){
+        if(!a||!b||a.get('_pageid')!==b.get('_pageid'))return Infinity;
+        if(a.id===b.id)return 0;
+        var scale=pageScale(a),dx=Math.abs(Number(a.get('left')||0)-Number(b.get('left')||0))/70,dy=Math.abs(Number(a.get('top')||0)-Number(b.get('top')||0))/70;
+        var ax=Math.max(0,Number(a.get('width')||70)/140),ay=Math.max(0,Number(a.get('height')||70)/140),bx=Math.max(0,Number(b.get('width')||70)/140),by=Math.max(0,Number(b.get('height')||70)/140);
+        var gapX=Math.max(0,dx-ax-bx),gapY=Math.max(0,dy-ay-by),gap=Math.max(gapX,gapY);
+        // Tokens may occupy the same horizontal square at different elevations.
+        // In that case the horizontal component is genuinely zero.
+        if(gap<=1e-9&&dx<=1e-9&&dy<=1e-9)return 0;
+        return gap<=1e-9?scale:Math.round((gap+1)*scale*100)/100;
+    }
+    function rangeFeet(a,b){
+        if(!a||!b||a.get('_pageid')!==b.get('_pageid'))return Infinity;
+        if(a.id===b.id)return 0;
+        var xy=horizontalFeet(a,b),dz=Math.abs(heightFeet(a)-heightFeet(b));
+        if(!Number.isFinite(xy))return Infinity;
+        return Math.round(Math.sqrt(xy*xy+dz*dz)*100)/100;
+    }
+    function markerCatalog(){
+        var raw='[]',arr=[];
+        try{raw=Campaign().get('token_markers')||'[]';arr=JSON.parse(raw)||[];}catch(ignore){arr=[];}
+        return Array.isArray(arr)?arr:[];
+    }
+    function markerTag(){
+        var wanted=norm(MARKER_NAME),found=null;
+        markerCatalog().some(function(m){
+            var name=norm(m&&m.name),tag=norm(m&&m.tag);
+            if(name===wanted||tag===wanted){found=String((m&&m.tag)||MARKER_NAME);return true;}
+            return false;
+        });
+        return found||MARKER_NAME;
+    }
+    function markerBase(s){return String(s||'').split('@')[0];}
+    function markerMatches(entry,tag){
+        var base=markerBase(entry),wanted=norm(MARKER_NAME);
+        if(base===tag||norm(base)===wanted)return true;
+        var match=false;
+        markerCatalog().some(function(m){
+            if(norm(m&&m.name)===wanted||norm(m&&m.tag)===wanted){if(base===String(m.tag||''))match=true;return true;}return false;
+        });
+        return match;
+    }
+    function legacyMarkerMatches(entry){
+        var base=markerBase(entry),catalog=markerCatalog(),match=false;
+        LEGACY_MARKER_NAMES.some(function(oldName){
+            var wanted=norm(oldName);
+            if(norm(base)===wanted){match=true;return true;}
+            catalog.some(function(m){
+                if(norm(m&&m.name)===wanted||norm(m&&m.tag)===wanted){
+                    if(base===String((m&&m.tag)||''))match=true;
+                    return true;
+                }
+                return false;
+            });
+            return match;
+        });
+        return match;
+    }
+    function syncMarker(token){
+        if(!isToken(token))return false;
+        var id=token.id||token.get('_id');
+        if(id&&syncingMarkers[id])return false;
+        var tag=markerTag(),raw=String(token.get('statusmarkers')||''),list=raw?raw.split(',').filter(Boolean):[],want=isFlying(token),has=false,changed=false;
+
+        // Remove the old misspelled marker left by Height <=1.1.0.
+        var cleaned=list.filter(function(x){
+            if(legacyMarkerMatches(x)){changed=true;return false;}
+            return true;
+        });
+        list=cleaned;
+        has=list.some(function(x){return markerMatches(x,tag);});
+
+        if(want&&!has){list.push(tag);changed=true;}
+        if(!want&&has){list=list.filter(function(x){return !markerMatches(x,tag);});changed=true;}
+        if(changed){
+            if(id)syncingMarkers[id]=true;
+            try{token.set('statusmarkers',list.join(','));}
+            finally{if(id)delete syncingMarkers[id];}
+        }
+        return changed;
+    }
+    function syncPage(pageId){
+        var q={_type:'graphic',_subtype:'token'};if(pageId)q._pageid=pageId;
+        var n=0;findObjs(q).forEach(function(t){if(syncMarker(t))n++;});return n;
+    }
+    function insideHeight(token,maxHeight,minHeight){
+        maxHeight=Number(maxHeight);minHeight=Number(minHeight)||0;
+        if(!Number.isFinite(maxHeight)||maxHeight<=0)return true;
+        var h=heightFeet(token);
+        // Campaign rule: upper boundary is exclusive. Example: cube 20 ft
+        // affects elevations 0..19.999, while bar3=20 is above the volume.
+        return h>=minHeight&&h<minHeight+maxHeight;
+    }
+    var FALL_CONDITIONS={stunned:'Оглушение',restrained:'Опутывание',petrified:'Окаменение'},PRONE_KEY='prone';
+    var SIZE_RULES={
+        tiny:{key:'tiny',label:'Крошечный',capDice:10,multiplier:1},
+        small:{key:'small',label:'Маленький',capDice:20,multiplier:1},
+        medium:{key:'medium',label:'Средний',capDice:40,multiplier:2},
+        large:{key:'large',label:'Большой',capDice:80,multiplier:3},
+        huge:{key:'huge',label:'Огромный',capDice:160,multiplier:4},
+        gargantuan:{key:'gargantuan',label:'Гигантский',capDice:360,multiplier:5}
+    };
+    function attrValue(cid,names){
+        if(!cid)return '';
+        for(var i=0;i<names.length;i++){
+            var name=names[i],v='';
+            try{if(typeof getAttrByName==='function')v=getAttrByName(cid,name)||'';}catch(ignore){}
+            if(String(v||'').trim())return String(v).trim();
+            try{
+                var a=findObjs({_type:'attribute',_characterid:cid,name:name})[0];
+                if(a&&String(a.get('current')||'').trim())return String(a.get('current')).trim();
+            }catch(ignore2){}
+        }
+        return '';
+    }
+    function sizeKey(raw){
+        var n=norm(raw).replace(/[().,_-]+/g,' ').replace(/\s+/g,' ').trim();
+        if(!n)return '';
+        if(/(?:^|\s)(?:tiny|крошечн)/.test(n)||n==='t')return 'tiny';
+        if(/(?:^|\s)(?:small|маленьк|малый)/.test(n)||n==='s')return 'small';
+        if(/(?:^|\s)(?:medium|средн)/.test(n)||n==='m')return 'medium';
+        if(/(?:^|\s)(?:large|больш)/.test(n)||n==='l')return 'large';
+        if(/(?:^|\s)(?:huge|огромн)/.test(n)||n==='h')return 'huge';
+        if(/(?:^|\s)(?:gargantuan|гигантск|колоссальн)/.test(n)||n==='g')return 'gargantuan';
+        return '';
+    }
+    function inferredSizeKey(token){
+        var squares=Math.max(Number(token.get('width')||70),Number(token.get('height')||70))/70;
+        if(squares<=0.6)return 'tiny';
+        if(squares>=4)return 'gargantuan';
+        if(squares>=3)return 'huge';
+        if(squares>=2)return 'large';
+        return 'medium';
+    }
+    function sizeProfile(tokenOrId){
+        var t=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;
+        if(!isToken(t))return SIZE_RULES.medium;
+        var cid=String(t.get('represents')||''),raw=attrValue(cid,['npc_size','size','character_size']),key=sizeKey(raw)||inferredSizeKey(t)||'medium',base=SIZE_RULES[key]||SIZE_RULES.medium;
+        return {key:base.key,label:base.label,capDice:base.capDice,multiplier:base.multiplier,raw:raw||'',inferred:!sizeKey(raw)};
+    }
+    function constitutionScore(tokenOrId){
+        var t=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;
+        if(!isToken(t))return 0;
+        var cid=String(t.get('represents')||''),raw=attrValue(cid,['constitution','constitution_score','npc_constitution','npc_con']);
+        var m=String(raw||'').replace(',','.').match(/[-+]?\d+(?:\.\d+)?/),n=m?Number(m[0]):0;
+        return Number.isFinite(n)&&n>0?n:0;
+    }
+    function safeFallHeight(tokenOrId){return constitutionScore(tokenOrId);}
+    function fallSpec(height,tokenOrId){
+        height=Math.max(0,Number(height)||0);
+        var size=sizeProfile(tokenOrId),safe=safeFallHeight(tokenOrId),safeLanding=height<=safe+1e-9;
+        // Safe height is a binary threshold, not a subtraction. Example: CON 14
+        // means 14 ft is safe, but a 15-ft fall uses the full 15-ft distance.
+        var rawDice=safeLanding?0:Math.floor(height/10),dice=Math.min(size.capDice,rawDice),formula=dice>0?(String(dice)+'d6'+(size.multiplier!==1?'*'+size.multiplier:'')):'0';
+        return {height:height,safeHeight:safe,safeLanding:safeLanding,size:size,rawDice:rawDice,dice:dice,multiplier:size.multiplier,capDice:size.capDice,formula:formula,maxHeight:size.capDice*10,maxDamage:size.capDice*6*size.multiplier};
+    }
+    function recordHasCondition(rec,key){
+        if(!rec||!rec.effects)return false;
+        if(rec.effects['condition:'+key])return true;
+        return Object.keys(rec.effects).some(function(k){var e=rec.effects[k];return !!(e&&e.condition===key);});
+    }
+    function activeFallCondition(rec){
+        var keys=Object.keys(FALL_CONDITIONS);
+        for(var i=0;i<keys.length;i++)if(recordHasCondition(rec,keys[i]))return keys[i];
+        return '';
+    }
+    function currentEffects(token){
+        try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.snapshot==='function')return AD5EffectTurns.snapshot(token.id);}catch(ignore){}
+        return null;
+    }
+    function gmFall(text){try{sendChat(SCRIPT,'/w gm '+text,null,{noarchive:true});}catch(ignore){}}
+    function setFlightHeight(token,h){
+        if(!isToken(token))return 0;
+        h=Math.max(0,Number(h)||0);
+        writeTokenBarNumber(token,3,h);
+        syncMarker(token);refreshTooltip(token);
+        return h;
+    }
+    function resolveFallDamage(token,distance,startHeight,landingHeight,cause,onDone){
+        distance=Math.max(0,Number(distance)||0);startHeight=Number(startHeight)||0;landingHeight=Number(landingHeight)||0;
+        var spec=fallSpec(distance,token),name=esc(token.get('name')||token.id);
+        function finish(){delete falling[token.id];if(typeof onDone==='function'){try{onDone();}catch(ignoreDone){}}}
+        function applyDamage(){
+            try{
+                if(typeof AD5==='undefined'||!AD5||!AD5.environment||typeof AD5.environment.damage!=='function')throw new Error('Для урона от падения требуется AD5 environment.damage.');
+                var result=AD5.environment.damage(token.id,spec.formula,'дробящий','Падение на '+distance+' фт',{kind:'fall'});
+                if(result&&result.pending!==true&&result.committed===false)throw new Error('AD5 не подтвердил запись урона падения в HP.');
+                var applied=(result&&Number.isFinite(Number(result.applied)))?Number(result.applied):null,hpLoss=(result&&Number.isFinite(Number(result.hpLoss)))?Number(result.hpLoss):null,tempLoss=(result&&Number.isFinite(Number(result.tempLoss)))?Number(result.tempLoss):null;
+                gmFall('<b>Падение — '+name+'</b><br>'+esc(cause||'Падение')+' · '+startHeight+' → '+landingHeight+' фт · дистанция <b>'+distance+' фт</b> · безопасная высота <b>'+spec.safeHeight+' фт</b> · размер <b>'+esc(spec.size.label)+'</b> · кубы '+spec.dice+'d6/'+spec.capDice+'d6 · множитель ×'+spec.multiplier+' · формула <b>'+esc(spec.formula)+'</b> · бросок до защит цели: <b>'+Number(result&&result.amount||0)+'</b>'+(applied!==null?' · фактически списано: <b>'+applied+'</b>'+(tempLoss?' (временные HP −'+tempLoss+')':'')+(hpLoss?' (HP −'+hpLoss+')':''):'')+'.');
+            }catch(e){gmFall('<b>Ошибка падения:</b> '+esc(e.message||e));}
+            finish();
+        }
+        if(spec.dice<=0){
+            gmFall('<b>Падение — '+name+'</b><br>'+esc(cause||'Падение')+' · '+startHeight+' → '+landingHeight+' фт · дистанция <b>'+distance+' фт</b> · безопасная высота <b>'+spec.safeHeight+' фт</b>. '+(spec.safeLanding?'Падение в пределах ТЕЛ — урона нет.':'По формуле получилось меньше 1d6 — урона нет.'));
+            finish();return;
+        }
+        try{
+            if(typeof AD5Reactions!=='undefined'&&AD5Reactions&&typeof AD5Reactions.beforeFall==='function'){
+                var opened=AD5Reactions.beforeFall({tokenId:token.id,startHeight:startHeight,landingHeight:landingHeight,distance:distance,reason:cause||'Падение',formula:spec.formula},function(result){
+                    if(result&&result.cancelDamage){gmFall('<b>Падение — '+name+'</b><br>'+esc(cause||'Падение')+' · '+startHeight+' → '+landingHeight+' фт · дистанция <b>'+distance+' фт</b> · <b>Падение перышком:</b> реакция использована, урон от падения отменён.');finish();return;}
+                    applyDamage();
+                });
+                if(opened)return;
+            }
+        }catch(reactionError){gmFall('<b>Падение перышком:</b> '+esc(reactionError.message||reactionError)+' · урон падения рассчитан обычно.');}
+        applyDamage();
+    }
+    function flightFall(tokenOrId,causeKey,reason){
+        var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;if(!isToken(token)||falling[token.id])return false;
+        var flight=flightHeightFeet(token);if(flight<=0)return false;
+        var terrain=terrainHeightFeet(token),start=terrain+flight,landing=terrain,cause=FALL_CONDITIONS[causeKey]||String(reason||'Падение');
+        falling[token.id]=true;
+        // Landing is immediate; «Падение перышком» cancels only damage, never the fall itself.
+        setFlightHeight(token,0);
+        setTimeout(function(){var live=getObj('graphic',token.id);if(!isToken(live)){delete falling[token.id];return;}resolveFallDamage(live,flight,start,landing,cause);},0);
+        return true;
+    }
+    function terrainFall(tokenOrId,fromTerrain,toTerrain,reason){
+        var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;if(!isToken(token)||falling[token.id])return false;
+        fromTerrain=Number(fromTerrain);toTerrain=Number(toTerrain);if(!Number.isFinite(fromTerrain)||!Number.isFinite(toTerrain))return false;
+        var distance=fromTerrain-toTerrain;if(distance<=0.01)return false;
+        // Terrain fall applies only while not flying. Environment has already written bar4.
+        if(flightHeightFeet(token)>0)return false;
+        falling[token.id]=true;
+        setTimeout(function(){var live=getObj('graphic',token.id);if(!isToken(live)){delete falling[token.id];return;}resolveFallDamage(live,distance,fromTerrain,toTerrain,String(reason||'Сход на более низкую местность'));},0);
+        return true;
+    }
+    function scheduleFall(token,causeKey,reason,heightOverride){
+        // Compatibility wrapper: heightOverride is intentionally ignored in the bar3+bar4 model.
+        return flightFall(token,causeKey,reason);
+    }
+    function fallToSurface(tokenOrId,surface,reason){
+        // Legacy compatibility for old Environment callers: treat it as a terrain drop.
+        var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;if(!isToken(token)||!surface)return false;
+        var to=Number(surface.height);if(!Number.isFinite(to))return false;
+        if(flightHeightFeet(token)>0)return flightFall(token,'',reason||'Падение');
+        var from=terrainHeightFeet(token);return terrainFall(token,from,to,reason||'Падение');
+    }
+    function forceFallNow(tokenOrId,reason){return flightFall(tokenOrId,activeFallCondition(currentEffects(typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId))||'',reason||'FALL');}
+    function effectsChanged(token,before,after){
+        if(!isToken(token)||flightHeightFeet(token)<=0)return false;
+        var h=flightHeightFeet(token),keys=Object.keys(FALL_CONDITIONS),cause='';
+        for(var i=0;i<keys.length;i++){var k=keys[i];if(!recordHasCondition(before,k)&&recordHasCondition(after,k)){cause=k;break;}}
+        // Only the moment a flight-breaking condition is newly applied can
+        // trigger falling damage. Merely editing bar3 while such a condition is
+        // already present must never cause damage.
+        if(cause)return scheduleFall(token,cause,'состояние',h);
+        // Prone does not drop the creature all the way to the ground. It halves
+        // current altitude once, only when the condition is newly applied.
+        if(!recordHasCondition(before,PRONE_KEY)&&recordHasCondition(after,PRONE_KEY)){
+            var next=Math.floor(h/2);
+            writeTokenBarNumber(token,3,next);syncMarker(token);
+            gmFall('<b>'+esc(token.get('name')||token.id)+'</b>: Сбит с ног — высота '+h+' → <b>'+next+' фт</b>.');
+            return true;
+        }
+        return false;
+    }
+    function enforceActiveCondition(token){
+        if(!isToken(token)||flightHeightFeet(token)<=0)return false;
+        var cause=activeFallCondition(currentEffects(token));
+        return cause?scheduleFall(token,cause,'активное состояние'):false;
+    }
+
+    function formatFeet(n){n=Number(n)||0;return Math.abs(n-Math.round(n))<1e-9?String(Math.round(n)):String(Math.round(n*100)/100);}
+    function tooltipLine(tokenOrId){
+        var f=flightHeightFeet(tokenOrId),t=terrainHeightFeet(tokenOrId),total=f+t;
+        if(f>0){if(Math.abs(t)>1e-9)return 'летит на высоте '+formatFeet(total)+' футов (полёт '+formatFeet(f)+' фт, местность '+formatFeet(t)+' фт)';return 'летит на высоте '+formatFeet(f)+' футов';}
+        if(t<0)return 'на глубине '+formatFeet(Math.abs(t))+' футов';
+        if(t>0)return 'стоит на высоте '+formatFeet(t)+' футов';
+        return '';
+    }
+    function refreshTooltip(token){
+        try{if(typeof AD5Wounds!=='undefined'&&AD5Wounds&&typeof AD5Wounds.sync==='function')AD5Wounds.sync(token);}catch(ignore){}
+    }
+    function ensureGMMacros(){
+        try{
+            var defs=[
+                {name:Array(41).join('\u200b')+'FALL',plain:'FALL',action:'!ad5height fall',token:true},
+                {name:'AREA',action:'!ad5env create ?{Форма|Круг,circle|Квадрат,square} ?{Размер / радиус (фт)|20} ?{Тип|ФИЗ,phys|ЗАСЛОУ,zaslow|ЗАСХАЙ,zashigh|СОЛИД,solid} ?{Высота (фт)|5}',token:false},
+                {name:'AREA HEIGHT',action:'!ad5env set-height ?{Новая высота области (фт)|5}',token:false}
+            ];
+            findObjs({_type:'player'}).forEach(function(pl){
+                if(!playerIsGM(pl.id))return;
+                defs.forEach(function(def){
+                    var owned=findObjs({_type:'macro'}).filter(function(m){return String(m.get('_playerid')||m.get('playerid')||'')===String(pl.id)&&(String(m.get('action')||'').trim()===def.action||String(m.get('name')||'').replace(/^\u200b+/,'')===String(def.plain||def.name).replace(/^\u200b+/,''));});
+                    var macro=owned[0],props={name:def.name,action:def.action,istokenaction:!!def.token,visibleto:''};
+                    if(macro){var patch={},changed=false;Object.keys(props).forEach(function(k){if(String(macro.get(k)==null?'':macro.get(k))!==String(props[k]==null?'':props[k])){patch[k]=props[k];changed=true;}});if(changed)macro.set(patch);}
+                    else createObj('macro',{name:def.name,playerid:pl.id,action:def.action,istokenaction:!!def.token,visibleto:''});
+                    owned.slice(1).forEach(function(m){try{m.remove();}catch(ignoreDup){}});
+                });
+            });
+        }catch(e){gmFall('<b>GM macros:</b> '+esc(e.message||e));}
+    }
+    function ensureFallMacro(){ensureGMMacros();}
+
+    function emit(token,before,after){
+        before=Number(before)||0;after=Number(after)||0;
+        var ev={tokenId:token.id,token:token,before:before,after:after,delta:after-before,wasFlying:before>0,isFlying:after>0};
+        listeners.slice().forEach(function(fn){try{fn(ev);}catch(e){sendChat(SCRIPT,'/w gm Ошибка слушателя высоты: '+esc(e.message||e),null,{noarchive:true});}});
+    }
+    function onChange(fn){if(typeof fn==='function'&&listeners.indexOf(fn)<0)listeners.push(fn);return fn;}
+    function offChange(fn){var i=listeners.indexOf(fn);if(i>=0)listeners.splice(i,1);}
+    function doctor(msg){
+        var lines=['<b>'+SCRIPT+' '+VERSION+' · DOCTOR</b>'];
+        lines.push('Environment=<b>'+esc((typeof AD5Environment!=='undefined'&&AD5Environment&&AD5Environment.version)||'НЕТ')+'</b>; AD5=<b>'+esc((typeof AD5!=='undefined'&&AD5&&AD5.version)||'НЕТ')+'</b>; Reactions=<b>'+esc((typeof AD5Reactions!=='undefined'&&AD5Reactions&&AD5Reactions.version)||'НЕТ')+'</b>.');
+        lines.push('Мост урона падения: <b>'+((typeof AD5!=='undefined'&&AD5&&AD5.environment&&typeof AD5.environment.damage==='function')?'OK':'НЕТ AD5.environment.damage')+'</b>.');
+        var selected=(msg.selected||[]).filter(function(x){return x._type==='graphic';}).map(function(x){return getObj('graphic',x._id);}).filter(isToken);
+        selected.forEach(function(t){
+            var raw3='',raw4='';try{raw3=String(t.get('bar3_value')==null?'':t.get('bar3_value'));}catch(ignore3){}try{raw4=String(t.get('bar4_value')==null?'':t.get('bar4_value'));}catch(ignore4){}
+            lines.push('<b>'+esc(t.get('name')||t.id)+'</b>: bar3='+esc(raw3||'∅')+', bar4='+esc(raw4||'∅')+', полёт='+flightHeightFeet(t)+' фт, местность='+terrainHeightFeet(t)+' фт, абсолютная='+heightFeet(t)+' фт, размер='+esc(sizeProfile(t).label)+', ТЕЛ='+constitutionScore(t)+'.');
+        });
+        if(typeof state!=='undefined'&&state.AD5Height&&String(state.AD5Height.version||'')!==VERSION)lines.push('<b style="color:#b00">state.AD5Height.version='+esc(state.AD5Height.version)+' — возможно одновременно включено несколько версий Height.</b>');
+        sendChat(SCRIPT,'/w gm '+lines.join('<br>'),null,{noarchive:true});
+    }
+
+    function command(msg){
+        if(msg.type!=='api'||!/^!ad5height(?:\s|$)/i.test(msg.content))return;
+        var a=msg.content.trim().split(/\s+/),sub=norm(a[1]||'status');
+        try{
+            var selected=(msg.selected||[]).filter(function(x){return x._type==='graphic';}).map(function(x){return getObj('graphic',x._id);}).filter(isToken);
+            if(sub==='ping'){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' '+VERSION+'</b> активен. Маркер полёта: <b>'+esc(MARKER_NAME)+'</b>.',null,{noarchive:true});return;}
+            if(sub==='doctor'||sub==='diag'||sub==='диагностика'){doctor(msg);return;}
+            if(sub==='sync'){if(!playerIsGM(msg.playerid))throw new Error('Только GM.');var n=syncPage(Campaign().get('playerpageid'));sendChat(SCRIPT,'/w gm Маркеры высоты синхронизированы. Изменено токенов: '+n+'.',null,{noarchive:true});return;}
+            if(!selected.length)throw new Error('Выделите токен.');
+            if(sub==='set'){
+                var h=number(a[2]);selected.forEach(function(t){writeTokenBarNumber(t,3,h);syncMarker(t);});return;
+            }
+            if(sub==='clear'||sub==='ground'){selected.forEach(function(t){writeTokenBarNumber(t,3,0);syncMarker(t);});return;}
+            if(sub==='testfall'){
+                if(!playerIsGM(msg.playerid))throw new Error('TESTFALL доступен только GM.');
+                if(typeof AD5==='undefined'||!AD5||!AD5.environment||typeof AD5.environment.damage!=='function')throw new Error('Нет AD5.environment.damage — установите актуальный основной AD5.');
+                var distance=number(a[2]);if(!Number.isFinite(distance)||distance<=0)throw new Error('Укажите дистанцию падения в футах: !ad5height testfall 260');
+                var startedTest=0,busyTest=[];
+                selected.forEach(function(t){
+                    if(falling[t.id]){busyTest.push(t.get('name')||t.id);return;}
+                    falling[t.id]=true;startedTest++;
+                    var landing=terrainHeightFeet(t),start=landing+distance;
+                    setTimeout(function(){var live=getObj('graphic',t.id);if(!isToken(live)){delete falling[t.id];return;}resolveFallDamage(live,distance,start,landing,'TESTFALL '+distance+' фт');},0);
+                });
+                sendChat(SCRIPT,'/w gm <b>TESTFALL</b>: запущено '+startedTest+' падение(й) по '+distance+' фт.'+(busyTest.length?' Уже обрабатываются: '+esc(busyTest.join(', '))+'.':''),null,{noarchive:true});
+                return;
+            }
+            if(sub==='fall'){
+                if(!playerIsGM(msg.playerid))throw new Error('FALL доступен только GM.');
+                var started=0,noFlight=[],busy=[];
+                selected.forEach(function(t){
+                    var f=flightHeightFeet(t);
+                    if(f<=0){noFlight.push((t.get('name')||t.id)+' [bar3 raw='+String(t.get('bar3_value')==null?'':t.get('bar3_value'))+']');return;}
+                    if(falling[t.id]){busy.push((t.get('name')||t.id)+' ('+f+' фт)');return;}
+                    if(forceFallNow(t,'FALL'))started++;
+                });
+                if(!started){
+                    if(busy.length)sendChat(SCRIPT,'/w gm FALL: падение уже обрабатывается для: '+esc(busy.join(', '))+'.',null,{noarchive:true});
+                    else sendChat(SCRIPT,'/w gm FALL: высота полёта не определена. '+esc(noFlight.join('; '))+'. Проверьте именно bar3_value; bar4 — высота местности.',null,{noarchive:true});
+                }
+                return;
+            }
+            selected.forEach(function(t){var f=flightHeightFeet(t),tr=terrainHeightFeet(t),tot=f+tr,sp=sizeProfile(t),fs=fallSpec(f,t),r3=String(t.get('bar3_value')==null?'':t.get('bar3_value')),r4='';try{r4=String(t.get('bar4_value')==null?'':t.get('bar4_value'));}catch(ignoreR4){}sendChat(SCRIPT,'/w gm <b>'+esc(t.get('name')||t.id)+'</b>: полёт <b>'+f+' фт</b> · местность <b>'+tr+' фт</b> · итоговая высота <b>'+tot+' фт</b> · raw bar3=<b>'+esc(r3||'∅')+'</b> · raw bar4=<b>'+esc(r4||'∅')+'</b> · '+(f>0?'<b>ЛЕТИТ</b>':(tr<0?'<b>В ПРОПАСТИ</b>':(tr>0?'<b>НА ПОВЕРХНОСТИ</b>':'на земле')))+' · безопасное падение ≤ <b>'+fs.safeHeight+' фт</b> · размер '+esc(sp.label)+' · FALL сейчас '+esc(fs.formula)+' (лимит '+sp.capDice+'d6, ×'+sp.multiplier+').',null,{noarchive:true});});
+        }catch(e){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+'</b>: '+esc(e.message||e),null,{noarchive:true});}
+    }
+
+    function graphicChanged(token,prev){
+        if(!isToken(token))return;
+        try{
+            var before=Math.max(0,number(prev&&prev.bar3_value)),rawAfter=number(token.get('bar3_value'));
+            if(rawAfter<0){writeTokenBarNumber(token,3,0);rawAfter=0;}
+            var after=Math.max(0,rawAfter);
+            if(Math.abs(before-after)<=1e-9)return;
+            syncMarker(token);emit(token,before,after);syncMarker(token);refreshTooltip(token);
+            // Manual/API edits of bar3 change flight height only and never deal fall damage.
+        }catch(e){sendChat(SCRIPT,'/w gm '+esc(e.message||e),null,{noarchive:true});}
+    }
+    on('change:graphic',graphicChanged);
+    // fluffy-wing depends only on bar3 > 0. Terrain/bar4 never creates a flight marker.
+    on('change:graphic:statusmarkers',function(token){
+        try{
+            var id=token&&token.id;
+            if(id&&syncingMarkers[id])return;
+            syncMarker(token);
+        }catch(ignore){}
+    });
+    on('add:graphic',function(token){try{syncMarker(token);}catch(ignore){}});
+    on('chat:message',command);
+    on('ready',function(){root();syncPage();ensureGMMacros();setTimeout(function(){try{findObjs({_type:'graphic',_subtype:'token'}).forEach(function(t){refreshTooltip(t);});}catch(ignore){}},100);sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' '+VERSION+'</b> запущен. bar3 = только высота полёта; высота местности приходит из Environment/bar4. Итоговая высота = bar3 + bar4. FALL и состояния роняют только высоту полёта и считают урон только от bar3; ручное изменение bar3 урона не наносит. TESTFALL N проверяет полный пайплайн урона падения по выбранному токену. DOCTOR: !ad5height doctor.',null,{noarchive:true});});
+
+    return {version:VERSION,tokenBarNumber:tokenBarNumber,writeTokenBarNumber:writeTokenBarNumber,heightFeet:heightFeet,totalHeightFeet:heightFeet,flightHeightFeet:flightHeightFeet,terrainHeightFeet:terrainHeightFeet,isFlying:isFlying,horizontalFeet:horizontalFeet,rangeFeet:rangeFeet,insideHeight:insideHeight,syncMarker:syncMarker,syncPage:syncPage,onChange:onChange,offChange:offChange,markerName:MARKER_NAME,isSupported:isSupported,sizeProfile:sizeProfile,constitutionScore:constitutionScore,safeFallHeight:safeFallHeight,fallSpec:fallSpec,tooltipLine:tooltipLine,effectsChanged:effectsChanged,ensureFallMacro:ensureFallMacro,ensureGMMacros:ensureGMMacros,refreshTooltip:refreshTooltip,fallToSurface:fallToSurface,terrainFall:terrainFall,flightFall:flightFall,forceFall:forceFallNow,
+        doctor:doctor,_test:{number:number,markerTag:markerTag,resolveFallDamage:resolveFallDamage,horizontalFeet:horizontalFeet,sizeKey:sizeKey,sizeProfile:sizeProfile,constitutionScore:constitutionScore,safeFallHeight:safeFallHeight,fallSpec:fallSpec,recordHasCondition:recordHasCondition,activeFallCondition:activeFallCondition}};
+}());
+}
