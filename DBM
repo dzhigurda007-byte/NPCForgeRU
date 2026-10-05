@@ -1,0 +1,398 @@
+/* Installation guard: disable old unguarded versions before installing. */
+if(typeof DBMAccessibility!=='undefined'&&DBMAccessibility) {
+    log('DBMAccessibility: duplicate module skipped; keep one installed copy.');
+} else {
+/*
+ * DBM Accessibility for Roll20
+ * Version 1.2.3
+ *
+ * D&D 5E by Roll20 Legacy (2014)
+ *
+ * PC Token Actions are enabled by default. Optional directives in Personality Traits:
+ *   DBM - on
+ *   DBM - off
+ *
+ * DBM - off is an explicit opt-out; removing the directive restores the default ON mode.
+ *
+ * What it does:
+ * - Creates direct Token Actions for the PC's repeating_attack rows.
+ * - Includes ALL rows from the character sheet's repeating_attack section.
+ * - Adds six core saving throw Token Actions: STR/DEX/CON/INT/WIS/CHA.
+ * - Buttons execute the same rollbase as the character sheet.
+ * - Adds ad5sourcetoken so AD5 uses the exact selected physical token.
+ * - Generated actions are removed when DBM is off.
+ * - New/renamed/deleted attacks are synchronized automatically.
+ *
+ * IMPORTANT:
+ * Roll20 Mod API cannot resize the native Token Action toolbar.
+ * Use the companion userscript DBM_Large_Token_Actions.user.js on the
+ * visually-impaired player's browser to make DBM buttons 200% size.
+ */
+
+var DBMAccessibility = DBMAccessibility || (function () {
+    'use strict';
+
+    var VERSION = '1.2.4';
+    var SCRIPT = 'DBM Accessibility';
+    var PREFIX = 'DBM · ';
+    var MARKER = 'DBM:generated:';
+    var timers = Object.create(null);
+    function tokenActionName(rank,label){return Array(Math.max(0,Number(rank)||0)+1).join('\u200b')+label;}
+
+    var CORE_SAVES = [
+        { key: 'strength_save', label: 'Спас СИЛ' },
+        { key: 'dexterity_save', label: 'Спас ЛОВ' },
+        { key: 'constitution_save', label: 'Спас ТЕЛ' },
+        { key: 'intelligence_save', label: 'Спас ИНТ' },
+        { key: 'wisdom_save', label: 'Спас МДР' },
+        { key: 'charisma_save', label: 'Спас ХАР' }
+    ];
+
+    function clean(v) {
+        return String(v == null ? '' : v).trim();
+    }
+    function normalizeUserText(v) {
+        return clean(v)
+            .replace(/&nbsp;|&#160;/gi,' ')
+            .replace(/[‐‑‒–—―]/g,'-')
+            .replace(/\s+/g,' ')
+            .toLocaleLowerCase('ru-RU')
+            .replace(/ё/g,'е');
+    }
+
+    function esc(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    var attributeSnapshot = null;
+    function withAttributes(cid, fn) {
+        cid=String(cid);
+        if(attributeSnapshot&&attributeSnapshot.cid===cid)return fn();
+        var previous=attributeSnapshot,attrs=findObjs({_type:'attribute',_characterid:cid}),byName=Object.create(null);
+        attrs.forEach(function(a){var n=String(a.get('name')||'').toLowerCase();(byName[n]||(byName[n]=[])).push(a);});
+        attributeSnapshot={cid:cid,attrs:attrs,byName:byName};
+        try{return fn();}finally{attributeSnapshot=previous;}
+    }
+    function attrList(cid, name) {
+        var needle = String(name || '').toLowerCase();
+        if(attributeSnapshot&&attributeSnapshot.cid===String(cid))return attributeSnapshot.byName[needle]||[];
+        return findObjs({ _type: 'attribute', _characterid: cid }).filter(function (a) {
+            return String(a.get('name') || '').toLowerCase() === needle;
+        });
+    }
+
+    function attrValue(cid, name) {
+        var list = attrList(cid, name);
+        for (var i = 0; i < list.length; i++) {
+            var v = clean(list[i].get('current'));
+            if (v !== '') return v;
+        }
+        return '';
+    }
+
+    function isNpc(cid) {
+        return /^(?:1|on|true|yes|да)$/i.test(clean(attrValue(cid, 'npc')));
+    }
+
+    // Last DBM directive wins. No directive = off.
+    function dbmDirective(text) {
+        var re = /\bdbm\s*-\s*(on|off)\b/ig;
+        var match, result = 'off', normalized=normalizeUserText(text);
+        while ((match = re.exec(normalized))) {
+            result = normalizeUserText(match[1]);
+        }
+        return result;
+    }
+
+    function enabledFor(cid) {
+        if (!getObj('character', cid) || isNpc(cid)) return false;
+        // Token Action layout is now standard for all PCs. No DBM directive
+        // means enabled; when directives are present, the last one still wins.
+        var raw=attrValue(cid, 'personality_traits'),text=normalizeUserText(raw);
+        if(!/\bdbm\s*-\s*(?:on|off)\b/i.test(text))return true;
+        return dbmDirective(raw)==='on';
+    }
+
+    function truthyToggle(v) {
+        var s = clean(v);
+        if (!s) return false;
+        return !/^(?:0|off|false|no)$/i.test(s);
+    }
+
+    function rowFlags(cid, prefix) {
+        var rollbase = attrValue(cid, prefix + 'rollbase');
+        var attack = truthyToggle(attrValue(cid, prefix + 'atkflag'));
+        var save = truthyToggle(attrValue(cid, prefix + 'saveflag'));
+
+        // Fallback for imported/legacy rows where explicit flags are absent.
+        if (!attack && /{{\s*attack\s*=\s*1\s*}}/i.test(rollbase) && /{{\s*r1\s*=/i.test(rollbase)) {
+            attack = true;
+        }
+        if (!save && /{{\s*saveattr\s*=/i.test(rollbase) && /{{\s*savedc\s*=/i.test(rollbase)) {
+            save = true;
+        }
+        return { attack: attack, save: save };
+    }
+
+    function repOrder(cid) {
+        var raw = attrValue(cid, '_reporder_repeating_attack');
+        return raw ? raw.split(',').map(function (x) { return clean(x); }).filter(Boolean) : [];
+    }
+
+    function collectRows(cid) { return withAttributes(cid,function(){return collectRowsSnapshot(cid);}); }
+    function collectRowsSnapshot(cid) {
+        var rows = Object.create(null);
+        attributeSnapshot.attrs.forEach(function (a) {
+            var name = String(a.get('name') || '');
+            var m = /^repeating_attack_(.+)_atkname$/i.exec(name);
+            if (!m) return;
+            var rowId = m[1];
+            var title = clean(a.get('current'));
+            if (!title) return;
+            var prefix = 'repeating_attack_' + rowId + '_';
+            var flags = rowFlags(cid, prefix);
+            rows[rowId] = {
+                rowId: rowId,
+                prefix: prefix,
+                title: title,
+                attack: flags.attack,
+                save: flags.save
+            };
+        });
+
+        var order = repOrder(cid);
+        var result = [];
+        order.forEach(function (id) {
+            if (rows[id]) {
+                result.push(rows[id]);
+                delete rows[id];
+            }
+        });
+        Object.keys(rows).sort().forEach(function (id) { result.push(rows[id]); });
+        return result;
+    }
+
+    function generatedAbilities(cid) {
+        return findObjs({ _type: 'ability', _characterid: cid }).filter(function (a) {
+            return String(a.get('description') || '').indexOf(MARKER) === 0;
+        });
+    }
+
+    function removeGenerated(cid) {
+        generatedAbilities(cid).forEach(function (a) { a.remove(); });
+    }
+
+    function uniqueButtonNames(rows) {
+        var seen = Object.create(null);
+        rows.forEach(function (row) {
+            var base = row.title;
+            var key = normalizeUserText(base);
+            seen[key] = (seen[key] || 0) + 1;
+            row.buttonTitle = PREFIX + base + (seen[key] > 1 ? ' (' + seen[key] + ')' : '');
+        });
+    }
+
+    function syncCharacter(cid) { return withAttributes(cid,function(){return syncCharacterSnapshot(cid);}); }
+    function syncCharacterSnapshot(cid) {
+        var character = getObj('character', cid);
+        if (!character) return { enabled: false, count: 0 };
+
+        if (!enabledFor(cid)) {
+            removeGenerated(cid);
+            return { enabled: false, count: 0 };
+        }
+
+        var rows = collectRows(cid);
+        uniqueButtonNames(rows);
+
+        var existing = generatedAbilities(cid);
+        var byMarker = Object.create(null);
+        existing.forEach(function (a) {
+            byMarker[String(a.get('description') || '')] = a;
+        });
+        var keep = Object.create(null);
+
+        // Core saving throws are not repeating_attack rows, so create them
+        // explicitly. DBM is a Token Action mode, so the selected token is the
+        // intended source for the character-sheet saving throw.
+        CORE_SAVES.forEach(function (save) {
+            var marker = MARKER + 'save:' + save.key;
+            var action = '%{selected|' + save.key + '}';
+            var ability = byMarker[marker];
+            var props = {
+                name: tokenActionName(30, save.label),
+                action: action,
+                description: marker,
+                istokenaction: true
+            };
+
+            if (ability) {
+                var patch={},changed=false;Object.keys(props).forEach(function (k) {if(String(ability.get(k))!==String(props[k])){patch[k]=props[k];changed=true;}});if(changed)ability.set(patch);
+            } else {
+                props.characterid = cid;
+                ability = createObj('ability', props);
+            }
+            if (ability) keep[ability.id] = true;
+        });
+
+        rows.forEach(function (row) {
+            var marker = MARKER + row.prefix;
+            // The exact physical selected token is sent to AD5 so bar 3 and
+            // area-source logic use this token, not another copy of the sheet.
+            var action = '@{' + cid + '|' + row.prefix + 'rollbase}' +
+                ' {{ad5sourcetoken=@{selected|token_id}}}';
+            var ability = byMarker[marker];
+            var props = {
+                name: tokenActionName(20, row.buttonTitle.replace(/^\u200b+/,'')),
+                action: action,
+                description: marker,
+                istokenaction: true
+            };
+
+            if (ability) {
+                var patch={},changed=false;Object.keys(props).forEach(function (k) {if(String(ability.get(k))!==String(props[k])){patch[k]=props[k];changed=true;}});if(changed)ability.set(patch);
+            } else {
+                props.characterid = cid;
+                ability = createObj('ability', props);
+            }
+            if (ability) keep[ability.id] = true;
+        });
+
+        // Delete only DBM-generated stale rows. User abilities are untouched.
+        existing.forEach(function (a) {
+            if (!keep[a.id]) a.remove();
+        });
+
+        return { enabled: true, count: rows.length + CORE_SAVES.length };
+    }
+
+    function schedule(cid) {
+        if (!cid) return;
+        if (timers[cid]) clearTimeout(timers[cid]);
+        timers[cid] = setTimeout(function () {
+            delete timers[cid];
+            try { syncCharacter(cid); }
+            catch (e) { log(SCRIPT + ': ' + e.message); }
+        }, 120);
+    }
+
+    function relevantAttribute(name) {
+        name = String(name || '');
+        return /^(?:personality_traits|npc|_reporder_repeating_attack)$/i.test(name) ||
+            /^repeating_attack_.+_/i.test(name);
+    }
+
+    function syncAll() {
+        var count = 0;
+        findObjs({ _type: 'character' }).forEach(function (c) {
+            var r = syncCharacter(c.id);
+            if (r.enabled) count += r.count;
+        });
+        return count;
+    }
+
+    function syncAllBatched(done){
+        var chars=findObjs({_type:'character'})||[],i=0,count=0;
+        function batch(){
+            var stop=Math.min(i+5,chars.length);for(;i<stop;i++){try{var r=syncCharacter(chars[i].id);if(r.enabled)count+=r.count;}catch(e){log(SCRIPT+' startup sync '+chars[i].id+': '+e.message);}}
+            if(i<chars.length){setTimeout(batch,25);return;}if(typeof done==='function')done(count);
+        }
+        if(chars.length)setTimeout(batch,0);else if(typeof done==='function')done(0);
+    }
+
+    function playerCanControlCharacter(pid, cid) {
+        if (playerIsGM(pid)) return true;
+        var c = getObj('character', cid);
+        if (!c) return false;
+        return String(c.get('controlledby') || '').split(',').some(function (id) {
+            id = clean(id);
+            return id === 'all' || id === pid;
+        });
+    }
+
+    function statusForToken(msg, tokenId) {
+        var token = getObj('graphic', tokenId);
+        if (!token || token.get('_subtype') !== 'token') throw new Error('Нужен токен персонажа.');
+        var cid = token.get('represents');
+        if (!cid) throw new Error('У токена не указан Represents Character.');
+        if (!playerCanControlCharacter(msg.playerid, cid)) throw new Error('Нет управления этим персонажем.');
+        var c = getObj('character', cid);
+        var on = enabledFor(cid), rows = on ? collectRows(cid) : [];
+        sendChat(SCRIPT, '/w "' + String(msg.who || '').replace(/"/g, '') + '" ' +
+            '<b>' + esc(c ? c.get('name') : cid) + '</b><br>DBM: <b>' + (on ? 'ON' : 'OFF') +
+            '</b><br>Кнопок атак/заклинаний: <b>' + rows.length + '</b>.<br>Кнопок спасбросков: <b>' + CORE_SAVES.length + '</b>.');
+    }
+
+    function command(msg) {
+        if (msg.type !== 'api') return;
+        var content = String(msg.content || '').trim();
+        if (!/^!dbm(?:\b|-)/i.test(content)) return;
+
+        try {
+            if (/^!dbm-refresh\b/i.test(content)) {
+                if (!playerIsGM(msg.playerid)) throw new Error('Обновление всех DBM-листов доступно только мастеру.');
+                var n = syncAll();
+                sendChat(SCRIPT, '/w gm DBM обновлён. Активных кнопок: <b>' + n + '</b>.');
+                return;
+            }
+
+            if (/^!dbm-status\b/i.test(content)) {
+                var tokenId = (msg.selected && msg.selected.length === 1) ? msg.selected[0]._id : '';
+                if (!tokenId) throw new Error('Выделите свой токен и выполните !dbm-status.');
+                statusForToken(msg, tokenId);
+                return;
+            }
+
+            if (/^!dbm-help\b/i.test(content) || /^!dbm\s+help\b/i.test(content)) {
+                sendChat(SCRIPT, '/w "' + String(msg.who || '').replace(/"/g, '') + '" ' +
+                    '<b>DBM Accessibility ' + VERSION + '</b><br>' +
+                    'В поле «Черты характера»: <code>DBM - on</code> — включить; ' +
+                    '<code>DBM - off</code> — выключить; отсутствие записи = включено по умолчанию.<br>' +
+                    'DBM создаёт все кнопки из «Атаки и заклинания» и 6 спасбросков характеристик.<br>' +
+                    'Статус выделенного токена: <code>!dbm-status</code>.');
+                return;
+            }
+        } catch (e) {
+            sendChat(SCRIPT, '/w "' + String(msg.who || '').replace(/"/g, '') + '" <b>DBM:</b> ' + esc(e.message));
+        }
+    }
+
+    function ready() {
+        // Do not create/update every PC ability in one synchronous ready burst.
+        // Large campaigns can otherwise trip Roll20's "Possible infinite loop"
+        // watchdog even though the work is finite.
+        try { syncAllBatched(function(count){log(SCRIPT+' v'+VERSION+' ready. Active generated buttons: '+count);}); }
+        catch (e) { log(SCRIPT + ' ready error: ' + e.message); }
+
+        on('chat:message', command);
+        on('add:attribute', function (a) {
+            if (relevantAttribute(a.get('name'))) schedule(a.get('_characterid'));
+        });
+        on('change:attribute', function (a, prev) {
+            if (relevantAttribute(a.get('name')) || relevantAttribute(prev&&prev.name)) schedule(a.get('_characterid'));
+        });
+        on('destroy:attribute', function (a) {
+            if (relevantAttribute(a.get('name'))) schedule(a.get('_characterid'));
+        });
+        on('destroy:character', function (c) {
+            if (timers[c.id]) { clearTimeout(timers[c.id]); delete timers[c.id]; }
+        });
+    }
+
+    return {
+        ready: ready,
+        syncCharacter: syncCharacter,
+        syncAll: syncAll,
+        syncAllBatched: syncAllBatched,
+        collectRows: collectRows,
+        directive: dbmDirective,
+        coreSaves: CORE_SAVES
+    };
+}());
+
+on('ready', DBMAccessibility.ready);
+}
