@@ -1,0 +1,384 @@
+/* Installation guard: disable old unguarded versions before installing. */
+if(typeof AD5Concentration!=='undefined'&&AD5Concentration) {
+    log('AD5Concentration: duplicate module skipped; keep one installed copy.');
+} else {
+/* AD5 Concentration 1.2.5
+ * Concentration manager for AD5 / D&D 5E by Roll20 (2014).
+ * Detection:
+ *   - standalone token "КОН" in Range/Distance;
+ *   - {{concentration=1}} from the D&D 5E by Roll20 spell card.
+ * Rules:
+ *   - one concentration per caster;
+ *   - damage => automatic Constitution save, DC max(10, floor(damage/2));
+ *   - incapacitated/paralyzed/stunned/unconscious/petrified/dead/0 HP => immediate loss;
+ *   - loss removes all AD5 Effect Turns effects and persistent AD5 Areas belonging
+ *     to this concentration id, but never rewinds instantaneous damage/healing.
+ */
+var AD5Concentration=(function(){
+    'use strict';
+    var VERSION='1.2.7',SCRIPT='AD5 Concentration',SEQ=0;
+    var FALLBACK_MARKERS=['overdrive','aura','stopwatch','white-tower'];
+    var ACTION_NAME=Array(21).join('\u200b')+'AD5 · Снять концентрацию',ACTION_CMD='!ad5conc endselected',runtimeTurnKey='';
+
+    function root(){
+        if(!state.AD5Concentration||typeof state.AD5Concentration!=='object')state.AD5Concentration={};
+        var r=state.AD5Concentration;
+        r.version=3;r.active=r.active&&typeof r.active==='object'?r.active:{};
+        r.owners=r.owners&&typeof r.owners==='object'?r.owners:{};
+        return r;
+    }
+    function esc(s){return String(s==null?'':s).replace(/[&<>"'{}\[\]|\r\n]/g,function(c){return '&#'+c.charCodeAt(0)+';';});}
+    function norm(s){return String(s==null?'':s).replace(/&nbsp;|&#160;/gi,' ').replace(/[‐‑‒–—―]/g,'-').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().toLocaleLowerCase('ru-RU').replace(/ё/g,'е');}
+    function fields(content){var f={},re=/{{\s*([\w]+)\s*=((?:@\{[^{}]*\}|\^\{[^{}]*\}|(?!}})[\s\S])*?)}}/gi,m;while((m=re.exec(String(content||''))))f[String(m[1]||'').toLowerCase()]=String(m[2]||'').trim();return f;}
+    function activeField(v){return v!==undefined&&v!==null&&String(v).trim()!==''&&!/^(?:0|false|off|no|нет)$/i.test(String(v).trim());}
+    function rangeConcentrationTurns(value){
+        var t=norm(value).replace(/[‐‑‒–—―]/g,'-'),m=/(?:^|[\s,;.])(?:кон|concentration)\s*[:=]?\s*(\d+)(?=\s|$|[,;.!?])/i.exec(t);
+        return m?Math.max(1,parseInt(m[1],10)||1):null;
+    }
+    function rangeConcentration(value){var t=norm(value).replace(/[.,;:()\[\]{}]/g,' ');return rangeConcentrationTurns(value)!==null||/(?:^|\s)кон(?:\s|$)/i.test(t)||/(?:^|\s)concentration(?:\s|$)/i.test(t);}
+    function durationToTurns(value){
+        var t=norm(value);if(!t)return null;
+        if(/(?:until\s+dispelled|до\s+рассеивания|permanent|постоян)/i.test(t))return null;
+        var m=/(\d+(?:[.,]\d+)?)\s*(rounds?|turns?|раунд(?:а|ов)?|ход(?:а|ов)?|seconds?|secs?|сек(?:унда|унды|унд)?|minutes?|mins?|мин(?:ута|уты|ут)?|hours?|hrs?|час(?:а|ов)?|days?|дн(?:я|ей)?)/i.exec(t);
+        if(!m)return null;
+        var n=Number(m[1].replace(',','.'));if(!Number.isFinite(n)||n<=0)return null;var u=norm(m[2]);
+        if(/^(?:round|turn|раунд|ход)/.test(u))return Math.max(1,Math.ceil(n));
+        if(/^(?:second|sec|сек)/.test(u))return Math.max(1,Math.ceil(n/6));
+        if(/^(?:minute|min|мин)/.test(u))return Math.max(1,Math.ceil(n*10));
+        if(/^(?:hour|hr|час)/.test(u))return Math.max(1,Math.ceil(n*600));
+        if(/^(?:day|дн)/.test(u))return Math.max(1,Math.ceil(n*14400));
+        return null;
+    }
+    function sheetSpellMeta(actorId,spellName){
+        actorId=String(actorId||'');var wanted=norm(spellName),out={concentration:false,duration:''};if(!actorId||!wanted)return out;
+        var rows=findObjs({_type:'attribute',_characterid:actorId}).filter(function(a){
+            return /^repeating_spell-(?:cantrip|[0-9]|npc)_.+_(?:spellname|spellname_base)$/i.test(String(a.get('name')||''))&&norm(a.get('current'))===wanted;
+        });
+        rows.forEach(function(a){
+            var prefix=String(a.get('name')).replace(/(?:spellname|spellname_base)$/i,''),flag=attr(actorId,prefix+'spellconcentrationflag')||attr(actorId,prefix+'spellconcentration'),dur=attr(actorId,prefix+'spellduration');
+            if(flag&&activeField(flag.get('current')))out.concentration=true;
+            if(!out.duration&&dur&&String(dur.get('current')||'').trim())out.duration=String(dur.get('current'));
+        });
+        return out;
+    }
+    function sheetSpellConcentration(actorId,spellName){return sheetSpellMeta(actorId,spellName).concentration;}
+    function partyPageId(){return Campaign().get('playerpageid')||'';}
+    function attr(cid,name){var a=findObjs({_type:'attribute',_characterid:cid,name:name})[0];return a||null;}
+    function numeric(v){if(v===undefined||v===null||String(v).trim()==='')return null;var n=Number(String(v).trim().replace(',','.'));if(Number.isFinite(n))return n;var m=String(v).match(/[-+]?\d+(?:[.,]\d+)?/);return m?Number(m[0].replace(',','.')):null;}
+    function npcCharacter(cid){var a=attr(cid,'npc');return !!(a&&String(a.get('current'))==='1');}
+    function playerControlled(cid){var c=getObj('character',cid);return !!(c&&String(c.get('controlledby')||'').split(',').some(function(x){x=String(x).trim();return x==='all'||(x&&getObj('player',x)&&!playerIsGM(x));}));}
+    function combatTokens(cid){var page=partyPageId();if(!page)return [];return findObjs({_type:'graphic',_subtype:'token',_pageid:page,layer:'objects',represents:cid}).filter(function(t){var hp=String(t.get('bar1_value')==null?'':t.get('bar1_value')).trim();return !t.get('isdrawing')&&String(t.get('name')||'').trim()&&hp!==''&&Number.isFinite(Number(hp));});}
+    function resolveToken(actorId,sourceTokenId,selected){
+        if(sourceTokenId){var t=getObj('graphic',sourceTokenId);if(t&&t.get('_subtype')==='token'&&t.get('represents')===actorId&&t.get('_pageid')===partyPageId())return t;}
+        var chosen=(selected||[]).filter(function(x){return x&&x._type==='graphic';}).map(function(x){return getObj('graphic',x._id);}).filter(function(t){return t&&t.get('represents')===actorId&&t.get('_pageid')===partyPageId();});
+        if(chosen.length)return chosen[0];
+        var ts=combatTokens(actorId);if(ts.length===1)return ts[0];
+        if(!npcCharacter(actorId)||playerControlled(actorId))return ts[0]||null;
+        return null;
+    }
+    function ownerKey(actorId,tokenId){
+        if(tokenId&&npcCharacter(actorId)&&!playerControlled(actorId))return 'token:'+tokenId;
+        return 'actor:'+actorId;
+    }
+    function markerEntries(token,marker){return String(token&&token.get('statusmarkers')||'').split(',').filter(function(x){return x&&x.replace(/@[^,]+$/,'')===marker;});}
+    function effectTurnsUsesMarker(tokenId,marker){
+        try{var rec=typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&AD5EffectTurns.snapshot?AD5EffectTurns.snapshot(tokenId):null;if(!rec||!rec.effects)return false;return Object.keys(rec.effects).some(function(k){return rec.effects[k]&&rec.effects[k].marker===marker;});}catch(ignore){return false;}
+    }
+    function chooseMarker(token){for(var i=0;i<FALLBACK_MARKERS.length;i++){var m=FALLBACK_MARKERS[i];if(!markerEntries(token,m).length&&!effectTurnsUsesMarker(token.id,m))return m;}return 'aura';}
+    function markerValue(marker,remaining){remaining=Number(remaining);return Number.isFinite(remaining)&&remaining>0&&remaining<=9?marker+'@'+Math.floor(remaining):marker;}
+    function refreshTooltip(token){try{if(token&&typeof AD5Wounds!=='undefined'&&AD5Wounds&&typeof AD5Wounds.sync==='function')AD5Wounds.sync(token);}catch(ignore){}}
+    function addMarker(rec,token){
+        if(!token||rec.markerTokens[token.id])return;
+        var marker=chooseMarker(token),markers=String(token.get('statusmarkers')||'').split(',').filter(Boolean),before=markerEntries(token,marker);
+        rec.markerTokens[token.id]={marker:marker,before:before.slice()};
+        if(!before.length){markers.push(markerValue(marker,rec.remaining));token.set('statusmarkers',markers.join(','));}
+        refreshTooltip(token);
+    }
+    function syncMarkerCounter(rec){
+        Object.keys(rec&&rec.markerTokens||{}).forEach(function(tid){
+            var token=getObj('graphic',tid),info=rec.markerTokens[tid];if(!token||!info)return;
+            var markers=String(token.get('statusmarkers')||'').split(',').filter(Boolean),idx=-1;
+            for(var i=markers.length-1;i>=0;i--)if(markers[i].replace(/@[^,]+$/,'')===info.marker){idx=i;break;}
+            var next=markerValue(info.marker,rec.remaining);if(idx>=0)markers[idx]=next;else markers.push(next);
+            token.set('statusmarkers',markers.join(','));refreshTooltip(token);
+        });
+    }
+    function restoreMarkerEntry(token,info){
+        if(!token||!info)return;
+        var marker=info.marker,markers=String(token.get('statusmarkers')||'').split(',').filter(Boolean),removed=false;
+        // Remove one AD5-concentration-owned copy, not every same-name marker.
+        for(var i=markers.length-1;i>=0;i--){if(markers[i].replace(/@[^,]+$/,'')===marker){markers.splice(i,1);removed=true;break;}}
+        (info.before||[]).forEach(function(x){if(markers.indexOf(x)<0)markers.push(x);});
+        if(removed||(info.before||[]).length)token.set('statusmarkers',markers.join(','));
+    }
+    function markRecord(rec){
+        var ts=[];
+        if(rec.sourceToken){var t=getObj('graphic',rec.sourceToken);if(t)ts=[t];}
+        if(!ts.length&&!npcCharacter(rec.actorId))ts=combatTokens(rec.actorId);
+        ts.forEach(function(t){addMarker(rec,t);});
+    }
+    function recById(id){return root().active[String(id||'')]||null;}
+    function currentForOwner(actorId,tokenId){var r=root(),key=ownerKey(actorId,tokenId),id=r.owners[key];return id&&r.active[id]?r.active[id]:null;}
+    function sameConcentrator(rec,actorId,tokenId){
+        if(!rec||String(rec.actorId)!==String(actorId))return false;
+        // Player characters (and player-controlled NPC sheets) have one
+        // concentration for the whole character sheet. Uncontrolled NPC sheets
+        // may represent several independent creatures, so their physical token
+        // is the concentration owner.
+        if(!npcCharacter(actorId)||playerControlled(actorId))return true;
+        if(tokenId)return String(rec.sourceToken||'')===String(tokenId)||!rec.sourceToken;
+        return !rec.sourceToken;
+    }
+    function endCompeting(actorId,tokenId,exceptId){
+        var r=root(),ids=Object.keys(r.active),ended=0;
+        ids.forEach(function(id){
+            var rec=r.active[id];if(!rec||String(id)===String(exceptId||''))return;
+            if(!sameConcentrator(rec,actorId,tokenId))return;
+            endById(id,'начата новая концентрация',true);ended++;
+        });
+        return ended;
+    }
+    function enforceSingleActive(){
+        var r=root(),groups={},remove=[];
+        Object.keys(r.active).forEach(function(id){
+            var rec=r.active[id];if(!rec||!rec.actorId)return;
+            var actorId=String(rec.actorId),key;
+            if(npcCharacter(actorId)&&!playerControlled(actorId)){
+                key=rec.sourceToken?'token:'+String(rec.sourceToken):'npc-pending:'+actorId;
+            }else key='actor:'+actorId;
+            if(!groups[key]||Number(rec.started||0)>Number(groups[key].started||0)){
+                if(groups[key])remove.push(groups[key].id);groups[key]=rec;
+            }else remove.push(rec.id);
+        });
+        remove.forEach(function(id){if(r.active[id])endById(id,'удалена дублирующая концентрация при обновлении',true);});
+        // Rebuild the owner index from the surviving records so old state cannot
+        // keep a phantom owner pointing at a concentration that no longer exists.
+        r.owners={};Object.keys(r.active).forEach(function(id){var rec=r.active[id];if(rec&&rec.ownerKey)r.owners[rec.ownerKey]=rec.id;});
+        return remove.length;
+    }
+    function effectiveActorId(token){
+        if(!token)return '';
+        try{if(typeof AD5Transform!=='undefined'&&AD5Transform&&typeof AD5Transform.originalActorId==='function')return String(AD5Transform.originalActorId(token)||token.get('represents')||'');}catch(ignore){}
+        return String(token.get('represents')||'');
+    }
+    function currentForToken(token){
+        if(!token)return null;var actorId=effectiveActorId(token);if(!actorId)return null;
+        var r=root(),id=r.owners['token:'+token.id];if(id&&r.active[id])return r.active[id];
+        if(npcCharacter(actorId)&&!playerControlled(actorId))return null;
+        id=r.owners['actor:'+actorId];return id&&r.active[id]?r.active[id]:null;
+    }
+    function refreshToken(tokenOrId){
+        var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;if(!token)return false;
+        var rec=currentForToken(token);if(!rec)return false;
+        if(!rec.markerTokens[token.id])addMarker(rec,token);
+        syncMarkerCounter(rec);refreshTooltip(token);syncConcentrationAction(rec.actorId);return true;
+    }
+    function matchingPending(actorId,spellName){
+        var r=root(),n=norm(spellName),best=null;
+        Object.keys(r.active).forEach(function(id){var x=r.active[id];if(!x||x.actorId!==actorId||!x.awaitingAction||norm(x.spellName)!==n)return;if(Date.now()-Number(x.started||0)>60000)return;if(!best||Number(x.started)>Number(best.started))best=x;});
+        return best;
+    }
+    function notify(text){sendChat('Шепот звезд',text,null,{noarchive:true});}
+    function gm(text){sendChat(SCRIPT,'/w gm '+text,null,{noarchive:true});}
+    function cleanup(rec){
+        if(typeof AD5SpellEffects!=='undefined')AD5SpellEffects.removeConcentration(rec.id);
+        var summary={effects:0,effectTokens:0,areas:0,drafts:0,legacy:0,attack:0,pending:0};
+        try{if(typeof AD5Phases!=='undefined')AD5Phases.endConcentration(rec.id);}catch(e0){gm('Ошибка ОКОН: '+esc(e0.message||e0));}
+        try{if(typeof AD5Areas!=='undefined'&&AD5Areas&&typeof AD5Areas.removeByConcentration==='function'){var ar=AD5Areas.removeByConcentration(rec.id)||{};summary.areas=Number(ar.persistent)||0;summary.drafts=Number(ar.drafts)||0;}}catch(e2){gm('Ошибка удаления области: '+esc(e2.message||e2));}
+        try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.removeByConcentration==='function'){var fx=AD5EffectTurns.removeByConcentration(rec.id)||{};summary.effects=Number(fx.effects)||0;summary.effectTokens=Number(fx.tokens)||0;}}catch(e){gm('Ошибка очистки Effect Turns: '+esc(e.message||e));}
+        try{if(typeof AD5!=='undefined'&&AD5&&AD5.concentration&&typeof AD5.concentration.endEffects==='function'){var ad=AD5.concentration.endEffects(rec.id)||{};summary.legacy=Number(ad.legacy)||0;summary.attack=Number(ad.attack)||0;summary.pending=Number(ad.pending)||0;}}catch(e3){gm('Ошибка очистки AD5: '+esc(e3.message||e3));}
+        try{if(typeof AD5Transform!=='undefined'&&AD5Transform&&typeof AD5Transform.endByConcentration==='function')AD5Transform.endByConcentration(rec.id);}catch(e4){gm('Ошибка завершения Полиморфа: '+esc(e4.message||e4));}
+        return summary;
+    }
+    function endById(id,reason,silent){
+        var r=root(),rec=r.active[String(id||'')];if(!rec)return null;
+        delete r.active[rec.id];if(r.owners[rec.ownerKey]===rec.id)delete r.owners[rec.ownerKey];
+        var summary=cleanup(rec);
+        Object.keys(rec.markerTokens||{}).forEach(function(tid){var token=getObj('graphic',tid);restoreMarkerEntry(token,rec.markerTokens[tid]);refreshTooltip(token);});
+        syncConcentrationAction(rec.actorId);
+        if(!silent){
+            notify('<b>Концентрация прервана:</b> '+esc(rec.casterName||'Персонаж')+' — '+esc(rec.spellName||'заклинание')+'.');
+            gm('<b>'+esc(rec.spellName||'Концентрация')+'</b>: '+esc(reason||'завершена')+'. Удалено эффектов: '+summary.effects+', постоянных областей: '+summary.areas+'.');
+        }
+        return summary;
+    }
+    function begin(opts){
+        opts=opts||{};var actorId=String(opts.actorId||'');if(!actorId||!getObj('character',actorId))throw new Error('не найден лист заклинателя.');
+        var token=resolveToken(actorId,opts.sourceTokenId,opts.selected),tokenId=token?token.id:null,key=ownerKey(actorId,tokenId),r=root();
+        // Hard invariant: one concentration per actual creature. This scans the
+        // active records instead of trusting only r.owners, so stale/migrated
+        // owner keys cannot leave two simultaneous concentration effects.
+        var replaced=endCompeting(actorId,tokenId,null);
+        var c=getObj('character',actorId),id='c'+Date.now().toString(36)+'-'+(++SEQ),turns=Number(opts.durationTurns),hasTurns=Number.isFinite(turns)&&turns>0;
+        var rec={id:id,actorId:actorId,sourceToken:tokenId,ownerKey:key,ownerPid:opts.ownerPid||null,spellName:String(opts.spellName||'Концентрация').trim()||'Концентрация',casterName:String(c.get('name')||''),started:Date.now(),awaitingAction:!!opts.awaitingAction,markerTokens:{},duration:hasTurns?Math.floor(turns):null,remaining:hasTurns?Math.floor(turns):null};
+        r.active[id]=rec;r.owners[key]=id;markRecord(rec);syncMarkerCounter(rec);syncConcentrationAction(actorId);
+        if(!token&&npcCharacter(actorId)&&!playerControlled(actorId))gm('<b>'+esc(rec.spellName)+'</b>: концентрация создана, но токен NPC неоднозначен. Она будет привязана к физическому токену при применении способности.');
+        notify('<b>Концентрация:</b> '+esc(rec.casterName)+' — '+esc(rec.spellName)+'.'+(replaced?' Предыдущая концентрация автоматически завершена.':''));
+        return rec;
+    }
+    function bindSource(id,tokenId){
+        var rec=recById(id),token=getObj('graphic',tokenId);if(!rec||!token)return false;
+        if(token.get('represents')!==rec.actorId)throw new Error('токен концентрации не соответствует заклинателю.');
+        var r=root(),newKey=ownerKey(rec.actorId,token.id);
+        endCompeting(rec.actorId,token.id,rec.id);
+        if(r.owners[rec.ownerKey]===rec.id)delete r.owners[rec.ownerKey];rec.ownerKey=newKey;rec.sourceToken=token.id;r.owners[newKey]=rec.id;addMarker(rec,token);return true;
+    }
+    function claimAction(opts){
+        opts=opts||{};var actorId=String(opts.actorId||''),spell=String(opts.spellName||'').trim(),meta=sheetSpellMeta(actorId,spell),explicit=rangeConcentration(opts.range)||activeField(opts.concentrationFlag)||meta.concentration,token=resolveToken(actorId,opts.sourceTokenId,opts.selected),tokenId=token?token.id:null;
+        var explicitTurns=rangeConcentrationTurns(opts.range),turns=explicitTurns!==null?explicitTurns:(durationToTurns(opts.duration)!==null?durationToTurns(opts.duration):durationToTurns(meta.duration));
+        var pending=matchingPending(actorId,spell);
+        if(pending){if(tokenId)bindSource(pending.id,tokenId);pending.awaitingAction=false;if(explicitTurns!==null||((pending.remaining===null||pending.remaining===undefined)&&turns!==null)){pending.duration=turns;pending.remaining=turns;syncMarkerCounter(pending);}return pending.id;}
+        var current=currentForOwner(actorId,tokenId);
+        if(!explicit){if(current&&norm(current.spellName)===norm(spell))return current.id;return null;}
+        var rec=begin({actorId:actorId,sourceTokenId:tokenId,selected:opts.selected,ownerPid:opts.ownerPid,spellName:spell,awaitingAction:false,durationTurns:turns});return rec.id;
+    }
+    function concentrationActions(cid){return findObjs({_type:'ability',_characterid:String(cid)}).filter(function(a){var owner=String(a.get('_characterid')||a.get('characterid')||'');return owner===String(cid)&&String(a.get('action')||'')===ACTION_CMD;});}
+    function actorHasConcentration(cid){var r=root();return Object.keys(r.active).some(function(id){return r.active[id]&&r.active[id].actorId===String(cid);});}
+    function syncConcentrationAction(cid){
+        cid=String(cid||'');if(!cid)return;var list=concentrationActions(cid),needed=actorHasConcentration(cid);
+        if(needed){if(!list.length)createObj('ability',{characterid:cid,name:ACTION_NAME,action:ACTION_CMD,istokenaction:true});else{list[0].set({name:ACTION_NAME,istokenaction:true});list.slice(1).forEach(function(a){a.remove();});}}
+        else list.forEach(function(a){a.remove();});
+    }
+    function clearAllConcentrationActions(){findObjs({_type:'ability'}).filter(function(a){return String(a.get('action')||'')===ACTION_CMD;}).forEach(function(a){a.remove();});}
+    function canControlToken(token,pid){
+        if(playerIsGM(pid))return true;if(!token)return false;var ids={},cid=token.get('represents'),c=cid&&getObj('character',cid);
+        [token.get('controlledby'),c&&c.get('controlledby')].forEach(function(raw){String(raw||'').split(',').map(function(x){return x.trim();}).filter(Boolean).forEach(function(x){ids[x]=true;});});
+        return !!(ids.all||ids[pid]);
+    }
+    function groupName(value){return norm(value).replace(/\s*(?:[x×]\s*\d+|\(\s*\d+\s*\)|\[\s*\d+\s*\])\s*$/,'').trim();}
+    function parseOrder(raw){try{var rows=JSON.parse(raw||'[]');return Array.isArray(rows)?rows:[];}catch(ignore){return [];}}
+    function rowKey(row){return row?String(row.id||'')+'|'+String(row.custom||''):'';}
+    function turnInfo(){
+        var page=partyPageId(),rows=parseOrder(Campaign().get('turnorder'));if(!rows.length||!page)return null;
+        var row=rows[0],token=row.id&&row.id!=='-1'?getObj('graphic',row.id):null;
+        if(token&&token.get('_subtype')==='token'&&token.get('_pageid')===page)return {page:page,row:row,token:token,key:rowKey(row)};
+        if(String(row.id)==='-1'&&row.custom)return {page:page,row:row,token:null,key:rowKey(row)};return null;
+    }
+    function recordMatchesTurn(rec,info){
+        var source=rec.sourceToken&&getObj('graphic',rec.sourceToken);
+        if(!source){var ts=combatTokens(rec.actorId);if(ts.length===1)source=ts[0];}
+        if(!source||source.get('_pageid')!==info.page)return false;
+        if(info.token&&typeof NPCGroupInitiative!=='undefined'&&NPCGroupInitiative&&typeof NPCGroupInitiative.groupKey==='function')
+            return NPCGroupInitiative.groupKey(source)===NPCGroupInitiative.groupKey(info.token);
+        if(info.token&&info.token.id===source.id)return true;
+        var original=effectiveActorId(source),cid=source.get('represents');
+        if(!npcCharacter(original||cid)||playerControlled(original||cid))return false;
+        var name=groupName(source.get('name')),c=getObj('character',cid),actor=getObj('character',rec.actorId);
+        if(info.token){
+            var other=effectiveActorId(info.token)||info.token.get('represents');
+            return npcCharacter(other)&&!playerControlled(other)&&!!name&&name===groupName(info.token.get('name'));
+        }
+        var custom=groupName(info.row.custom);
+        return !!custom&&[name,groupName(c&&c.get('name')),groupName(actor&&actor.get('name'))].indexOf(custom)>=0;
+    }
+    function tickTurn(info,previous){
+        var r=root(),ended=[];
+        Object.keys(r.active).forEach(function(id){var rec=r.active[id];if(!rec||!recordMatchesTurn(rec,info)||(previous&&recordMatchesTurn(rec,previous))||rec.remaining===null||rec.remaining===undefined)return;
+            rec.remaining=Math.max(0,(Number(rec.remaining)||0)-1);if(rec.remaining<=0)ended.push(id);else syncMarkerCounter(rec);
+        });
+        ended.forEach(function(id){endById(id,'истекла длительность концентрации');});
+    }
+    function turnChanged(campaign,prev){
+        var info=turnInfo(),before=parseOrder(prev&&prev.turnorder),key=info?info.page+'|'+info.key:'';
+        if(!key){runtimeTurnKey='';return;}
+        // Compare actual turn rows, never a mutable represented character name.
+        if(before.length){if(rowKey(before[0])===info.key){runtimeTurnKey=key;return;}}
+        else if(!runtimeTurnKey){runtimeTurnKey=key;return;}
+        if(runtimeTurnKey===key)return;
+        runtimeTurnKey=key;var prior=before.length?{page:info.page,row:before[0],token:getObj('graphic',before[0].id)}:null;tickTurn(info,prior);
+    }
+    function initTurn(){var info=turnInfo();runtimeTurnKey=info?info.page+'|'+info.key:'';}
+    function tooltipLines(tokenId){var token=getObj('graphic',tokenId),rec=token&&currentForToken(token);if(!rec)return [];return ['Концентрация: '+rec.spellName+(rec.remaining===null||rec.remaining===undefined?'':' — '+rec.remaining)];}
+    function saveBase(token){
+        var cid=token.get('represents'),a,v,base=null;
+        if(npcCharacter(cid)){
+            a=attr(cid,'npc_con_save');v=a&&numeric(a.get('current'));if(v!==null)base=v;
+            if(base===null){a=attr(cid,'constitution_mod');v=a&&numeric(a.get('current'));if(v!==null)base=v;}
+            if(base===null){a=attr(cid,'constitution');v=a&&numeric(a.get('current'));if(v!==null)base=Math.floor((v-10)/2);}
+        }else{
+            a=attr(cid,'constitution_save_bonus');v=a&&numeric(a.get('current'));if(v!==null)base=v;
+            if(base===null){a=attr(cid,'constitution_mod');v=a&&numeric(a.get('current'));if(v!==null)base=v;}
+        }
+        if(base===null)throw new Error('не найден бонус спасброска Телосложения у '+String(token.get('name')||cid)+'.');
+        return base;
+    }
+    function combineModes(a,b){a=['adv','dis'].indexOf(a)>=0?a:'normal';b=['adv','dis'].indexOf(b)>=0?b:'normal';if(a==='normal')return b;if(b==='normal')return a;if(a===b)return a;return 'normal';}
+    function saveMods(token){
+        var out={bonus:0,mode:'normal',condition:{autoFail:false,mode:'normal',labels:[]}};
+        try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.saveModifierForToken==='function'){var fx=AD5EffectTurns.saveModifierForToken(token.id,'constitution')||{};out.bonus=Number(fx.bonus)||0;out.mode=['adv','dis'].indexOf(fx.mode)>=0?fx.mode:'normal';}}catch(ignore){}
+        try{if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.saveRule==='function'){out.condition=AD5ConditionEngine.saveRule(token,'constitution')||out.condition;out.mode=combineModes(out.mode,out.condition.mode||'normal');}}catch(ignoreConditionEngine){}
+        return out;
+    }
+    function d20(){return typeof randomInteger==='function'?randomInteger(20):(Math.floor(Math.random()*20)+1);}
+    function autoSave(token,dc){
+        var base=saveBase(token),mods=saveMods(token),mode=['adv','dis'].indexOf(mods.mode)>=0?mods.mode:'normal';
+        if(mods.condition&&mods.condition.autoFail)return {dc:dc,base:base,modifier:Number(mods.bonus)||0,mode:'condition',d1:0,d2:null,die:0,total:dc-1,success:false,autoFailCondition:true,conditionLabels:mods.condition.labels||[]};
+        var d1=d20(),d2=null,die=d1;if(mode!=='normal'){d2=d20();die=mode==='adv'?Math.max(d1,d2):Math.min(d1,d2);}
+        var total=die+base+(Number(mods.bonus)||0),success=die===1?false:(die===20?true:total>=dc);return {dc:dc,base:base,modifier:Number(mods.bonus)||0,mode:mode,d1:d1,d2:d2,die:die,total:total,success:success,critical:die===1?'failure':(die===20?'success':'')};
+    }
+    function statusMarker(token,marker){return String(token&&token.get('statusmarkers')||'').split(',').some(function(x){return x&&x.replace(/@[^,]+$/,'')===marker;});}
+    function incapacitated(token){
+        if(!token)return true;
+        var transformed=false,originalHp=null;
+        try{if(typeof AD5Transform!=='undefined'&&AD5Transform&&typeof AD5Transform.mode==='function'){transformed=!!AD5Transform.mode(token);if(transformed&&typeof AD5Transform.originalHpValue==='function')originalHp=AD5Transform.originalHpValue(token);}}catch(ignoreTransform){}
+        var hp=numeric(token.get('bar1_value'));
+        // Zero HP of the temporary beast form is not unconsciousness of the
+        // original creature.  AD5 Transform resolves reversion/overflow after
+        // the damage transaction; only original HP <= 0 is an automatic loss.
+        if(transformed){if(originalHp!==null&&Number(originalHp)<=0)return true;}else if(hp!==null&&hp<=0)return true;
+        if(statusMarker(token,'skull')&&!transformed)return true;
+        try{var rec=typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&AD5EffectTurns.snapshot?AD5EffectTurns.snapshot(token.id):null;if(rec&&rec.effects){var bad=['incapacitated','paralyzed','stunned','unconscious','petrified'];if(bad.some(function(k){return !!rec.effects['condition:'+k];}))return true;}}catch(ignore){}
+        return ['broken-shield','padlock','lightning-helix','sleepy','frozen-orb'].some(function(m){return statusMarker(token,m);});
+    }
+    function onStateChange(token){var rec=currentForToken(token);if(!rec)return false;if(incapacitated(token)){endById(rec.id,'заклинатель недееспособен или имеет 0 HP');return true;}return false;}
+    function onDamage(token,damage,context){
+        damage=Math.max(0,Number(damage)||0);if(damage<=0)return null;var rec=currentForToken(token);if(!rec)return null;
+        var transformMode=context&&context.transformMode||null;
+        try{if(!transformMode&&typeof AD5Transform!=='undefined'&&AD5Transform&&typeof AD5Transform.mode==='function')transformMode=AD5Transform.mode(token);}catch(ignoreMode){}
+        // Campaign house rule: damage suffered while in Wild Shape never calls
+        // for a concentration save. Polymorph deliberately does NOT use this skip.
+        if(transformMode==='wildshape')return {skipped:true,reason:'wildshape'};
+        if(incapacitated(token)){endById(rec.id,'заклинатель недееспособен или имеет 0 HP');return {success:false,automaticLoss:true};}
+        var dc=Math.max(10,Math.floor(damage/2)),res=autoSave(token,dc),name=String(token.get('name')||rec.casterName||'Персонаж');
+        notify('<b>Концентрация — '+esc(name)+':</b> '+res.total+' против СЛ '+dc+' — <b>'+(res.success?'УСПЕХ':'ПРОВАЛ')+'</b>.');
+        gm(esc(name)+': '+(res.mode==='normal'?'d20 '+res.d1:(res.mode==='adv'?'ПРЕМ ':'ПОМ ')+res.d1+'/'+res.d2+' → '+res.die)+' + '+res.base+(res.modifier?(' '+(res.modifier>0?'+ ':'- ')+Math.abs(res.modifier)):'')+' = <b>'+res.total+'</b>, СЛ '+dc+' (урон '+damage+').');
+        if(!res.success)endById(rec.id,'провален спасбросок концентрации СЛ '+dc);
+        return res;
+    }
+    function actorFromSpellCard(msg,f){
+        var cid=f.charid||f.characterid||'',c=cid&&getObj('character',cid);if(c)return c;
+        var name=String(f.charname||msg.who||'').replace(/\s+\(GM\)$/,'').trim();if(!name)return null;
+        var cs=findObjs({_type:'character',name:name});if(cs.length!==1)cs=findObjs({_type:'character'}).filter(function(x){return norm(x.get('name'))===norm(name);});return cs.length===1?cs[0]:null;
+    }
+    function spellCard(msg){
+        if(!msg||msg.playerid==='API'||msg.rolltemplate!=='spell')return false;var f=fields(msg.content);if(!activeField(f.concentration)&&!rangeConcentration(f.range||f.distance||''))return false;
+        var c=actorFromSpellCard(msg,f);if(!c){gm('Не удалось определить заклинателя концентрационного spellcard «'+esc(f.name||'заклинание')+'».');return true;}
+        var controls=String(c.get('controlledby')||'').split(',').map(function(x){return x.trim();});
+        if(!playerIsGM(msg.playerid)&&controls.indexOf('all')<0&&controls.indexOf(msg.playerid)<0)return false;
+        var sourceId=String(f.ad5sourcetoken||'').trim(),source=sourceId&&getObj('graphic',sourceId);
+        if(source&&(source.get('represents')!==c.id||source.get('_pageid')!==partyPageId()))sourceId='';
+        var meta=sheetSpellMeta(c.id,f.name||'Заклинание'),turns=rangeConcentrationTurns(f.range||f.distance||'');if(turns===null)turns=durationToTurns(f.duration||f.spellduration||meta.duration);
+        begin({actorId:c.id,sourceTokenId:sourceId,ownerPid:msg.playerid,spellName:f.name||'Заклинание',selected:msg.selected||[],awaitingAction:true,durationTurns:turns});return true;
+    }
+    function command(msg){
+        if(msg.type!=='api'||!/^!ad5conc(?:\s|$)/i.test(msg.content)||msg.playerid==='API')return;
+        try{var a=msg.content.trim().split(/\s+/),sub=norm(a[1]||'status');if(sub==='status'){
+            var r=root(),rows=Object.keys(r.active).map(function(id){var x=r.active[id],left=(x.remaining===null||x.remaining===undefined?'∞':x.remaining);return esc(x.casterName)+' — <b>'+esc(x.spellName)+'</b> · осталось '+esc(left)+' ['+esc(id)+']';});gm(rows.length?rows.join('<br>'):'Активной концентрации нет.');return;
+        }
+        if(sub==='endselected'){
+            var sel=(msg.selected||[])[0],tok=sel&&getObj('graphic',sel._id);if(!tok)throw new Error('выделите токен с концентрацией.');if(!canControlToken(tok,msg.playerid))throw new Error('нет прав управлять этим токеном.');var selectedRec=currentForToken(tok);if(!selectedRec)throw new Error('на выделенном токене нет концентрации.');endById(selectedRec.id,'снята владельцем');return;
+        }
+        if(sub==='end'){
+            var id=a[2];if(!id){var sel=(msg.selected||[])[0],t=sel&&getObj('graphic',sel._id),rec=t&&currentForToken(t);id=rec&&rec.id;}if(!id)throw new Error('укажите ID или выделите концентрирующийся токен.');var rec=recById(id);if(!rec)throw new Error('концентрация не найдена.');if(!playerIsGM(msg.playerid)&&rec.ownerPid!==msg.playerid)throw new Error('нет прав завершить эту концентрацию.');endById(id,'завершена вручную');return;
+        }
+        gm('<b>AD5 Concentration '+VERSION+'</b><br><code>!ad5conc status</code> — список.<br><code>!ad5conc end</code> — завершить концентрацию выделенного токена.<br><code>!ad5conc endselected</code> — Token Action «Снять концентрацию».');
+        }catch(e){gm('Ошибка: '+esc(e.message||e));}
+    }
+    on('chat:message',function(msg){try{if(msg.type==='api')command(msg);else spellCard(msg);}catch(e){gm('Ошибка spellcard: '+esc(e.message||e));}});
+    on('destroy:graphic',function(t){var rec=currentForToken(t);if(rec&&rec.sourceToken===t.id)endById(rec.id,'токен заклинателя удалён');});
+    on('change:graphic',function(t,prev){try{if(!currentForToken(t))return;var hpChanged=String(t.get('bar1_value'))!==String(prev&&prev.bar1_value),statusChanged=String(t.get('statusmarkers'))!==String(prev&&prev.statusmarkers);if(hpChanged||statusChanged)onStateChange(t);}catch(ignore){}});
+    on('change:campaign:turnorder',function(c,p){try{turnChanged(c,p);}catch(e){gm('Ошибка счётчика концентрации: '+esc(e.message||e));}});
+    on('ready',function(){root();var deduped=enforceSingleActive();clearAllConcentrationActions();Object.keys(root().active).forEach(function(id){var rec=root().active[id];if(rec){syncConcentrationAction(rec.actorId);syncMarkerCounter(rec);}});initTurn();gm('<b>'+SCRIPT+' '+VERSION+'</b> запущен. Концентрация: «КОН»/«КОН N» в Дистанции или штатный {{concentration=1}} spellcard. Одновременно у одного существа действует только одна концентрация; новая автоматически завершает предыдущую. Счётчик берётся из N или Duration. Маркер: overdrive, при занятости — aura/stopwatch. AD5 Transform: Дикая форма подавляет проверки концентрации от урона; Полиморф сохраняет проверки.'+(deduped?' Удалено старых дубликатов концентрации: '+deduped+'.':''));});
+    return {version:VERSION,claimAction:claimAction,bindSource:bindSource,onDamage:onDamage,onStateChange:onStateChange,end:endById,currentForToken:currentForToken,refreshToken:refreshToken,tooltipLines:tooltipLines,_test:{effectiveActorId:effectiveActorId,rangeConcentration:rangeConcentration,rangeConcentrationTurns:rangeConcentrationTurns,durationToTurns:durationToTurns,sheetSpellConcentration:sheetSpellConcentration,ownerKey:ownerKey,sameConcentrator:sameConcentrator,enforceSingleActive:enforceSingleActive,incapacitated:incapacitated}};
+}());
+}
