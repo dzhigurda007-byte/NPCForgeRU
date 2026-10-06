@@ -49,7 +49,7 @@ var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5
 // silently shadow every newer fix.
 var AD5EffectTurns = (function () {
     'use strict';
-    var VERSION='1.6.1', SCRIPT='AD5 Effect Turns';
+    var VERSION='1.6.2', SCRIPT='AD5 Effect Turns';
     var runtimeLastGroup=Object.create(null);
     var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
     var markerCacheRaw=null, markerCacheByName=Object.create(null);
@@ -886,7 +886,13 @@ var AD5EffectTurns = (function () {
     }
     function применитьПрофильКЭффекту(e,sourceContext){if(e&&sourceContext&&sourceContext.условныйПрофиль)e.условный=clone(sourceContext.условныйПрофиль);return e;}
     function временныеХитыВладелец(tokenId){var o=root().tempHpOwners[String(tokenId||'')];return o?clone(o):null;}
-    function установитьВладельцаВременныхХитов(tokenId,meta){tokenId=String(tokenId||'');if(!tokenId)return null;if(!meta){delete root().tempHpOwners[tokenId];return null;}root().tempHpOwners[tokenId]=clone(meta);return clone(root().tempHpOwners[tokenId]);}
+    function установитьВладельцаВременныхХитов(tokenId,meta){
+        tokenId=String(tokenId||'');if(!tokenId)return null;
+        if(meta)root().tempHpOwners[tokenId]=clone(meta);else delete root().tempHpOwners[tokenId];
+        // Ownership, not the numerical amount, identifies a temporary-HP spell.
+        if(typeof AD5SpellEffects!=='undefined'&&AD5SpellEffects.tempOwnerChanged)AD5SpellEffects.tempOwnerChanged(tokenId,meta||null);
+        return meta?clone(root().tempHpOwners[tokenId]):null;
+    }
     function токенЖивУсловия(token){if(!token)return false;var hp=Number(token.get('bar1_value'));if(Number.isFinite(hp)&&hp<=0)return false;return String(token.get('statusmarkers')||'').split(',').every(function(x){return String(x||'').replace(/@.*$/,'')!=='skull';});}
     function дистанцияУсловия(a,b){
         if(!a||!b)return Infinity;
