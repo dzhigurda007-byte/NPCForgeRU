@@ -2,7 +2,7 @@
 if(typeof AD5Diagnostics!=='undefined'&&AD5Diagnostics) {
     log('AD5Diagnostics: duplicate module skipped; keep one installed copy.');
 } else {
-/* AD5 Diagnostics 1.0.1. Read-only dependency report: !ad5doctor. No repairs. */
+/* AD5 Diagnostics 1.0.2. Read-only dependency report: !ad5doctor. No repairs. */
 var AD5Diagnostics=AD5Diagnostics||(function(){
     'use strict';
     function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
@@ -26,6 +26,7 @@ var AD5Diagnostics=AD5Diagnostics||(function(){
             ['Events',typeof AD5События!=='undefined'?AD5События:null],
             ['DBM',typeof DBMAccessibility!=='undefined'?DBMAccessibility:null],
             ['Areas',typeof AD5Areas!=='undefined'?AD5Areas:null],
+            ['FastFind',typeof AD5FastFind!=='undefined'?AD5FastFind:null],
             ['Visibility',typeof AD5Visibility!=='undefined'?AD5Visibility:null]
         ];
     }
@@ -36,13 +37,15 @@ var AD5Diagnostics=AD5Diagnostics||(function(){
         html+='<br>Sandbox: '+esc(Campaign().sandboxVersion||Campaign().get('sandboxversion')||'не указан')+' · Sheet Worker completion: '+(typeof onSheetWorkerCompleted==='function'?'есть':'нет');
         if(missing.indexOf('Areas')>=0)html+='<br><b>Нет AD5 Areas:</b> шаблоны и постоянные области требуют отдельного модуля.';
         if(missing.indexOf('Visibility')>=0)html+='<br>AD5 Visibility отключён по выбору мастера; автоматическая проверка видимости реакций не выполняется.';
+        if(missing.indexOf('FastFind')>=0)html+='<br>AD5 FastFind не установлен: всё работает, но медленнее.';
+        else if(typeof AD5FastFind!=='undefined'&&AD5FastFind.enabled&&!AD5FastFind.enabled())html+='<br>AD5 FastFind установлен, но выключен (!ad5fast on).';
         var ts=(msg.selected||[]).map(function(x){return getObj('graphic',x._id);}).filter(Boolean);
         ts.forEach(function(t){var b4;try{b4=t.get('bar4_value');}catch(ignore){}html+='<br>'+esc(t.get('name')||t.id)+': bar4 '+(b4===undefined?'не предоставлен API (используется резерв Environment)':esc(b4));});
         html+='<br>Это проверка наличия модулей, не доказательство исправности боя. Старые обработчики других версий этим отчётом не обнаруживаются.';
         sendChat('AD5 Diagnostics','/w gm '+html,null,{noarchive:true});
     }
     on('chat:message',report);
-    return {version:'1.0.1',inventory:inventory};
+    return {version:'1.0.2',inventory:inventory};
 }());
 
 }

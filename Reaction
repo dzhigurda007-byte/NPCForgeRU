@@ -3,7 +3,9 @@ if(typeof AD5Reactions!=='undefined'&&AD5Reactions) {
     log('AD5Reactions: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Reactions v1.6.8 — Generic Resource Binding / Countershot / Sheet First
+ * AD5 Reactions v1.6.9 — Generic Resource Binding / Countershot / Sheet First
+ * 1.6.9: candidates without reaction rows are skipped before the sheet-reading availability
+ *        checks; attribute lookup back to exact-then-scan; per-event memo kept.
  * 1.6.8: performance: attribute lookups use one case-insensitive findObjs pass and per-event memoization.
  * Companion for AD5 4.3.70 + AD5 Movement 2.3.5 + AD5 Condition Engine 1.2.2 + AD5 Visibility 1.0.0 / Legacy D&D 5E by Roll20.
  *
@@ -35,7 +37,7 @@ if(typeof AD5Reactions!=='undefined'&&AD5Reactions) {
 var AD5Reactions = (function(){
     'use strict';
 
-    var VERSION='1.6.8', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
+    var VERSION='1.6.9', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
     var opportunityPending=Object.create(null);
     var runtimePending=Object.create(null), seq=0, recentMove=Object.create(null), lastAreaCheck=null, movementHookRegistered=false, featherCollecting=Object.create(null), reactionRowCache=Object.create(null);
     // 1.4.2 Fast Fall: cache Feather Fall card discovery per character.
@@ -62,11 +64,11 @@ var AD5Reactions = (function(){
     function norm(s){var value=String(s==null?'':s).replace(/<[^>]*>/g,' ');try{if(typeof AD5Syntax!=='undefined'&&AD5Syntax&&typeof AD5Syntax.normalize==='function')return AD5Syntax.normalize(value);}catch(ignoreSyntax){}return value.toLocaleLowerCase('ru-RU').replace(/ё/g,'е').replace(/[‐‑‒–—―]/g,'-').replace(/\s+/g,' ').trim();}
     function enabled(v){return /^(?:1|on|true|yes|да)$/i.test(String(v==null?'':v).trim());}
     function partyPageId(){return String(Campaign().get('playerpageid')||'');}
-    // One case-insensitive pass; an exact-case match still wins.
     function attr(cid,name){
-        name=String(name);
-        var xs=findObjs({_type:'attribute',_characterid:String(cid),name:name},{caseInsensitive:true})||[];
-        return xs.filter(function(x){return x.get('name')===name;})[0]||xs[0]||null;
+        var a=findObjs({_type:'attribute',_characterid:String(cid),name:String(name)})[0];
+        if(a)return a;
+        var low=String(name).toLowerCase();
+        return findObjs({_type:'attribute',_characterid:String(cid)}).filter(function(x){return String(x.get('name')||'').toLowerCase()===low;})[0]||null;
     }
     var tickMemo=null;
     // Read-only values memoized for the current Roll20 event only; cleared on the next tick.
@@ -615,8 +617,11 @@ var AD5Reactions = (function(){
         var src=getObj('graphic',ev.sourceTokenId),point=eventPointToken(ev),page=(point&&point.get('_pageid'))||(src&&src.get('_pageid'))||(ev.targetTokenId&&getObj('graphic',ev.targetTokenId)&&getObj('graphic',ev.targetTokenId).get('_pageid'));if(!page)return [];
         var out=[];
         combatTokens(page).forEach(function(t){
+            // Cached reaction rows first: tokens without reactions never need the
+            // (sheet-reading) availability checks. Same result, far fewer lookups.
+            var rows=reactionsForToken(t);if(!rows.length)return;
             if(!availableAny(t)||!hasReactionDecisionController(t))return;
-            reactionsForToken(t).forEach(function(r){
+            rows.forEach(function(r){
                 if(!triggerMatches(r,ev)||!subjectAllowed(r,t,ev)||!effectMatchAllowed(r,ev)||!reactionConditionAllowed(r,t,ev))return;
                 if(!reactionResourceReady(t,r))return;
                 var result=r.result||{};

@@ -3,7 +3,8 @@ if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine) {
     log('AD5ConditionEngine: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Condition Engine 1.2.10
+ * AD5 Condition Engine 1.2.11
+ * 1.2.11: attribute lookup back to exact-then-scan (cheaper without AD5 FastFind); per-event memo kept.
  * 1.2.10: performance: attribute lookups use one case-insensitive findObjs pass and per-event memoization.
  * Central combat-condition rules for the Arvenor Roll20 / Legacy D&D 5E stack.
  *
@@ -37,7 +38,7 @@ if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine) {
  */
 var AD5ConditionEngine=(function(){
     'use strict';
-    var VERSION='1.2.10',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
+    var VERSION='1.2.11',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
     var MARKERS={
         blinded:'bleeding-eye',charmed:'chained-heart',deafened:'half-haze',frightened:'screaming',
         grappled:'grab',incapacitated:'broken-shield',no_reactions:'interdiction',invisible:'ninja-mask',paralyzed:'padlock',
@@ -69,8 +70,7 @@ var AD5ConditionEngine=(function(){
     function num(v){if(v===null||v===undefined||String(v).trim()==='')return null;var n=Number(String(v).replace(',','.'));return Number.isFinite(n)?n:null;}
     function clampLevel(v){v=Math.floor(Number(v)||0);return Math.max(0,Math.min(6,v));}
     function isToken(t){return !!(t&&t.get&&String(t.get('_type')||'graphic')==='graphic'&&String(t.get('_subtype')||'token')==='token'&&!t.get('isdrawing'));}
-    // One case-insensitive pass; an exact-case match still wins.
-    function attr(cid,name){if(!cid)return null;name=String(name);var xs=findObjs({_type:'attribute',_characterid:String(cid),name:name},{caseInsensitive:true})||[];return xs.filter(function(x){return x.get('name')===name;})[0]||xs[0]||null;}
+    function attr(cid,name){if(!cid)return null;var a=findObjs({_type:'attribute',_characterid:String(cid),name:String(name)})[0];if(a)return a;var low=String(name).toLowerCase();return (findObjs({_type:'attribute',_characterid:String(cid)})||[]).filter(function(x){return String(x.get('name')||'').toLowerCase()===low;})[0]||null;}
     var tickMemo=null;
     // Read-only values memoized for the current Roll20 event only; cleared on the next tick.
     function memo(key,fn){if(!tickMemo){tickMemo=Object.create(null);setTimeout(function(){tickMemo=null;},0);}if(!(key in tickMemo))tickMemo[key]=fn();return tickMemo[key];}

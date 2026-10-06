@@ -1,0 +1,124 @@
+/* Installation guard: disable old unguarded versions before installing. */
+if(typeof AD5FastFind!=='undefined'&&AD5FastFind) {
+    log('AD5FastFind: duplicate module skipped; keep one installed copy.');
+} else {
+/*
+ * AD5 FastFind 1.0.0 — per-event index for findObjs.
+ *
+ * Every AD5 module looks up the same attributes and tokens many times while one
+ * Roll20 event (a cast, a move, a turn change) is processed, and each Roll20
+ * findObjs call walks every object of that type in the campaign. For the current
+ * event only, FastFind keeps the attributes of each character and the graphics/paths
+ * of each page it was asked about (targeted native queries for the first two owners,
+ * one grouped scan of the whole type after that) and answers matching findObjs
+ * queries by filtering those lists with the live property values.
+ *
+ * Safety:
+ * - the index lives until the next tick (setTimeout 0), never across events;
+ * - any createObj, and any add/destroy event, clears it; removed objects are
+ *   filtered out via getObj;
+ * - a module that renames attributes must call AD5FastFind.invalidate() afterwards;
+ * - only plain string queries on known keys use the index, everything else
+ *   (numbers, booleans, other types, other options) goes to native findObjs;
+ * - "!ad5fast off" restores native findObjs, "!ad5fast on" / "!ad5fast" (status).
+ * Load order does not matter: modules resolve findObjs when they call it.
+ */
+var AD5FastFind=AD5FastFind||(function(){
+    'use strict';
+    var VERSION='1.0.0';
+    var nativeFind=findObjs,nativeCreate=createObj,enabled=true,installed=false;
+    var cache=null,stats={indexed:0,native:0,buckets:0};
+    var ATTR_KEYS={_type:1,type:1,_characterid:1,characterid:1,name:1};
+    var PAGE_KEYS={_type:1,type:1,_pageid:1,pageid:1,_subtype:1,subtype:1,layer:1,represents:1,name:1,controlledby:1};
+    function reset(){cache=null;}
+    // Per event and object type: the first owners (character/page) are fetched with
+    // targeted native queries; once an event touches GROUP_AFTER distinct owners, one
+    // native scan of the whole type is grouped by owner and serves the rest.
+    var GROUP_AFTER=3;
+    function bucket(type,field,id){
+        if(!cache){cache=Object.create(null);setTimeout(reset,0);}
+        var c=cache[type]||(cache[type]={owners:Object.create(null),count:0,grouped:false});
+        if(c.owners[id])return c.owners[id];
+        if(!c.grouped&&c.count+1>=GROUP_AFTER){
+            var groups=Object.create(null);stats.buckets++;
+            (nativeFind({_type:type})||[]).forEach(function(o){
+                var owner=String(o.get(field)||'');(groups[owner]||(groups[owner]=[])).push(o);
+            });
+            // Keep lists already handed out (and their name indexes) for this event.
+            Object.keys(c.owners).forEach(function(k){groups[k]=c.owners[k];});
+            c.owners=groups;c.grouped=true;
+        }
+        if(!c.owners[id]){
+            if(c.grouped)c.owners[id]=[];
+            else{var q={_type:type};q[field]=id;c.owners[id]=nativeFind(q)||[];c.count++;stats.buckets++;}
+        }
+        return c.owners[id];
+    }
+    // Lazy per-group index by lowercase name. Only narrows candidates; every
+    // candidate is still checked live, and an empty answer falls back to the group.
+    function byName(group,name){
+        if(!group.byName){
+            var idx=Object.create(null);
+            group.forEach(function(o){var n=String(o.get('name')||'').toLowerCase();(idx[n]||(idx[n]=[])).push(o);});
+            group.byName=idx;
+        }
+        return group.byName[String(name).toLowerCase()]||[];
+    }
+    function plan(props,options){
+        if(!enabled||!props||typeof props!=='object')return null;
+        if(options&&Object.keys(options).some(function(k){return k!=='caseInsensitive';}))return null;
+        var type=props._type!==undefined?props._type:props.type,keys=Object.keys(props),allowed,field,id;
+        if(type==='attribute'){allowed=ATTR_KEYS;field='_characterid';id=props._characterid!==undefined?props._characterid:props.characterid;}
+        else if(type==='graphic'||type==='path'){allowed=PAGE_KEYS;field='_pageid';id=props._pageid!==undefined?props._pageid:props.pageid;}
+        else return null;
+        if(typeof id!=='string'||!id)return null;
+        for(var i=0;i<keys.length;i++){if(!allowed[keys[i]]||typeof props[keys[i]]!=='string')return null;}
+        return {type:type,field:field,id:id,keys:keys};
+    }
+    function fastFind(props,options){
+        var p=plan(props,options);
+        if(!p){stats.native++;return nativeFind.apply(this,arguments);}
+        stats.indexed++;
+        // Type and owner (_characterid/_pageid) are read-only and define the bucket.
+        var ci=!!(options&&options.caseInsensitive),wanted=p.keys.filter(function(k){return !{_type:1,type:1,_characterid:1,characterid:1,_pageid:1,pageid:1}[k];}).map(function(k){var v=props[k];return {k:k,v:ci?v.toLowerCase():v};});
+        function matches(o){
+            for(var i=0;i<wanted.length;i++){
+                var have=o.get(wanted[i].k);have=have===undefined||have===null?'':String(have);
+                if((ci?have.toLowerCase():have)!==wanted[i].v)return false;
+            }
+            return !!getObj(p.type,o.id);
+        }
+        var group=bucket(p.type,p.field,p.id);
+        // Attribute names change only through explicit renames, which call invalidate().
+        if(p.type==='attribute'&&typeof props.name==='string'){
+            var hit=byName(group,props.name).filter(matches);
+            if(hit.length)return hit.length>1?group.filter(function(o){return hit.indexOf(o)>=0;}):hit;
+        }
+        return group.filter(matches);
+    }
+    function fastCreate(){reset();return nativeCreate.apply(this,arguments);}
+    function install(on){
+        try{
+            if(on){findObjs=fastFind;createObj=fastCreate;}
+            else{findObjs=nativeFind;createObj=nativeCreate;}
+            installed=on&&findObjs===fastFind;enabled=on;reset();
+        }catch(e){installed=false;enabled=false;log('AD5 FastFind: не удалось заменить findObjs: '+e.message);}
+        return installed;
+    }
+    install(true);
+    // Objects created or deleted by players/sheets: drop the per-event index (O(1)).
+    ['add:attribute','destroy:attribute','add:graphic','destroy:graphic','add:path','destroy:path'].forEach(function(ev){on(ev,reset);});
+    on('ready',function(){
+        log('AD5 FastFind '+VERSION+' '+(installed?'active':'INACTIVE (native findObjs)')+'.');
+        on('chat:message',function(msg){
+            if(msg.type!=='api'||!/^!ad5fast(?:\s|$)/i.test(msg.content||''))return;
+            if(!playerIsGM(msg.playerid))return;
+            var arg=String(msg.content).trim().split(/\s+/)[1]||'';
+            if(/^off$/i.test(arg))install(false);else if(/^on$/i.test(arg))install(true);
+            sendChat('AD5 FastFind','/w gm FastFind '+VERSION+': <b>'+(installed?'включён':'выключен')+'</b>. Индексных запросов: '+stats.indexed+', штатных: '+stats.native+', полных проходов: '+stats.buckets+'.',null,{noarchive:true});
+        });
+    });
+    return {version:VERSION,invalidate:reset,stats:function(){return JSON.parse(JSON.stringify(stats));},enabled:function(){return installed;}};
+}());
+
+}
