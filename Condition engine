@@ -3,7 +3,8 @@ if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine) {
     log('AD5ConditionEngine: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Condition Engine 1.2.9
+ * AD5 Condition Engine 1.2.10
+ * 1.2.10: performance: attribute lookups use one case-insensitive findObjs pass and per-event memoization.
  * Central combat-condition rules for the Arvenor Roll20 / Legacy D&D 5E stack.
  *
  * Phase 1 scope:
@@ -36,7 +37,7 @@ if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine) {
  */
 var AD5ConditionEngine=(function(){
     'use strict';
-    var VERSION='1.2.9',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
+    var VERSION='1.2.10',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
     var MARKERS={
         blinded:'bleeding-eye',charmed:'chained-heart',deafened:'half-haze',frightened:'screaming',
         grappled:'grab',incapacitated:'broken-shield',no_reactions:'interdiction',invisible:'ninja-mask',paralyzed:'padlock',
@@ -68,7 +69,11 @@ var AD5ConditionEngine=(function(){
     function num(v){if(v===null||v===undefined||String(v).trim()==='')return null;var n=Number(String(v).replace(',','.'));return Number.isFinite(n)?n:null;}
     function clampLevel(v){v=Math.floor(Number(v)||0);return Math.max(0,Math.min(6,v));}
     function isToken(t){return !!(t&&t.get&&String(t.get('_type')||'graphic')==='graphic'&&String(t.get('_subtype')||'token')==='token'&&!t.get('isdrawing'));}
-    function attr(cid,name){if(!cid)return null;var a=findObjs({_type:'attribute',_characterid:String(cid),name:String(name)})[0];if(a)return a;var low=String(name).toLowerCase();return (findObjs({_type:'attribute',_characterid:String(cid)})||[]).filter(function(x){return String(x.get('name')||'').toLowerCase()===low;})[0]||null;}
+    // One case-insensitive pass; an exact-case match still wins.
+    function attr(cid,name){if(!cid)return null;name=String(name);var xs=findObjs({_type:'attribute',_characterid:String(cid),name:name},{caseInsensitive:true})||[];return xs.filter(function(x){return x.get('name')===name;})[0]||xs[0]||null;}
+    var tickMemo=null;
+    // Read-only values memoized for the current Roll20 event only; cleared on the next tick.
+    function memo(key,fn){if(!tickMemo){tickMemo=Object.create(null);setTimeout(function(){tickMemo=null;},0);}if(!(key in tickMemo))tickMemo[key]=fn();return tickMemo[key];}
     function characterId(token){
         if(!isToken(token))return '';
         try{if(typeof AD5Transform!=='undefined'&&AD5Transform&&typeof AD5Transform.originalActorId==='function'){var original=AD5Transform.originalActorId(token);if(original)return String(original);}}catch(ignore){}
@@ -79,8 +84,10 @@ var AD5ConditionEngine=(function(){
     function exhaustionAttrForToken(token){var cid=characterId(token);return cid&&attr(cid,'exhaustion_level');}
     function exhaustionLevel(tokenOrId){
         var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;if(!isToken(token))return 0;
-        var a=exhaustionAttrForToken(token),v=a&&num(a.get('current'));if(v!==null)return clampLevel(v);
-        var ov=root().tokenExhaustion[token.id];return ov===undefined?0:clampLevel(ov);
+        return memo('exhaustion:'+token.id,function(){
+            var a=exhaustionAttrForToken(token),v=a&&num(a.get('current'));if(v!==null)return clampLevel(v);
+            var ov=root().tokenExhaustion[token.id];return ov===undefined?0:clampLevel(ov);
+        });
     }
     function setStatusMarker(token,marker,value){
         if(!isToken(token)||!marker)return false;var list=String(token.get('statusmarkers')||'').split(',').filter(Boolean),out=[];
@@ -194,7 +201,7 @@ var AD5ConditionEngine=(function(){
     function allTokens(){return (findObjs({_type:'graphic',_subtype:'token'})||[]).filter(isToken);}
     function syncCharacter(cid){if(!cid||syncing[cid])return;syncing[cid]=true;try{allTokens().forEach(function(t){if(characterId(t)===String(cid)||representedId(t)===String(cid))syncToken(t);});}finally{delete syncing[cid];}}
     function setExhaustion(token,level){
-        if(!isToken(token)||!representedId(token))throw new Error('Нужен токен с листом персонажа.');level=clampLevel(level);var cid=characterId(token),a=cid&&attr(cid,'exhaustion_level');
+        if(!isToken(token)||!representedId(token))throw new Error('Нужен токен с листом персонажа.');level=clampLevel(level);tickMemo=null;var cid=characterId(token),a=cid&&attr(cid,'exhaustion_level');
         if(a){a.set('current',level);syncCharacter(cid);return level;}
         // NPC Legacy sheet has no visible exhaustion scale. Keep a token-local override
         // instead of making every copy of a shared NPC sheet exhausted together.

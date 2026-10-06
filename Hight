@@ -3,7 +3,8 @@ if(typeof AD5Height!=='undefined'&&AD5Height) {
     log('AD5Height: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Height Engine 1.4.8
+ * AD5 Height Engine 1.4.11
+ * 1.4.11: sizeProfile memoized per event (performance).
  * Вертикальная модель Roll20 / AD5.
  *
  * Правила:
@@ -29,7 +30,7 @@ if(typeof AD5Height!=='undefined'&&AD5Height) {
  */
 var AD5Height=(function(){
     'use strict';
-    var VERSION='1.4.10',SCRIPT='AD5 Height',MARKER_NAME='fluffy-wing',LEGACY_MARKER_NAMES=['Fluffy-wnig','fluffy-wnig'],listeners=[],falling=Object.create(null),syncingMarkers=Object.create(null);
+    var VERSION='1.4.11',SCRIPT='AD5 Height',MARKER_NAME='fluffy-wing',LEGACY_MARKER_NAMES=['Fluffy-wnig','fluffy-wnig'],listeners=[],falling=Object.create(null),syncingMarkers=Object.create(null);
 
     function root(){
         if(!state.AD5Height||typeof state.AD5Height!=='object')state.AD5Height={};
@@ -231,9 +232,16 @@ var AD5Height=(function(){
         if(squares>=2)return 'large';
         return 'medium';
     }
+    var tickMemo=null;
+    // Read-only values memoized for the current Roll20 event only; cleared on the next tick.
+    function memo(key,fn){if(!tickMemo){tickMemo=Object.create(null);setTimeout(function(){tickMemo=null;},0);}if(!(key in tickMemo))tickMemo[key]=fn();return tickMemo[key];}
     function sizeProfile(tokenOrId){
         var t=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;
         if(!isToken(t))return SIZE_RULES.medium;
+        var p=memo('size:'+t.id+':'+t.get('represents')+':'+t.get('width')+'x'+t.get('height'),function(){return sizeProfileNow(t);});
+        return {key:p.key,label:p.label,capDice:p.capDice,multiplier:p.multiplier,raw:p.raw,inferred:p.inferred};
+    }
+    function sizeProfileNow(t){
         var cid=String(t.get('represents')||''),raw=attrValue(cid,['npc_size','size','character_size']),key=sizeKey(raw)||inferredSizeKey(t)||'medium',base=SIZE_RULES[key]||SIZE_RULES.medium;
         return {key:base.key,label:base.label,capDice:base.capDice,multiplier:base.multiplier,raw:raw||'',inferred:!sizeKey(raw)};
     }

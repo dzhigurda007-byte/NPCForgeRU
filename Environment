@@ -3,7 +3,8 @@ if(typeof AD5Environment!=='undefined'&&AD5Environment) {
     log('AD5Environment: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Environment 1.6.6
+ * AD5 Environment 1.6.7
+ * 1.6.7: body height from sheet memoized per event (performance).
  * Static and spell-created combat-map environment for Roll20 AD5.
  *
  * Environment types (case-insensitive in spell/range syntax):
@@ -72,7 +73,7 @@ if(typeof AD5Environment!=='undefined'&&AD5Environment) {
  */
 var AD5Environment=(function(){
     'use strict';
-    var VERSION='1.6.6',SCRIPT='AD5 Environment',HEIGHT_HOOKED=false,BROWN='#8b4513',HEIGHT_LAYER='gmlayer',pendingTokenMoves=Object.create(null),forcedMoveGuards=Object.create(null),forcedMoveSequence=0;
+    var VERSION='1.6.7',SCRIPT='AD5 Environment',HEIGHT_HOOKED=false,BROWN='#8b4513',HEIGHT_LAYER='gmlayer',pendingTokenMoves=Object.create(null),forcedMoveGuards=Object.create(null),forcedMoveSequence=0;
     var COVER_RULES={quarter:{key:'quarter',label:'1/4 укрытия',ac:1,dex:1},half:{key:'half',label:'1/2 укрытия',ac:2,dex:2},threeQuarter:{key:'threeQuarter',label:'3/4 укрытия',ac:5,dex:5},full:{key:'full',label:'полное укрытие',ac:0,dex:0,full:true}};
     var TYPE_LABELS={phys:'ФИЗ',zaslow:'ЗАСЛОУ',zashigh:'ЗАСХАЙ',solid:'СОЛИД'};
     var POSTURE_MARKERS={crouch:'027-Blindsiding',lie:'302-Ambushing'};
@@ -170,7 +171,13 @@ var AD5Environment=(function(){
     }
     function postureOf(token){if(hasTokenMarker(token,POSTURE_MARKERS.lie))return 'lie';if(hasTokenMarker(token,POSTURE_MARKERS.crouch))return 'crouch';return 'stand';}
     function postureMultiplier(token){var p=postureOf(token);return p==='lie'?0.25:(p==='crouch'?0.5:1);}
+    var tickMemo=null;
+    // Read-only values memoized for the current Roll20 event only; cleared on the next tick.
+    function memo(key,fn){if(!tickMemo){tickMemo=Object.create(null);setTimeout(function(){tickMemo=null;},0);}if(!(key in tickMemo))tickMemo[key]=fn();return tickMemo[key];}
     function baseBodyHeightFromSheet(token){
+        return memo('height:'+(token&&token.id)+':'+(token&&token.get('represents'))+':'+(token&&token.get('width'))+'x'+(token&&token.get('height')),function(){return baseBodyHeightFromSheetNow(token);});
+    }
+    function baseBodyHeightFromSheetNow(token){
         var cid=String(token&&token.get('represents')||''),parts=[];
         ['flaws','npc_flaws','weaknesses','npc_weaknesses'].forEach(function(n){var v=attrValue(cid,[n]);if(v)parts.push(v);});
         var text=decodeText(parts.join('\n')),m=/(?:^|[\s,;])(?:рост|height)\s*[-:=]\s*(\d+(?:[.,]\d+)?)\s*(?:фт\.?|фут(?:а|ов)?|ft\.?|feet|foot)?/i.exec(text);

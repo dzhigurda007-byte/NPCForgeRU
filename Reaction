@@ -3,7 +3,8 @@ if(typeof AD5Reactions!=='undefined'&&AD5Reactions) {
     log('AD5Reactions: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Reactions v1.6.2 — Generic Resource Binding / Countershot / Sheet First
+ * AD5 Reactions v1.6.8 — Generic Resource Binding / Countershot / Sheet First
+ * 1.6.8: performance: attribute lookups use one case-insensitive findObjs pass and per-event memoization.
  * Companion for AD5 4.3.70 + AD5 Movement 2.3.5 + AD5 Condition Engine 1.2.2 + AD5 Visibility 1.0.0 / Legacy D&D 5E by Roll20.
  *
  * Design:
@@ -34,7 +35,7 @@ if(typeof AD5Reactions!=='undefined'&&AD5Reactions) {
 var AD5Reactions = (function(){
     'use strict';
 
-    var VERSION='1.6.7', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
+    var VERSION='1.6.8', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
     var opportunityPending=Object.create(null);
     var runtimePending=Object.create(null), seq=0, recentMove=Object.create(null), lastAreaCheck=null, movementHookRegistered=false, featherCollecting=Object.create(null), reactionRowCache=Object.create(null);
     // 1.4.2 Fast Fall: cache Feather Fall card discovery per character.
@@ -61,14 +62,17 @@ var AD5Reactions = (function(){
     function norm(s){var value=String(s==null?'':s).replace(/<[^>]*>/g,' ');try{if(typeof AD5Syntax!=='undefined'&&AD5Syntax&&typeof AD5Syntax.normalize==='function')return AD5Syntax.normalize(value);}catch(ignoreSyntax){}return value.toLocaleLowerCase('ru-RU').replace(/ё/g,'е').replace(/[‐‑‒–—―]/g,'-').replace(/\s+/g,' ').trim();}
     function enabled(v){return /^(?:1|on|true|yes|да)$/i.test(String(v==null?'':v).trim());}
     function partyPageId(){return String(Campaign().get('playerpageid')||'');}
+    // One case-insensitive pass; an exact-case match still wins.
     function attr(cid,name){
-        var a=findObjs({_type:'attribute',_characterid:String(cid),name:String(name)})[0];
-        if(a)return a;
-        var low=String(name).toLowerCase();
-        return findObjs({_type:'attribute',_characterid:String(cid)}).filter(function(x){return String(x.get('name')||'').toLowerCase()===low;})[0]||null;
+        name=String(name);
+        var xs=findObjs({_type:'attribute',_characterid:String(cid),name:name},{caseInsensitive:true})||[];
+        return xs.filter(function(x){return x.get('name')===name;})[0]||xs[0]||null;
     }
+    var tickMemo=null;
+    // Read-only values memoized for the current Roll20 event only; cleared on the next tick.
+    function memo(key,fn){if(!tickMemo){tickMemo=Object.create(null);setTimeout(function(){tickMemo=null;},0);}if(!(key in tickMemo))tickMemo[key]=fn();return tickMemo[key];}
     function attrVal(cid,name){var a=attr(cid,name);return a?String(a.get('current')||'').trim():'';}
-    function characterIsNpc(cid){var a=cid&&attr(cid,'npc');return !!(a&&enabled(a.get('current')));}
+    function characterIsNpc(cid){return !!cid&&memo('npc:'+cid,function(){var a=attr(cid,'npc');return !!(a&&enabled(a.get('current')));});}
     function isNpc(token){return !!(token&&characterIsNpc(token.get('represents')));}
     function controllers(token){
         var ids=[],cid=token&&token.get('represents'),c=cid&&getObj('character',cid);
@@ -281,7 +285,7 @@ var AD5Reactions = (function(){
         return 1;
     }
     function reactionLimitForToken(token){
-        if(!token||!token.get)return 1;var cid=String(token.get('represents')||''),explicit=Number(attrVal(cid,'ad5_reaction_max'))||0,max=explicit>0?explicit:1;
+        if(!token||!token.get)return 1;var cid=String(token.get('represents')||''),explicit=Number(memo('rmax:'+cid,function(){return attrVal(cid,'ad5_reaction_max');}))||0,max=explicit>0?explicit:1;
         try{reactionsForToken(token).forEach(function(r){max=Math.max(max,Number(r.reactionLimit)||1);});}catch(ignoreLimitScan){}
         return Math.max(1,Math.min(20,Math.floor(max)));
     }

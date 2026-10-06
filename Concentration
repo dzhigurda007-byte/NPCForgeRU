@@ -2,7 +2,8 @@
 if(typeof AD5Concentration!=='undefined'&&AD5Concentration) {
     log('AD5Concentration: duplicate module skipped; keep one installed copy.');
 } else {
-/* AD5 Concentration 1.2.5
+/* AD5 Concentration 1.2.9
+ * 1.2.9: NPC flag lookup memoized per event (performance).
  * Concentration manager for AD5 / D&D 5E by Roll20 (2014).
  * Detection:
  *   - standalone token "КОН" in Range/Distance;
@@ -16,7 +17,7 @@ if(typeof AD5Concentration!=='undefined'&&AD5Concentration) {
  */
 var AD5Concentration=(function(){
     'use strict';
-    var VERSION='1.2.8',SCRIPT='AD5 Concentration',SEQ=0;
+    var VERSION='1.2.9',SCRIPT='AD5 Concentration',SEQ=0;
     var FALLBACK_MARKERS=['overdrive','aura','stopwatch','white-tower'];
     var ACTION_NAME=Array(21).join('\u200b')+'AD5 · Снять концентрацию',ACTION_CMD='!ad5conc endselected',runtimeTurnKey='';
 
@@ -65,7 +66,10 @@ var AD5Concentration=(function(){
     function partyPageId(){return Campaign().get('playerpageid')||'';}
     function attr(cid,name){var a=findObjs({_type:'attribute',_characterid:cid,name:name})[0];return a||null;}
     function numeric(v){if(v===undefined||v===null||String(v).trim()==='')return null;var n=Number(String(v).trim().replace(',','.'));if(Number.isFinite(n))return n;var m=String(v).match(/[-+]?\d+(?:[.,]\d+)?/);return m?Number(m[0].replace(',','.')):null;}
-    function npcCharacter(cid){var a=attr(cid,'npc');return !!(a&&String(a.get('current'))==='1');}
+    var tickMemo=null;
+    // Read-only values memoized for the current Roll20 event only; cleared on the next tick.
+    function memo(key,fn){if(!tickMemo){tickMemo=Object.create(null);setTimeout(function(){tickMemo=null;},0);}if(!(key in tickMemo))tickMemo[key]=fn();return tickMemo[key];}
+    function npcCharacter(cid){return memo('npc:'+cid,function(){var a=attr(cid,'npc');return !!(a&&String(a.get('current'))==='1');});}
     function playerControlled(cid){var c=getObj('character',cid);return !!(c&&String(c.get('controlledby')||'').split(',').some(function(x){x=String(x).trim();return x==='all'||(x&&getObj('player',x)&&!playerIsGM(x));}));}
     function combatTokens(cid){var page=partyPageId();if(!page)return [];return findObjs({_type:'graphic',_subtype:'token',_pageid:page,layer:'objects',represents:cid}).filter(function(t){var hp=String(t.get('bar1_value')==null?'':t.get('bar1_value')).trim();return !t.get('isdrawing')&&String(t.get('name')||'').trim()&&hp!==''&&Number.isFinite(Number(hp));});}
     function resolveToken(actorId,sourceTokenId,selected){
