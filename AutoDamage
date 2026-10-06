@@ -2,6 +2,29 @@
 if(typeof AD5!=='undefined'&&AD5) {
     log('AD5: duplicate module skipped; keep one installed copy.');
 } else {
+
+// Versioned description envelope. Only the [AD5] body is executable; other
+// prose, including PHB examples resembling directives, never reaches a parser.
+var AD5Text=(function(){
+    function text(v){return String(v==null?'':v).replace(/<br\s*\/?>|<\/(?:p|div)>/gi,'\n').replace(/&nbsp;|&#160;/gi,' ');}
+    function split(v){
+        var raw=text(v),start=/^\s*\[AD5\]\s*$/gim,end=/^\s*\[\/AD5\]\s*$/gim,a=[],b=[],m;
+        while((m=start.exec(raw)))a.push({i:m.index,end:start.lastIndex});
+        while((m=end.exec(raw)))b.push({i:m.index,end:end.lastIndex});
+        if(!a.length&&!b.length)return {structured:false,mechanics:raw,narrative:''};
+        if(a.length!==1||b.length!==1||b[0].i<a[0].end)throw Error('Описание: нужен ровно один закрытый блок [AD5] ... [/AD5].');
+        var tail=raw.slice(b[0].end),binding=/^\s*AD5-СВЯЗЬ:\s*(\S+)\s+(repeating_spell-(?:cantrip|[0-9])_\S+_)\s*$/im.exec(tail);
+        return {structured:true,mechanics:raw.slice(a[0].end,b[0].i).trim(),narrative:raw.slice(0,a[0].i).trim(),actor:binding?binding[1]:'',prefix:binding?binding[2]:''};
+    }
+    function mechanics(v){return split(v).mechanics;}
+    function compose(narrative,handler,cid,prefix){
+        if(/\[\/?AD5\]/i.test(String(narrative||'')))throw Error('Нарративное описание не должно содержать границы [AD5].');
+        if(/\[\/?AD5\]/i.test(String(handler||'')))throw Error('Обработчик не должен содержать вложенные границы [AD5].');
+        return String(narrative||'').trim()+'\n\n[AD5]\n'+String(handler||'').trim()+'\n[/AD5]'+(cid&&prefix?'\nAD5-СВЯЗЬ: '+cid+' '+prefix:'');
+    }
+    return {split:split,mechanics:mechanics,compose:compose,structured:function(v){return /\[\/?AD5\]/i.test(String(v||''));}};
+}());
+
 // Bounded, coalescing background work. Never scans objects in startup add events.
 var AD5Background = (function(){
     var jobs=Object.create(null),keys=[],head=0,timer=null,ready=false,running=false;
@@ -25,7 +48,7 @@ var AD5Background = (function(){
     return {put:put,isReady:function(){return ready;}};
 }());
 /*
-AutoDamage 4.3.130 / NPC Forge RU 2.7.3 — «шепот звезд».
+AutoDamage 4.3.142 / NPC Forge RU 2.7.4 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Обычная атака игрока -> Target AD5 на карте -> штатные запросы преимущества/помехи/доп. урона Roll20 -> бросок -> урон и крит. NPC/Transform сохраняют штатный Target Roll20. AutoFront заранее держит боевые токены на переднем плане. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -48,7 +71,16 @@ hp листа используется однократно как началь�
 Ручной спасбросок игрока из чат-кнопки публикует только итог и статус УСПЕХ/ПРОВАЛ; СЛ игрокам не показывается.
 Поле «Описание» способности является источником исходов спасброска. Элементы разделяются запятыми: ПРВ: ... для провала, УСП: ... для успеха. Таймеры и маркеры ведёт отдельный AD5 Effect Turns. Если УСП отсутствует, успешный спас автоматически означает 0 урона и 0 эффектов.
 
-Замените старую версию AD5 этим файлом. Автоматическая запись/миграция строк листа отключена; ремонт выполняется только явными командами.
+Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
+4.3.142: Native Spell Attack transport + report fix. Spell Library 2.3.14 rebuilds imported ATTACK links through the Legacy sheet worker instead of API-created repeating_attack rows. Core report no longer prints “Без броска атаки” for a real attack merely because it had no dynamic attack modifiers.
+4.3.141: Native Spell Link + Chat Loop-Safe. Linked Spellbook attack hydration now mirrors Legacy fields (spell ability, damage ability, separate dmg/dmg2 flags, native save DC). AD5-generated attack reroll cards carry ad5internalroll=1 and are ignored by the top-level chat listener, preventing a synthetic attack card from re-entering AD5.
+4.3.140: Attribute Loop-Safe. Удалены add/change:attribute подписки автоматического патча связанных Spell ATTACK-строк; импорт/ремонт выполняют Spell Library, !ad5 spells sync и точечный self-repair при фактическом применении. Это исключает участие AD5 в каскаде Sheet Worker add:attribute.
+4.3.139: Linked Spell ATTACK transport repair. После программного импорта механического заклинания AD5 теперь восстанавливает нативную связь repeating_spell → repeating_attack даже если Legacy Sheet Worker создал пустую строку: spellid/spelllevel, имя, дистанция, описание, атака, урон и спасбросок гидратируются из живой Spellbook-строки до патча rollbase. Удалённая связанная строка может быть пересоздана Spell Library без удаления самого заклинания.
+4.3.135: Save outcome + forced movement hardening. Режим урона спасброска теперь определяется ядром AD5 из ПРВ/УСП и штатного поля «При успехе»; это устраняет потерю половины урона у Волны грома и подобных заклинаний даже при старой/неполной карточке. ТОЛЧ/ТЯГ восстанавливает физический токен источника из area/multi draft и выполняется только из соответствующей ветки исхода спасброска.
+4.3.136: Area forced-movement snapshot. ТОЛЧ/ТЯГ теперь разбирается и сохраняется в area/multi draft в момент сотворения из актуальной repeating_spell записи, до фильтрации карточки по отдельным целям. При разрешении каждой цели используется сохранённая ветка ПРВ/УСП и точный sourceToken Areas; это исправляет Волну грома, у которой урон разрешался, но директива ТОЛЧ терялась в per-target transport.
+4.3.137: Auto-projectile / Magic Missile fix. Linked ATTACK Spellbook rows now hydrate the live spell damage formula/type into dedicated ad5spell* fields before Multi Resolver runs, so projectile spells no longer depend on SpellCard-only hidden fields or a redundant СНРУРОН line. СНРПОП: АВТО is resolved as direct damage with no d20, no AC check and no hit/Shield reaction. The old special Magic Missile -> Shield bridge is disabled by campaign rule.
+4.3.133: Unified Spell Output policy. Любая Spellbook-запись, которую AD5 считает механической (атака/спасбросок/урон/лечение, область/несколько целей или поддерживаемый AD5-синтаксис), должна работать через ВЫВОД=Атака и связанную repeating_attack-строку. Старый автоперевод МУЛЬТИ/DSL в SPELLCARD отключён; native SpellCard остаётся только совместимым входом для старых строк и для чисто нарративных карточек. Публичный AD5.spellbook.isMechanicalDefinition используется Spell Library как единый классификатор политики вывода.
+4.3.132: Target Picker repair. Для одиночных заклинаний AD5 снова автоматически патчит только точную связанную repeating_attack-строку при создании/изменении Roll20 spellid/rollbase, без сканирования листа и без запуска общей миграции. Если нативный @{target} всё же отсутствует в уже брошенной карточке, вместо списка всех токенов показывается одна кнопка «Выбрать цель», которая запускает штатный Roll20 target picker; одновременно AD5 пытается самовосстановить именно эту связанную строку для следующих применений.
 4.3.130: Spellbook Range+Target geometry fix: linked repeating_attack rows parse area/multi geometry from the LIVE spell Range + Target fields, so Self cube/cone and persistent «обл» zones are no longer downgraded to single/self targets. Attack-event classification also treats explicit Spellbook Melee/Ranged metadata and ordinary <=10-ft non-long attack ranges correctly, restoring melee-hit retaliation such as Armor of Agathys.
 4.3.62: environmental/fall damage is a system event: PC damage skips attack-row hydration and reports the committed HP/temp-HP transaction back to Height Engine.
 4.3.65: area templates without an explicit vertical height keep height=null; AD5 Areas resolves it from the caster's standing/base character height instead of the old fixed 5 ft.
@@ -725,7 +757,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.130', diagnostics = [], debug = false;
+    var VERSION = '4.3.142', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -1263,7 +1295,8 @@ var AD5 = (function () {
                 castingTime:spellField(cid,prefix,'spellcastingtime'),
                 spellLevel:(function(){var m=/^repeating_spell-(cantrip|npc|[0-9])_/i.exec(String(prefix||''));return m?(m[1]==='cantrip'?0:(/^\d+$/.test(m[1])?Number(m[1]):null)):null;}()),
                 range:spellField(cid,prefix,'spellrange'),target:spellField(cid,prefix,'spelltarget'),
-                duration:spellField(cid,prefix,'spellduration'),description:spellField(cid,prefix,'spelldescription'),
+                duration:spellField(cid,prefix,'spellduration'),description:AD5Text.mechanics(spellField(cid,prefix,'spelldescription')),
+                fullDescription:spellField(cid,prefix,'spelldescription'),structured:AD5Text.structured(spellField(cid,prefix,'spelldescription')),
                 higher:spellField(cid,prefix,'spellathigherlevels'),
                 higherDieCount:spellField(cid,prefix,'spellhldie'),higherDieType:spellField(cid,prefix,'spellhldietype'),
                 higherBonus:spellField(cid,prefix,'spellhlbonus'),output:spellField(cid,prefix,'spelloutput'),
@@ -1271,8 +1304,19 @@ var AD5 = (function () {
                 attack:spellField(cid,prefix,'spellattack'),damage1:spellField(cid,prefix,'spelldamage'),
                 damageType1:spellField(cid,prefix,'spelldamagetype'),damage2:spellField(cid,prefix,'spelldamage2'),
                 damageType2:spellField(cid,prefix,'spelldamagetype2'),healing:spellField(cid,prefix,'spellhealing'),
+                spellAbility:spellField(cid,prefix,'spell_ability'),damageMod:spellField(cid,prefix,'spelldmgmod'),
+                damageProgression:spellField(cid,prefix,'spell_damage_progression'),includedesc:spellField(cid,prefix,'includedesc'),
                 save:spellField(cid,prefix,'spellsave'),saveSuccess:spellField(cid,prefix,'spellsavesuccess'),
-                attackId:spellField(cid,prefix,'spellattackid'),selfApply:spellField(cid,prefix,'ad5self'),nativeCard:spellField(cid,prefix,'ad5nativecard')
+                attackId:spellField(cid,prefix,'spellattackid'),selfApply:spellField(cid,prefix,'ad5self'),nativeCard:spellField(cid,prefix,'ad5nativecard'),
+                secondary:spellField(cid,prefix,'ad5secondary'),secondaryTrigger:spellField(cid,prefix,'ad5secondarytrigger'),
+                secondaryOrigin:spellField(cid,prefix,'ad5secondaryorigin'),secondaryArea:spellField(cid,prefix,'ad5secondaryarea'),
+                secondaryTarget:spellField(cid,prefix,'ad5secondarytarget'),secondaryName:spellField(cid,prefix,'ad5secondaryname'),
+                secondaryHidden:spellField(cid,prefix,'ad5secondaryhidden'),secondaryDamage1:spellField(cid,prefix,'ad5secondarydmg1'),
+                secondaryDamageType1:spellField(cid,prefix,'ad5secondarydmg1type'),secondaryDamage2:spellField(cid,prefix,'ad5secondarydmg2'),
+                secondaryDamageType2:spellField(cid,prefix,'ad5secondarydmg2type'),secondarySave:spellField(cid,prefix,'ad5secondarysave'),
+                secondarySaveAttr:spellField(cid,prefix,'ad5secondarysaveattr'),secondarySaveDC:spellField(cid,prefix,'ad5secondarysavedc'),
+                secondarySaveDesc:spellField(cid,prefix,'ad5secondarysavedesc'),secondaryExcludePrimary:spellField(cid,prefix,'ad5secondaryexcludeprimary'),
+                secondaryDescription:spellField(cid,prefix,'ad5secondarydesc')
             };
     }
     function spellRows(cid){
@@ -1449,6 +1493,7 @@ var AD5 = (function () {
     }
     function enrichSpellFields(msg,f,cid){
         var meta=spellMetaForFields(msg,f,cid);if(!meta)return null;
+        if(active(f,'ad5structured')&&(!sameUserText(meta.name,attackName(f))))throw Error('Привязка не соответствует названию заклинания. Выполните !ad5 spells bind.');
         f.ad5spellprefix=meta.prefix;
         f.ad5spellname=meta.name;
         // SPELLBOOK AUTHORITATIVE: copied repeating_attack/rollbase metadata is
@@ -1460,13 +1505,48 @@ var AD5 = (function () {
         if(meta.range!==undefined){f.range=String(meta.range||'');f.distance=String(meta.range||'');}
         if(meta.target!==undefined)f.target=String(meta.target||'');
         if(meta.duration!==undefined){f.duration=String(meta.duration||'');f.spellduration=String(meta.duration||'');}
-        if(meta.description!==undefined){f.description=String(meta.description||'');f.desc=String(meta.description||'');}
+        if(meta.structured&&/\?\{/.test(meta.description)&&active(f,'ad5structured'))meta.description=f.description;
+        if(meta.description!==undefined&&/\{DC\}/.test(meta.description)){var liveDc=payloadAutoSaveDc(cid);if(!Number.isFinite(liveDc))throw Error('Не задана СЛ заклинаний в листе');meta.description=meta.description.replace(/\{DC\}/g,String(liveDc));}
+        if(meta.description!==undefined){f.description=String(meta.description||'').replace(/^\s*AD5ПОВ:[^\n]*(?:\n|$)/gim,'');f.desc=f.description;meta.description=f.description;}
         var isConcentration=active({x:meta.concentration},'x');
         f.concentration=isConcentration?'1':'0';
         f.spellconcentrationflag=isConcentration?'1':'0';
         if(meta.saveSuccess!==undefined)f.savedesc=String(meta.saveSuccess||'');
-        if(meta.damageType1!==undefined&&String(meta.damageType1||'').trim())f.dmg1type=String(meta.damageType1);
-        if(meta.damageType2!==undefined&&String(meta.damageType2||'').trim())f.dmg2type=String(meta.damageType2);
+        // 4.3.137: linked ATTACK output must still expose the LIVE Spellbook
+        // definition to mechanics that need the original formula more than once
+        // (Multi Resolver projectiles, pools, secondary effects).  The visible
+        // repeating_attack dmg1/dmg2 fields may already be rolled inline values,
+        // therefore keep definition data in dedicated ad5spell* transport fields.
+        if(meta.attack!==undefined)f.ad5spellattack=String(meta.attack||'');
+        if(meta.damage1!==undefined)f.ad5spelldamage=String(meta.damage1||'');
+        if(meta.damageType1!==undefined)f.ad5spelldamagetype=String(meta.damageType1||'');
+        if(meta.damage2!==undefined)f.ad5spelldamage2=String(meta.damage2||'');
+        if(meta.damageType2!==undefined)f.ad5spelldamagetype2=String(meta.damageType2||'');
+        if(meta.healing!==undefined)f.ad5spellhealing=String(meta.healing||'');
+        if(meta.save!==undefined)f.ad5spellsave=String(meta.save||'');
+        if(meta.saveSuccess!==undefined)f.ad5spellsavesuccess=String(meta.saveSuccess||'');
+        // 4.3.138: generic secondary-area metadata lives on the authoritative
+        // repeating_spell row. Linked ATTACK rows only transport it at cast time;
+        // no library lookup or stale repeating_attack copy is trusted.
+        if(meta.secondary!==undefined)f.ad5secondary=String(meta.secondary||'');
+        if(meta.secondaryTrigger!==undefined)f.ad5secondarytrigger=String(meta.secondaryTrigger||'');
+        if(meta.secondaryOrigin!==undefined)f.ad5secondaryorigin=String(meta.secondaryOrigin||'');
+        if(meta.secondaryArea!==undefined)f.ad5secondaryarea=String(meta.secondaryArea||'');
+        if(meta.secondaryTarget!==undefined)f.ad5secondarytarget=String(meta.secondaryTarget||'');
+        if(meta.secondaryName!==undefined)f.ad5secondaryname=String(meta.secondaryName||'');
+        if(meta.secondaryHidden!==undefined)f.ad5secondaryhidden=String(meta.secondaryHidden||'');
+        if(meta.secondaryDamage1!==undefined)f.ad5secondarydmg1=String(meta.secondaryDamage1||'');
+        if(meta.secondaryDamageType1!==undefined)f.ad5secondarydmg1type=String(meta.secondaryDamageType1||'');
+        if(meta.secondaryDamage2!==undefined)f.ad5secondarydmg2=String(meta.secondaryDamage2||'');
+        if(meta.secondaryDamageType2!==undefined)f.ad5secondarydmg2type=String(meta.secondaryDamageType2||'');
+        if(meta.secondarySave!==undefined)f.ad5secondarysave=String(meta.secondarySave||'');
+        if(meta.secondarySaveAttr!==undefined)f.ad5secondarysaveattr=String(meta.secondarySaveAttr||'');
+        if(meta.secondarySaveDC!==undefined)f.ad5secondarysavedc=String(meta.secondarySaveDC||'');
+        if(meta.secondarySaveDesc!==undefined)f.ad5secondarysavedesc=String(meta.secondarySaveDesc||'');
+        if(meta.secondaryExcludePrimary!==undefined)f.ad5secondaryexcludeprimary=String(meta.secondaryExcludePrimary||'');
+        if(meta.secondaryDescription!==undefined)f.ad5secondarydesc=String(meta.secondaryDescription||'');
+        if(meta.damageType1!==undefined&&String(meta.damageType1||'').trim()&&!/\?\{/.test(meta.damageType1))f.dmg1type=String(meta.damageType1);
+        if(meta.damageType2!==undefined&&String(meta.damageType2||'').trim()&&!/\?\{/.test(meta.damageType2))f.dmg2type=String(meta.damageType2);
         return meta;
     }
 
@@ -1490,6 +1570,7 @@ var AD5 = (function () {
         return m?Number(m[1]):null;
     }
     function normalizeSpellLevel(n){
+        if(n===null||n===undefined||String(n).trim()==='')return null;
         n=Number(n);
         if(!Number.isFinite(n))return null;
         n=Math.floor(n);
@@ -1505,6 +1586,7 @@ var AD5 = (function () {
             if(pm)base=pm[1].toLowerCase()==='cantrip'?0:Number(pm[1]);
         }
         var cast=null,source='unknown';
+        if(base!==null&&/^\d+$/.test(String(f.ad5upcastdelta||''))){cast=normalizeSpellLevel(base+Number(f.ad5upcastdelta));source='native-shared-query';}
         var candidates=[
             ['selected',f.ad5castlevel],
             ['explicit-field',f.ad5spellcastlevel],
@@ -1680,7 +1762,12 @@ var AD5 = (function () {
         return ' {{ad5dsl=1}} {{ad5baselevel='+base+'}} {{ad5castlevel='+spellDslCastQuery(base)+'}}';
     }
     function spellPrefersNativeCard(row){
-        row=row||{};return isMultiResolverDescription(row.description)||/^(?:1|true|on|yes|да)$/i.test(String(row.nativeCard||'').trim())||spellDslExplicitNativeCard(row.description);
+        // 4.3.133: mechanical Spellbook rows are standardized on Output=Attack.
+        // Keep this predicate only for backwards-compatible handling of genuinely
+        // narrative/non-mechanical cards that explicitly request native SpellCard.
+        row=row||{};
+        if(row.structured||/^attack$/i.test(row.output||'')||spellDefinitionMechanical(row))return false;
+        return /^(?:1|true|on|yes|да)$/i.test(String(row.nativeCard||'').trim())||spellDslExplicitNativeCard(row.description);
     }
 
     function npcSpellMetaForFields(f){
@@ -1724,7 +1811,8 @@ var AD5 = (function () {
     }
 
     function spellHasAd5Syntax(text){
-        var t=normalizeUserText(text);
+        var t=AD5Text.mechanics(text).toLowerCase().replace(/ё/g,'е');
+        if(/(?:^|[\n;])\s*AD5ЭФФ\s*:/i.test(AD5Text.mechanics(text)))return true;
         return /(?:^|[\n.;])\s*(?:прв|усп|каст|начк|начи|начт|кнци|кнцт|кони|конт|окон|освоб|вход|выход|облн|облк|пасс|при входе|каждый ход|мув)\s*:/.test(t)||
             /(?:^|[\n.;])\s*(?:мульти|multi|снркол|снрвыше|снрпоп|снрурон|пул|пулвыше|пулзнач|пулэфф|целей|targets|длитяч|длительностьпокругу|durationbylevel|вкр|vkr|попад|попадусл|попадурон|попадспас|попадэфф|попадобл|пока|снять|расх|до|услэфф)\s*:/.test(t)||
             spellDslHasVariables(text)||
@@ -1734,10 +1822,19 @@ var AD5 = (function () {
     function spellValueActive(value){
         var v=String(value==null?'':value).trim();return !!v&&!/^(?:0|false|off|no|none|нет|-)$/i.test(v);
     }
-    function spellMechanical(cid,row){
+    function spellDefinitionMechanical(row){
+        row=row||{};
         var dist=parseDistanceSpec((row.range||'')+' '+(row.target||''));
-        return !!(spellValueActive(row.attack)||spellValueActive(row.damage1)||spellValueActive(row.damage2)||spellValueActive(row.healing)||spellValueActive(row.save)||dist.area||dist.targets||
-            /(?:^|[\s,;])(?:кон|concentration)(?:\s|$|\d)/i.test(String(row.range||''))||spellHasAd5Syntax(row.description));
+        var description=(row.handler!==undefined&&row.handler!==null)?String(row.handler):String(row.description||'');
+        // ad5Mechanical is metadata, not executable proof. Older Library builds
+        // wrote it as true for every custom record, including narrative-only spells.
+        // Infer mechanics only from fields/geometry/supported AD5 syntax.
+        return !!(spellValueActive(row.attack)||spellValueActive(row.damage1!==undefined?row.damage1:row.damage)||
+            spellValueActive(row.damage2)||spellValueActive(row.healing)||spellValueActive(row.save)||dist.area||dist.targets||
+            /(?:^|[\s,;])(?:кон|concentration)(?:\s|$|\d)/i.test(String(row.range||''))||spellHasAd5Syntax(description));
+    }
+    function spellMechanical(cid,row){
+        return spellDefinitionMechanical(row);
     }
 
     function isMultiResolverDescription(text){
@@ -1882,7 +1979,7 @@ var AD5 = (function () {
         return true;
     }
     function prepareNativeMultiSpellRow(cid,row){
-        cid=String(cid||'');if(!cid||!row)return 0;
+        cid=String(cid||'');if(!cid||!row||row.structured||/^attack$/i.test(row.output||''))return 0;
         var output=attr(cid,row.prefix+'spelloutput',true),rollcontent=attr(cid,row.prefix+'rollcontent',true),changed=0;
         var outputValue=output?String(output.get('current')||''):'';
         var rollValue=rollcontent?String(rollcontent.get('current')||''):'';
@@ -1936,10 +2033,9 @@ var AD5 = (function () {
     }
     function syncSpellbookCharacter(cid){
         var c=getObj('character',cid);if(!c)throw new Error('Лист персонажа не найден.');
-        // Ordinary Spellbook rows remain read-only for AD5 and use Output=Attack
-        // only when the player/sheet needs a linked native attack row.  Exception:
-        // 4.3.94 description-driven МУЛЬТИ rows are automatically kept as SPELLCARD
-        // so their runtime path never depends on repeating_attack/rollbase.
+        // 4.3.133 policy: every mechanical Spellbook row uses Output=Attack.
+        // Narrative-only rows stay SpellCard.  This function remains read-only;
+        // AD5 Spell Library owns the safe Sheet Worker conversion/migration.
         var result={total:0,mechanical:0,ready:0,notAttack:0,linked:0,unlinked:0};
         spellRows(cid).forEach(function(row){
             result.total++;if(!spellMechanical(cid,row))return;result.mechanical++;
@@ -1956,6 +2052,114 @@ var AD5 = (function () {
             try{var r=syncSpellbookCharacter(c.id);summary.mechanical+=r.mechanical;summary.ready+=r.ready;summary.linked+=r.linked;}catch(e){record('Spellbook '+c.get('name')+': '+e.message);}
         });
         return summary;
+    }
+    function waitSpellOutputLink(cid,prefix,tries,done){
+        tries=Math.max(0,Number(tries)||0);
+        var row=null,attackId='';
+        try{row=spellByPrefix(cid,prefix);attackId=row&&normalizeSpellAttackId(row.attackId);}catch(ignore){}
+        if(attackId){
+            var rb=attr(cid,'repeating_attack_'+attackId+'_rollbase',true);
+            if(rb){
+                try{done(null,patchLinkedSpellAttack(cid,attackId,prefix));}catch(e){done(e,null);}
+                return;
+            }
+        }
+        if(!tries){done(new Error('Roll20 не создал связанную attack-строку для '+(row&&row.name||prefix)+'.'),null);return;}
+        setTimeout(function(){waitSpellOutputLink(cid,prefix,tries-1,done);},200);
+    }
+    function spellOutputAttribute(cid,prefix){
+        var a=attr(cid,prefix+'spelloutput',true);
+        if(a)return a;
+        return createObj('attribute',{characterid:cid,name:prefix+'spelloutput',current:'SPELLCARD'});
+    }
+    function setSpellOutputWorker(a,value,done){
+        if(!a){done(new Error('Не найден spelloutput.'));return;}
+        var finished=false,timer=null;
+        function finish(err){if(finished)return;finished=true;if(timer!==null)clearTimeout(timer);done(err||null);}
+        try{
+            var hook=typeof a.setWithWorker==='function'&&typeof onSheetWorkerCompleted==='function';
+            if(hook)onSheetWorkerCompleted(function(){finish(null);});
+            timer=setTimeout(function(){finish(null);},hook?5000:300);
+            if(typeof a.setWithWorker==='function')a.setWithWorker({current:value});
+            else a.set({current:value});
+        }catch(e){finish(e);}
+    }
+    function notifySpellDefinitionWorker(cid,prefix,done){
+        var flag=attr(cid,prefix+'spell_updateflag',true)||createObj('attribute',{characterid:cid,name:prefix+'spell_updateflag',current:''});
+        if(!flag){done(new Error('Не удалось создать spell_updateflag.'));return;}
+        var finished=false,timer=null;
+        function finish(err){if(finished)return;finished=true;if(timer!==null)clearTimeout(timer);done(err||null);}
+        try{
+            var hook=typeof flag.setWithWorker==='function'&&typeof onSheetWorkerCompleted==='function';
+            if(hook)onSheetWorkerCompleted(function(){finish(null);});
+            timer=setTimeout(function(){finish(null);},hook?5000:300);
+            var value=String(Date.now())+'-'+String(Math.floor(Math.random()*1000000));
+            if(typeof flag.setWithWorker==='function')flag.setWithWorker({current:value});else flag.set({current:value});
+        }catch(e){finish(e);}
+    }
+    function clearStaleSpellAttackPointer(cid,prefix){
+        var row=spellByPrefix(cid,prefix),attackId=row&&normalizeSpellAttackId(row.attackId);if(!attackId)return false;
+        if(attr(cid,'repeating_attack_'+attackId+'_rollbase',true))return false;
+        var a=attr(cid,prefix+'spellattackid',true);if(a)a.set({current:''});
+        return true;
+    }
+    function enforceSpellbookOutputPolicy(cid,done){
+        cid=String(cid||'');var c=getObj('character',cid);
+        if(!c){done(new Error('Лист персонажа не найден.'));return;}
+        var rows=spellRows(cid).map(function(row){
+            return {prefix:row.prefix,name:row.name,desired:spellMechanical(cid,row)?'ATTACK':'SPELLCARD'};
+        });
+        var queue=rows.slice(),summary={total:rows.length,mechanical:0,narrative:0,toAttack:0,toCard:0,patched:0,errors:[]};
+        rows.forEach(function(j){if(j.desired==='ATTACK')summary.mechanical++;else summary.narrative++;});
+        function next(){
+            if(!queue.length){done(null,summary);return;}
+            var job=queue.shift(),out=spellOutputAttribute(cid,job.prefix);
+            if(!out){summary.errors.push(job.name+': не удалось создать spelloutput.');setTimeout(next,10);return;}
+            // Prime the native row first. API-created spell attributes do not fire
+            // all Legacy derived-field workers unless spell_updateflag is touched.
+            notifySpellDefinitionWorker(cid,job.prefix,function(flagErr){
+                if(flagErr){summary.errors.push(job.name+': '+String(flagErr.message||flagErr));setTimeout(next,20);return;}
+                var current=String(out.get('current')||'SPELLCARD').toUpperCase();
+                if(job.desired==='SPELLCARD'){
+                    if(current==='SPELLCARD'){setTimeout(next,5);return;}
+                    setSpellOutputWorker(out,'SPELLCARD',function(err){
+                        if(err)summary.errors.push(job.name+': '+String(err.message||err));else summary.toCard++;
+                        setTimeout(next,20);
+                    });
+                    return;
+                }
+                function finishAttack(){
+                    waitSpellOutputLink(cid,job.prefix,40,function(err,result){
+                        if(err)summary.errors.push(job.name+': '+String(err.message||err));
+                        else if(result&&result.ok)summary.patched++;
+                        else summary.errors.push(job.name+': связанная строка создана, но AD5 не подтвердил патч.');
+                        setTimeout(next,20);
+                    });
+                }
+                var live=null,attackId='',rollbase=null;
+                try{live=spellByPrefix(cid,job.prefix);attackId=live&&normalizeSpellAttackId(live.attackId);rollbase=attackId&&attr(cid,'repeating_attack_'+attackId+'_rollbase',true);}catch(ignoreLive){}
+                if(current==='ATTACK'&&attackId&&rollbase){finishAttack();return;}
+                if(current==='ATTACK'&&(!attackId||!rollbase)){
+                    setSpellOutputWorker(out,'SPELLCARD',function(firstErr){
+                        if(firstErr){summary.errors.push(job.name+': '+String(firstErr.message||firstErr));setTimeout(next,20);return;}
+                        clearStaleSpellAttackPointer(cid,job.prefix);
+                        notifySpellDefinitionWorker(cid,job.prefix,function(flagErr2){
+                            if(flagErr2){summary.errors.push(job.name+': '+String(flagErr2.message||flagErr2));setTimeout(next,20);return;}
+                            setSpellOutputWorker(out,'ATTACK',function(secondErr){
+                                if(secondErr){summary.errors.push(job.name+': '+String(secondErr.message||secondErr));setTimeout(next,20);return;}
+                                summary.toAttack++;finishAttack();
+                            });
+                        });
+                    });
+                    return;
+                }
+                setSpellOutputWorker(out,'ATTACK',function(err){
+                    if(err){summary.errors.push(job.name+': '+String(err.message||err));setTimeout(next,20);return;}
+                    summary.toAttack++;finishAttack();
+                });
+            });
+        }
+        next();
     }
     function selectedSpellCharacter(msg,pid){
         if(msg.selected&&msg.selected.length===1){var t=getObj('graphic',msg.selected[0]._id),c=t&&getObj('character',t.get('represents'));if(c&&canControl(c,pid))return c;}
@@ -2224,6 +2428,77 @@ var AD5 = (function () {
         return true;
     }
 
+    // 4.3.139: Legacy Sheet Worker can create the repeating_attack shell before
+    // all linked spell fields are populated (and API-imported rows can leave that
+    // shell permanently sparse).  Repair only the exact linked row from the LIVE
+    // repeating_spell definition.  The attack row remains transport/UI; Spellbook
+    // continues to be authoritative at runtime.
+    function spellRowNativeId(prefix){
+        var m=/^repeating_spell-(?:cantrip|[0-9]|npc)_(.+)_$/i.exec(String(prefix||''));
+        return m?String(m[1]||'').trim():'';
+    }
+    function hydrateLinkedSpellAttackRow(cid,attackRowId,expectedPrefix){
+        cid=String(cid||'');var rowId=normalizeSpellAttackId(attackRowId);
+        if(!cid||!rowId||!getObj('character',cid))return {ok:false,reason:'identity-missing'};
+        var expected=String(expectedPrefix||'').trim(),linked=expected?spellByPrefix(cid,expected):null;
+        if(!linked)linked=spellByNativeAttackRow(cid,rowId)||spellByAttackRowId(cid,rowId);
+        if(!linked)return {ok:false,reason:'spell-link-missing',rowId:rowId};
+        var ap='repeating_attack_'+rowId+'_',changed=[],created=[];
+        function put(field,value,options){
+            options=options||{};
+            if(value===undefined||value===null)return false;
+            value=String(value);if(!value&&options.allowEmpty!==true)return false;
+            var a=attr(cid,ap+field,true),cur=a?String(a.get('current')||''):'';
+            var missing=!cur.trim()||(options.zeroIsMissing&&/^0(?:[.,]0+)?$/.test(cur.trim()));
+            if(!missing)return false;
+            if(a){try{autoButtonIgnoreUntil[a.id]=Date.now()+2500;}catch(ignoreMark){}a.set({current:value});changed.push(field);}
+            else{var n=createObj('attribute',{characterid:cid,name:ap+field,current:value});if(n){try{autoButtonIgnoreUntil[n.id]=Date.now()+2500;}catch(ignoreNewMark){}created.push(field);}}
+            return true;
+        }
+        var nativeSpellId=spellRowNativeId(linked.prefix);
+        var level=linked.spellLevel===0?'cantrip':(linked.spellLevel===null||linked.spellLevel===undefined?'':String(linked.spellLevel));
+        put('spellid',nativeSpellId);
+        put('spelllevel',level);
+        put('atkname',linked.name||'Заклинание');
+        put('atkrange',linked.range||'');
+        put('attack_range',linked.range||'');
+        var desc=String(linked.fullDescription||linked.description||'').trim();
+        put('atk_desc',desc);
+        put('description',desc);
+
+        function nativeSave(raw){
+            var v=String(raw||'').trim(),k=v.toUpperCase(),map={STR:'Strength',DEX:'Dexterity',CON:'Constitution',INT:'Intelligence',WIS:'Wisdom',CHA:'Charisma','СИЛ':'Strength','ЛОВ':'Dexterity','ТЕЛ':'Constitution','ИНТ':'Intelligence','МДР':'Wisdom','ХАР':'Charisma'};
+            if(map[k])return map[k];return /^(strength|dexterity|constitution|intelligence|wisdom|charisma)$/i.test(v)?v.charAt(0).toUpperCase()+v.slice(1).toLowerCase():v;
+        }
+        var hasAttack=spellValueActive(linked.attack),hasDmg1=spellValueActive(linked.damage1),hasDmg2=spellValueActive(linked.damage2),hasSave=spellValueActive(linked.save);
+        var ability=String(linked.spellAbility||spellField(cid,linked.prefix,'spell_ability')||'spell').trim();
+        if(!ability||/^auto$/i.test(ability))ability='spell';
+        if(!/^spell$/i.test(ability))ability=ability.replace(/\+\s*$/,'').trim();else ability='spell';
+        put('atkattr_base',ability);
+        if(hasAttack){
+            put('atkflag','{{attack=1}}');put('attack_flag','{{attack=1}}');
+            put('atkprofflag','(@{pb})');put('atkmod','0');put('atkmagic','0');put('atkcritrange','20');
+        }
+        if(hasDmg1){
+            put('dmgflag','{{damage=1}} {{dmg1flag=1}}');put('damage_flag','{{damage=1}} {{dmg1flag=1}}');
+            put('dmgbase',linked.damage1,{zeroIsMissing:true});put('dmgtype',linked.damageType1||'');
+            put('dmgattr',/^yes$/i.test(String(linked.damageMod||spellField(cid,linked.prefix,'spelldmgmod')||''))?ability:'0');put('dmgmod','0');
+        }
+        if(hasDmg2){
+            put('dmg2flag','{{damage=1}} {{dmg2flag=1}}');
+            put('dmg2base',linked.damage2,{zeroIsMissing:true});put('dmg2type',linked.damageType2||'');put('dmg2attr','0');put('dmg2mod','0');
+        }
+        if(hasSave){
+            var save=nativeSave(linked.save);
+            put('saveflag','{{save=1}} {{saveattr=@{saveattr}}} {{savedesc=@{saveeffect}}} {{savedc=[[[[@{savedc}]][SAVE]]]}}');put('save_flag','{{save=1}}');
+            put('saveattr',save);put('save_attr',save);
+            var saveDc=ability==='spell'?'(@{spell_save_dc})':'('+ability+'+8+@{spell_dc_mod}+@{pb})';
+            put('savedc',saveDc);put('save_dc',saveDc);
+            put('saveeffect',linked.saveSuccess||'');put('save_effect',linked.saveSuccess||'');
+        }
+        return {ok:true,rowId:rowId,prefix:linked.prefix,name:linked.name,linked:linked,changed:changed,created:created};
+    }
+
     // 4.3.89: explicit Spellbook-link patch bridge. Library templates are import-only; runtime uses sheet data.
     // The library calls this immediately after Legacy Roll20 creates spellattackid.
     // This avoids relying on add/change:attribute timing and repairs the exact linked
@@ -2241,11 +2516,11 @@ var AD5 = (function () {
         if(!rollbase)return {ok:false,reason:'rollbase-missing',rowId:rowId};
 
         var expected=String(expectedPrefix||'').trim();
-        var linked=spellByNativeAttackRow(cid,rowId)||spellByAttackRowId(cid,rowId);
-        if(!linked&&expected){
-            var byPrefix=spellByPrefix(cid,expected);
-            if(byPrefix&&normalizeSpellAttackId(byPrefix.attackId)===rowId)linked=byPrefix;
-        }
+        // Hydrate the exact native attack shell first.  expectedPrefix is known by
+        // the Library even when Roll20 omitted spellid/spelllevel/atkname entirely.
+        var hydration=hydrateLinkedSpellAttackRow(cid,rowId,expected);
+        var linked=(hydration&&hydration.linked)||spellByNativeAttackRow(cid,rowId)||spellByAttackRowId(cid,rowId);
+        if(!linked&&expected)linked=spellByPrefix(cid,expected);
         if(!linked)return {ok:false,reason:'spell-link-missing',rowId:rowId};
         if(expected&&String(linked.prefix)!==expected)
             return {ok:false,reason:'prefix-mismatch',rowId:rowId,prefix:linked.prefix,expectedPrefix:expected};
@@ -2285,6 +2560,7 @@ var AD5 = (function () {
             area:!!distance.area,
             hasArea:hasArea,
             hasTarget:hasTarget,
+            hydrated:hydration?{changed:hydration.changed||[],created:hydration.created||[]}:null,
             reason:(hasAttackRow&&areaOk)?'ok':(!hasAttackRow?'attack-row-pointer-not-written':'area-still-targeted')
         };
     }
@@ -2493,6 +2769,45 @@ var AD5 = (function () {
         rec.cid=info.cid;rec.prefix=info.prefix;rec.retries=0;rec.lastField=info.field;
         if(rec.timer)clearTimeout(rec.timer);
         rec.timer=setTimeout(function(){automaticButtonRun(info.key);},AUTO_BUTTON_QUIET_MS);
+        return true;
+    }
+
+    // 4.3.132: restore native Roll20 target picking for Spellbook-generated attack
+    // rows without re-enabling the old broad add/change:attribute repair loop.
+    // Only two exact attributes are observed: the native spell link and that row's
+    // rollbase. AD5's own rollbase write is ignored by automaticButtonIsOwnWrite().
+    function scheduleLinkedSpellAttackPatch(a){
+        if(!a)return false;
+        var cid=String(a.get('_characterid')||''),name=String(a.get('name')||'');
+        var m=/^(repeating_attack_.+_)(spellid|rollbase(?:_[a-z]+)?)$/i.exec(name);
+        if(!m||!cid||!getObj('character',cid))return false;
+        var spellLink=(m[2].toLowerCase()==='spellid')?a:attr(cid,m[1]+'spellid',true);
+        if(!spellLink||!String(spellLink.get('current')||'').trim())return false;
+        return scheduleAutomaticButtonPatch(a);
+    }
+
+    // If a pre-existing/stale linked spell reaches AD5 without ad5target, repair
+    // only that one native attack row for the NEXT cast. The already rolled card
+    // is never rerolled: the current cast continues through the one-button fallback.
+    function scheduleSingleTargetSpellSelfRepair(msg,f,spellMeta){
+        var cid=spellMeta&&spellMeta.actor?String(spellMeta.actor):'',prefix=spellMeta&&spellMeta.prefix?String(spellMeta.prefix):'';
+        try{
+            var block=AD5Text.split(String((f&&f.description)!==undefined?f.description:(f&&f.desc)||''));
+            if(!cid&&block.actor)cid=String(block.actor);
+            if(!prefix&&block.prefix)prefix=String(block.prefix);
+        }catch(ignoreBinding){}
+        if(!cid)try{cid=String(spellActorId(msg,f)||'');}catch(ignoreActor){}
+        if(!cid||!prefix)return false;
+        var row=null;
+        try{row=spellByPrefix(cid,prefix);}catch(ignoreRow){}
+        var attackId=row&&normalizeSpellAttackId(row.attackId);
+        if(!attackId)return false;
+        setTimeout(function(){
+            try{
+                var result=patchLinkedSpellAttack(cid,attackId,prefix);
+                record('Target self-repair: '+(row.name||prefix)+' · row='+attackId+' · '+(result&&result.ok?'ok':'ожидает повторного изменения Roll20'));
+            }catch(e){record('Target self-repair '+prefix+': '+String(e.message||e));}
+        },0);
         return true;
     }
 
@@ -2708,7 +3023,20 @@ var AD5 = (function () {
             var key=m[1].toLowerCase(),value=text.slice(start,i).trim();
             if(Object.prototype.hasOwnProperty.call(f,key)&&f[key]!==value)throw new Error('Разные значения повторного поля шаблона: '+m[1]);
             f[key]=value;re.lastIndex=i+2;
-        }return f;
+        }
+        var desc=f.description!==undefined?f.description:f.desc;
+        if(desc!==undefined){
+            var block=AD5Text.split(desc);
+            if(block.structured){
+                f.ad5structured='1';f.description=block.mechanics;f.desc=block.mechanics;
+                var up=/^\s*AD5ПОВ:\s*(\d+)\s*$/im.exec(block.mechanics);if(up)f.ad5upcastdelta=up[1];
+                if(block.actor){
+                    if(f.ad5source&&f.ad5source!==block.actor)throw Error('Конфликт привязки заклинания. Выполните !ad5 spells bind для выбранного токена.');
+                    f.ad5source=block.actor;f.ad5spellprefix=block.prefix;
+                }
+            }
+        }
+        return f;
     }
     function active(f, k) {
         var v=f[String(k||'').toLowerCase()];
@@ -3569,7 +3897,7 @@ var AD5 = (function () {
             if(mode==='normal')rollFields+='{{normal=1}} ';
             else rollFields+='{{r2=[['+rolledExpr+']]}} {{'+(mode==='adv'?'advantage':'disadvantage')+'=1}} ';
             if(globalExpr!==null)rollFields+='{{globalattack=[['+globalExpr+']]}} ';
-            var card='&{template:'+template+'} '+(npcCard?'{{name='+esc(who)+'}} ':'{{charname='+esc(who)+'}} {{mod=AD5}} ')+
+            var card='&{template:'+template+'} {{ad5internalroll=1}} '+(npcCard?'{{name='+esc(who)+'}} ':'{{charname='+esc(who)+'}} {{mod=AD5}} ')+
                 '{{rname='+esc(name)+'}} '+rollFields+
                 (npcCard?'{{description='+esc(reason.join(' · '))+'}}':'{{desc='+esc(reason.join(' · '))+'}}');
             sendChat(who,card,function(messages){
@@ -3840,6 +4168,45 @@ var AD5 = (function () {
         if(active(f,'save') && attackRollPresent(msg,f) && !saveAffectsDamage(f))f.save='0';
         return f;
     }
+    // 4.3.135: damage outcome is resolved in AD5 itself instead of delegating
+    // this critical HP rule to Effect Turns.  The explicit AD5 branch is primary;
+    // Roll20's native Save Success text is the safe fallback for old/stale attack
+    // transports whose Description was shortened by Sheet Workers.
+    function saveOutcomeDamageMode(description,outcome,nativeSuccessText){
+        var text='';
+        try{text=AD5Text.mechanics(description);}catch(ignoreStructuredDescription){text=String(description||'');}
+        text=String(text||'').replace(/<br\s*\/?\s*>|<\/p>|<\/div>/gi,'\n').replace(/<[^>]*>/g,' ').replace(/&nbsp;|&#160;/gi,' ');
+        var re=/(ПРВ|УСП|при\s+провале|при\s+неудаче|on\s+(?:a\s+)?failed\s+save|on\s+failure|при\s+успехе|при\s+успешном\s+спасброске|on\s+(?:a\s+)?successful\s+save|on\s+success)\s*[:—–-]?/ig;
+        var marks=[],m;
+        while((m=re.exec(text)))marks.push({index:m.index,end:re.lastIndex,label:String(m[1]||'')});
+        var sections={failure:{present:false,body:''},success:{present:false,body:''}};
+        marks.forEach(function(mark,i){
+            var end=i+1<marks.length?marks[i+1].index:text.length;
+            var body=text.slice(mark.end,end).replace(/^[\s,;:.!?—–-]+|[\s,;:.!?—–-]+$/g,'').trim();
+            var label=normalizeUserText(mark.label),key=(label==='прв'||/^(?:при провале|при неудаче|on (?:a )?failed save|on failure)$/i.test(label))?'failure':'success';
+            sections[key].present=true;sections[key].body+=(sections[key].body?', ':'')+body;
+        });
+        function modeFromText(value){
+            var n=normalizeUserText(value).replace(/[,.;:()]/g,' ');
+            if(/(?:нет урона|без урона|не получает урона|no damage)/.test(n))return 'none';
+            if(/(?:половин(?:а|у|ы)?(?: первоначального)? урона|half(?: damage)?)/.test(n))return 'half';
+            if(/(?:полный урон|полного урона|full damage)/.test(n))return 'full';
+            // «Нет эффекта» is a valid native save-success description for spells
+            // whose successful save negates the whole mechanical payload.
+            if(/(?:нет эффекта|no effect)/.test(n))return 'none';
+            return '';
+        }
+        var key=outcome==='failure'?'failure':'success',explicit=sections[key].present?modeFromText(sections[key].body):'';
+        if(explicit)return explicit;
+        if(key==='success'){
+            var nativeMode=modeFromText(nativeSuccessText);if(nativeMode)return nativeMode;
+            // Preserve the established AD5 extension: an explicit failed branch
+            // «ПРВ: полный урон» with no УСП means the save does not reduce damage.
+            if(!sections.success.present&&sections.failure.present&&modeFromText(sections.failure.body)==='full')return 'full';
+            return 'none';
+        }
+        return 'full';
+    }
     function saveSpec(msg, f, cid, token, pendingContext){
         var previousCache=buttonPatchCache,ownCache=!previousCache||previousCache.cid!==String(cid);
         if(ownCache)buttonPatchOpenCache(cid);
@@ -3868,8 +4235,8 @@ var AD5 = (function () {
         var finalSaveMode=custom.mode||'normal';if(areaCoverAdvantage)finalSaveMode=combineSaveModes(finalSaveMode,'adv');
         return {ability:ability,dc:number(roll(msg,f.savedc,'СЛ спасброска',true).total,'СЛ спасброска'),
             conditions:[],
-            effect:AD5EffectTurns.damageMode(description,'success'),
-            failureEffect:AD5EffectTurns.damageMode(description,'failure'),
+            effect:saveOutcomeDamageMode(description,'success',f.savedesc||f.ad5spellsavesuccess||''),
+            failureEffect:saveOutcomeDamageMode(description,'failure',''),
             description:description,
             baseBonus:baseBonus,modifierBonus:custom.bonus+coverBonus,modifierRolls:Array.isArray(custom.rolls)?custom.rolls:[],bonus:baseBonus+custom.bonus+coverBonus,mode:finalSaveMode,cover:coverInfo,coverBonus:coverBonus,areaCoverAdvantage:areaCoverAdvantage,areaCoverLabel:areaCoverLabel,
             conditionRule:custom.condition||{autoFail:false,mode:'normal',labels:[]}};
@@ -4119,6 +4486,19 @@ var AD5 = (function () {
         var found=EFFECT_TYPES.filter(function(pair){return pair[1].test(text);});
         return found.length===1?found[0][0]:null;
     }
+    // Short public combat line for extra damage granted by mark-like spell effects.
+    // Example: «Метка охотника +2 Колющий». The amount is the actual extra-damage
+    // roll added to this hit before target resistances/vulnerabilities are applied.
+    function markDamageChatLine(component){
+        component=component||{};
+        var name=String(component.label||'Эффект').trim()||'Эффект';
+        var amount=Number(component.amount);
+        if(!Number.isFinite(amount))amount=0;
+        amount=Math.max(0,Math.floor(amount));
+        var type=String(component.type||'').trim();
+        if(type)type=type.charAt(0).toLocaleUpperCase('ru-RU')+type.slice(1);
+        return name+' +'+amount+(type?' '+type:'');
+    }
     function inferEffectType(description){
         var text=normalizeUserText(description), found=[];
         // Infer only explicit damage wording or explicit healing, not theme/name.
@@ -4152,7 +4532,7 @@ var AD5 = (function () {
             return /^@\{[^{}]+\}$/.test(raw)?'':raw;
         }
         var description=usableDescription(f.description)||usableDescription(f.desc)||read(isNPC?'description':'atk_desc')||(isNPC?read('desc'):'');
-        f.description=description;f.desc=description;
+        description=AD5Text.mechanics(description);f.description=description;f.desc=description;
         effectComponentIndexes(f).forEach(function(i){
             var key='dmg'+i+'type',raw=String(f[key]||'').trim();
             if(i>2){
@@ -4615,18 +4995,80 @@ var AD5 = (function () {
         historyChange(key,pid,true,true);AD5Wounds.announce(woundToken,woundPlan);
         gm('Полный урон без сопротивлений/уязвимостей: '+full+'. Последовательность сохранена: урон → лечение → временные HP → Атака. HP '+h.beforeHp+' → '+nextHp+'.'+(AD5Wounds.describe(woundPlan)?'<br>'+AD5Wounds.describe(woundPlan):'')+' [Отменить](!ad5 undo '+key+') [Восстановить](!ad5 redo '+key+')');
     }
-    function forcedMovementDirectives(description,saveActive,success){
-        var selected=AD5TokenEffects.extract(String(description||''),!!saveActive,!!success);if(!selected)return [];
-        selected=String(selected).replace(/<br\s*\/?\s*>|<\/p>|<\/div>/gi,'\n').replace(/<[^>]*>/g,' ').replace(/&nbsp;|&#160;/gi,' ');
+    // 4.3.136: forced movement has its own tiny parser and a cast-time snapshot.
+    // Area cards are filtered/rebuilt once per target by Areas/Sides.  Reading TОЛЧ
+    // only from that per-target transport is therefore unsafe: the damage/save can
+    // survive while the movement text disappears.  Parse the live Spellbook text
+    // once at cast time and keep both save branches in the draft.
+    function forcedMovementList(text){
+        text=String(text||'').replace(/<br\s*\/?\s*>|<\/p>|<\/div>/gi,'\n').replace(/<[^>]*>/g,' ').replace(/&nbsp;|&#160;/gi,' ');
         var out=[],re=/(?:^|[\s,;|])((?:ТОЛЧ|PUSH)|(?:ТЯГ|PULL))\s*(?:[:=]|[-–—])?\s*(\d+(?:[.,]\d+)?)\s*(?:ф(?:т|ут(?:а|ов)?)?\.?|ft\.?|feet)?(?=$|[\s,;.!?])/gim,m;
-        while((m=re.exec(selected))){var n=Number(String(m[2]).replace(',','.'));if(!Number.isFinite(n)||n<=0)continue;var pull=/^(?:ТЯГ|PULL)$/i.test(m[1]);out.push({kind:pull?'pull':'push',feet:n,label:pull?'ТЯГ':'ТОЛЧ'});}
+        while((m=re.exec(text))){
+            var n=Number(String(m[2]).replace(',','.'));if(!Number.isFinite(n)||n<=0)continue;
+            var pull=/^(?:ТЯГ|PULL)$/i.test(m[1]);out.push({kind:pull?'pull':'push',feet:n,label:pull?'ТЯГ':'ТОЛЧ'});
+        }
         return out;
     }
-    function applyForcedMovementDirectives(targetToken,p,description,saveActive,success){
-        var dirs=forcedMovementDirectives(description,saveActive,success);if(!dirs.length)return [];
+    function forcedMovementPlan(description){
+        var text=String(description||'').replace(/<br\s*\/?\s*>|<\/p>|<\/div>/gi,'\n').replace(/<[^>]*>/g,' ').replace(/&nbsp;|&#160;/gi,' '),plan={direct:[],failure:[],success:[]};
+        // Use the same branch vocabulary as Effect Turns, but do not ask another
+        // subsystem to return the branch: this parser must preserve TОЛЧ/ТЯГ itself.
+        var re=/(ПРВ|УСП|при\s+провале|при\s+неудаче|on\s+(?:a\s+)?failed\s+save|on\s+failure|при\s+успехе|при\s+успешном\s+спасброске|on\s+(?:a\s+)?successful\s+save|on\s+success)\s*[:—–-]?/ig,m,marks=[];
+        while((m=re.exec(text)))marks.push({index:m.index,end:re.lastIndex,label:String(m[1]||'')});
+        if(!marks.length){plan.direct=forcedMovementList(text);return plan;}
+        // Text before the first save branch is unconditional.
+        plan.direct=forcedMovementList(text.slice(0,marks[0].index));
+        marks.forEach(function(mark,i){
+            var end=i+1<marks.length?marks[i+1].index:text.length,body=text.slice(mark.end,end),label=mark.label.toLocaleLowerCase('ru-RU').replace(/ё/g,'е').trim();
+            var fail=(label==='прв'||/^(?:при\s+провале|при\s+неудаче|on\s+(?:a\s+)?failed\s+save|on\s+failure)$/i.test(label));
+            var pass=(label==='усп'||/^(?:при\s+успехе|при\s+успешном\s+спасброске|on\s+(?:a\s+)?successful\s+save|on\s+success)$/i.test(label));
+            if(fail)plan.failure=plan.failure.concat(forcedMovementList(body));
+            else if(pass)plan.success=plan.success.concat(forcedMovementList(body));
+        });
+        return plan;
+    }
+    function forcedMovementDirectives(description,saveActive,success,precomputed){
+        var plan=precomputed&&typeof precomputed==='object'?precomputed:forcedMovementPlan(description),out=(plan.direct||[]).slice();
+        if(saveActive)out=out.concat(success?(plan.success||[]):(plan.failure||[]));
+        else out=out.concat(plan.failure||[]).concat(plan.success||[]);
+        return out;
+    }
+    function forcedMovementSource(targetToken,p,pid){
+        var draft=(p&&p.batch&&drafts[p.batch])||null;
+        // For an Areas/multi draft, sourceToken was validated and bound before the
+        // template was created. It is more authoritative than any later card field.
+        if(draft&&draft.sourceToken){
+            var exact=getObj('graphic',String(draft.sourceToken));
+            if(exact&&exact.get('_subtype')==='token'&&(!targetToken||exact.get('_pageid')===targetToken.get('_pageid')))return exact;
+        }
+        var ids=[];
+        function add(id){id=String(id||'');if(id&&ids.indexOf(id)<0)ids.push(id);}
+        add(p&&p.conditionSourceToken);add(p&&p.sourceToken);
+        for(var i=0;i<ids.length;i++){
+            var t=getObj('graphic',ids[i]);
+            if(t&&t.get('_subtype')==='token'&&(!targetToken||t.get('_pageid')===targetToken.get('_pageid'))&&(!p||!p.actor||sourceTokenMatchesActor(t,p.actor)))return t;
+        }
+        if(p&&p.actor){
+            var remembered=rememberedPhysicalSourceToken(p.actor,pid||'');
+            if(remembered&&(!targetToken||remembered.get('_pageid')===targetToken.get('_pageid')))return remembered;
+            var page=targetToken&&targetToken.get('_pageid')||partyPageId();
+            var tokens=findObjs({_type:'graphic',_subtype:'token',layer:'objects',_pageid:page}).filter(function(t){return isCombatToken(t,page)&&sourceTokenMatchesActor(t,p.actor);});
+            if(tokens.length===1)return tokens[0];
+            var initiative=turnOrderSourceToken(p.actor,tokens);if(initiative)return initiative;
+        }
+        return null;
+    }
+    function applyForcedMovementDirectives(targetToken,p,description,saveActive,success,pid){
+        var draft=(p&&p.batch&&drafts[p.batch])||null,precomputed=draft&&draft.forcedMovementPlan;
+        var dirs=forcedMovementDirectives(description,saveActive,success,precomputed);if(!dirs.length)return [];
         if(typeof AD5Movement==='undefined'||!AD5Movement||typeof AD5Movement.forceMove!=='function')throw new Error('Для ТОЛЧ/ТЯГ требуется AD5 Movement 2.1.0 или новее.');
-        var sourceId=String((p&&p.conditionSourceToken)||(p&&p.sourceToken)||''),source=sourceId&&getObj('graphic',sourceId);if(!source)throw new Error('ТОЛЧ/ТЯГ: не найден физический токен атакующего.');
-        var results=[];dirs.forEach(function(d){var r=AD5Movement.forceMove(targetToken,source,d.feet,d.kind,{reason:d.label+' '+d.feet+' фт',attackName:p&&p.name||''});results.push({directive:d,result:r});});return results;
+        var source=forcedMovementSource(targetToken,p,pid);if(!source)throw new Error('ТОЛЧ/ТЯГ: не найден физический токен атакующего.');
+        if(p&&!p.sourceToken)p.sourceToken=source.id;
+        var results=[];dirs.forEach(function(d){
+            var r=AD5Movement.forceMove(targetToken,source,d.feet,d.kind,{reason:d.label+' '+d.feet+' фт',attackName:p&&p.name||''});
+            results.push({directive:d,result:r});
+            record('Принудительное движение: '+(p&&p.name||'Эффект')+' · '+d.label+' '+d.feet+' фт · '+String(targetToken&&targetToken.get('name')||targetToken&&targetToken.id||'?')+' · '+(r&&r.moved?'перемещено '+(Math.round((Number(r.actual)||0)*10)/10)+' фт':'НЕ ПЕРЕМЕЩЕНО ('+String(r&&r.reason||'неизвестно')+')'));
+        });return results;
     }
 
     // ===== Weapon-hit Payload (4.3.84) =====
@@ -4777,6 +5219,12 @@ var AD5 = (function () {
         if(p.hasAttack&&typeof AD5SpellEffects!=='undefined'&&!p.damageReactionCache){
             if(!p.specialMarkComponents)p.specialMarkComponents=AD5SpellEffects.markComponents({source:p.sourceToken,target:t.token.id,spell:!!(p.событиеАтаки&&p.событиеАтаки.заклинание),critical:criticalHit},g.damage.components[0]&&g.damage.components[0].type);
             p.specialMarkComponents.forEach(function(x){g.damage.components.push(x);g.damage.amount+=x.amount;if(g.damage.types.indexOf(x.type)<0)g.damage.types.push(x.type);});
+            // Announce each mark-style bonus exactly once for this resolved hit.
+            // Keep it deliberately short: «Название +N Тип урона».
+            if(p.specialMarkComponents.length&&!p.specialMarkDamageAnnounced){
+                p.specialMarkComponents.forEach(function(x){sendChat('Шепот звезд',esc(markDamageChatLine(x)));});
+                p.specialMarkDamageAnnounced=true;
+            }
         }
         // Environmental damage (falling, map hazards, etc.) has no attacker-side
         // damage bonuses. It still uses the normal target-defense / temp-HP /
@@ -4873,8 +5321,9 @@ var AD5 = (function () {
         var report=['<b>'+esc(p.name)+'</b> → '+esc(t.token.get('name')||t.token.id)];
         if(p.sanctuaryCheck&&p.sanctuaryCheck.required)report.push('Убежище: спасбросок Мудрости '+esc(sanctuaryResultText(p.sanctuaryCheck))+'.');
         if(p.hasAttack){var attackBase=p.baseAttackTotal===undefined?p.total:p.baseAttackTotal,attackGlobal=Number(p.globalAttack)||0,attackToken=Number(p.tokenAttackBonus)||0,acMod=Number(p.acModifier)||0,acBase=p.acBase===undefined?p.ac:Number(p.acBase);report.push('Атака: d20 '+dieLabel(p.die)+', бросок '+attackBase+(attackGlobal!==0?' + общий модификатор '+(attackGlobal>0?'+':'')+attackGlobal:'')+(attackToken!==0?' + модификатор Атака '+(attackToken>0?'+':'')+attackToken:'')+' = '+p.total+' против КД '+p.ac+(acMod!==0?' (база '+acBase+(acMod>0?' + ':' - ')+Math.abs(acMod)+')':'')+' — <b>попадание</b>.'+(p.attackConditionRule&&p.attackConditionRule.autoHitClose?' <b>Паралич: автоматическое попадание на 5 фт. (кроме натуральной 1).</b>':''));if(p.attackDistance!==null&&p.attackDistance!==undefined&&Number.isFinite(Number(p.attackDistance)))report.push('Дистанция до цели: <b>'+(Math.round(Number(p.attackDistance)*10)/10)+' фт</b>'+(p.attackRange&&p.attackRange.max?' · дальность атаки '+(p.attackRange.long?p.attackRange.normal+'/'+p.attackRange.max:p.attackRange.max)+' фт':'')+'.');if(p.cover&&p.cover.tier&&p.cover.tier!=='none')report.push('Укрытие: <b>'+esc(p.cover.label)+'</b>'+(Number(p.coverAcBonus||0)?' · КД +'+Number(p.coverAcBonus||0):'')+'.');if(p.attackConditionRule&&(p.attackConditionRule.advantage.length||p.attackConditionRule.disadvantage.length))report.push('Состояния атаки: '+(p.attackConditionRule.advantage.length?'ПРЕМ ['+esc(p.attackConditionRule.advantage.join(', '))+'] ':'')+(p.attackConditionRule.disadvantage.length?'ПОМ ['+esc(p.attackConditionRule.disadvantage.join(', '))+'] ':'')+'→ '+(p.attackMode==='adv'?'ПРЕМ':p.attackMode==='dis'?'ПОМ':'обычный')+'.');}
-        if(p.hasAttack&&p.attackDynamicRolls&&p.attackDynamicRolls.length)report.push('Динамический бафф атаки: '+p.attackDynamicRolls.map(function(x){return esc(x.label||x.formula||'модификатор')+' → '+(Number(x.delta)>=0?'+':'')+Number(x.delta||0);}).join('; ')+'.');
-        else report.push('Без броска атаки: КД не проверяется.');
+        if(p.hasAttack){
+            if(p.attackDynamicRolls&&p.attackDynamicRolls.length)report.push('Динамический бафф атаки: '+p.attackDynamicRolls.map(function(x){return esc(x.label||x.formula||'модификатор')+' → '+(Number(x.delta)>=0?'+':'')+Number(x.delta||0);}).join('; ')+'.');
+        }else report.push('Без броска атаки: КД не проверяется.');
         function groupRawLine(label,group){if(!group.components.length)return;report.push(label+': <b>'+group.amount+'</b> ('+group.components.map(function(x){return esc(x.type)+' '+x.amount;}).join('; ')+').');}
         groupRawLine('Брошенный урон',g.damage);groupRawLine('Брошенное лечение',g.healing);groupRawLine('Брошенные временные HP',g.temporary);groupRawLine('Брошенное значение эффекта «Атака»',g.attackbonus);
         if(hitPayloadBundle&&hitPayloadBundle.components&&hitPayloadBundle.components.length)report.push('Weapon-hit Payload: '+hitPayloadBundle.components.map(function(x){return esc(x.label)+' → <b>'+x.amount+'</b> '+esc(x.type)+(x.crit?' (крит +'+x.crit+')':'');}).join('; ')+'.');
@@ -5112,7 +5561,7 @@ var AD5 = (function () {
             }
         }
         var forcedMovementResults=[];
-        try{forcedMovementResults=(active(f,'save')&&saveCrit==='success')?[]:(applyForcedMovementDirectives(t.token,p,complexDescription,active(f,'save'),!!success)||[]);}
+        try{forcedMovementResults=(active(f,'save')&&saveCrit==='success')?[]:(applyForcedMovementDirectives(t.token,p,complexDescription,active(f,'save'),!!success,msg.playerid)||[]);}
         catch(forcedMoveError){record('ТОЛЧ/ТЯГ: '+(forcedMoveError.message||forcedMoveError));gm('<b>ТОЛЧ/ТЯГ:</b> '+esc(forcedMoveError.message||forcedMoveError));}
         if(forcedMovementResults.length)entry.forcedMovement=forcedMovementResults.map(function(x){return {kind:x.directive.kind,feet:x.directive.feet,moved:!!(x.result&&x.result.moved),actual:Number(x.result&&x.result.actual)||0};});
         if(p.phaseExecution&&typeof AD5Phases!=='undefined'){var lifecycle=AD5Phases.applied(p,t.token);if(p.phaseCast)entry.phaseLifecycle=lifecycle;}
@@ -5235,7 +5684,7 @@ var AD5 = (function () {
         if(transformDirective){var transformFormLabel=transformDirective.form?(' → '+esc(transformDirective.form)):'';var transformState=active(f,'save')&&saveCrit==='success'?'натуральная 20: форма не применена.':(active(f,'save')&&success?'цель успешно спаслась, форма не применена.':(transformApplied&&transformApplied.pending?'ожидается выбор формы.':(transformApplied?'применена.':'не применена.')));report.push('Трансформация: <b>'+esc(transformDirective.mode==='wildshape'?'Дикая форма':'Полиморф')+transformFormLabel+'</b> — '+transformState);}
         report.push('Потеря HP на этапе урона: '+woundPlan.lost+' из '+plan.value+' ('+woundPlan.percent.toFixed(2)+'%). Рана: '+({light:'лёгкая',medium:'средняя',heavy:'тяжёлая'}[woundPlan.kind]||'нет')+'.');if(AD5Wounds.describe(woundPlan))report.push(AD5Wounds.describe(woundPlan));
         if(complexEffectPlan)report.push('Добавлено в подсказку токена: <b>'+esc(complexEffectPlan.text).replace(/\n/g,'<br>')+'</b>.');if(effectTurnPlan&&effectTurnPlan.present){var effectTurnText=AD5EffectTurns.describePlan(effectTurnPlan);report.push(effectTurnText?'Эффекты исхода: <b>'+esc(effectTurnText)+'</b>.':'Эффекты исхода: нет.');}
-        if(forcedMovementResults.length)forcedMovementResults.forEach(function(x){var r=x.result||{},actual=Number(r.actual)||0;report.push(x.directive.label+': <b>'+x.directive.feet+' фт</b>'+(r.moved?' (фактически '+(Math.round(actual*10)/10)+' фт).':' — перемещение не выполнено.'));});
+        if(forcedMovementResults.length)forcedMovementResults.forEach(function(x){var r=x.result||{},actual=Number(r.actual)||0;report.push(x.directive.label+': <b>'+x.directive.feet+' фт</b>'+(r.moved?' (фактически '+(Math.round(actual*10)/10)+' фт).':' — перемещение не выполнено'+(r.reason?' ('+esc(r.reason)+')':'')+'.'));});
         report.push('Итог HP формы: '+plan.value+' → '+nextHp+'.');if(transformDamagePlan&&transformDamagePlan.breaks)report.push('<b>Форма разрушена.</b> Перенесено в исходное HP: <b>'+transformOverflowApplied+'</b>.'+(transformFinish&&transformFinish.reverted?' Исходная форма восстановлена.':''));if(temp.bar)report.push('Итог временных HP (полоса '+temp.bar+'): '+temp.value+' → '+nextTemp+'.');
         var historyButtons=(entry.transformBreak||entry.transformApplied)?'<i>Отмена AD5 для события трансформации отключена: изменился представляемый лист токена.</i>':'[Отменить](!ad5 undo '+key+')'+fullButton(key,entry);report.push(historyButtons);
         var shortResult='урон '+damageAmount+', лечение '+entry.healingAmount+' (HP +'+entry.healingRecovered+'), временные HP '+(temporaryApplied?temporaryAmount:0)+', атака '+(attackApplied?attackAmount:0)+(transformOverflowApplied?(', перенос '+transformOverflowApplied):'');
@@ -5293,18 +5742,14 @@ var AD5 = (function () {
     function showTargetMenu(pid,waitingAction) {
         if(!waitingAction){reply(pid,'Сейчас нет способности, ожидающей цель. Сначала используйте одиночную атаку/способность.');return;}
         if(Date.now()-waitingAction.time>CONFIG.ttl){delete deferred[pid];reply(pid,'Ожидающая способность устарела. Используйте её ещё раз.');return;}
-        var pageId=targetMenuPage(pid,waitingAction),list=targetMenuCandidates(pid,pageId,waitingAction);
-        if(!list.length){
-            reply(pid,'<b>Выбор цели</b><br>На доступной странице не найдено подходящих токенов. Для игроков противник должен находиться в порядке ходов; союзники с управляемыми листами доступны автоматически.');
-            return;
-        }
-        var counts=Object.create(null),requestId=waitingAction.requestId||'';
-        var buttons=list.map(function(t,i){
-            var label=targetButtonLabel(t,i,counts);
-            return '['+esc(label)+'](!ad5 target '+t.id+' --request '+requestId+')';
-        });
-        reply(pid,'<b>Выберите цель</b><br>'+buttons.join(' ')+
-            '<br>Бросок и выбранные параметры сохранены. Нажмите цель, чтобы завершить применение.<br>[Отмена](!ad5 cancel)');
+        var requestId=waitingAction.requestId||'';
+        // API cannot open @{target} by itself after the original roll has already
+        // reached chat, but a player-clicked chat button is expanded client-side by
+        // Roll20 and therefore opens the normal map target cursor. Keep only one
+        // button: never enumerate every token on the battlefield.
+        var choose='[Выбрать цель](!ad5 target &#64;{target|Выберите цель|token_id} --request '+requestId+')';
+        reply(pid,'<b>Выберите цель</b><br>'+choose+' [Отмена](!ad5 cancel)'+
+            '<br><small>Нажмите «Выбрать цель», затем кликните по нужному токену на карте. Бросок и выбранные параметры уже сохранены и повторно не бросаются.</small>');
     }
 
     function setup(pid) {
@@ -5525,18 +5970,22 @@ var AD5 = (function () {
             var higher=multiResolverValue(lines,['СНРВЫШЕ','PROJECTILESHIGHER']),step=0;
             if(higher){var hm=/^\+?\s*(\d+)\s+(?:ЗА|PER)\s+(?:КРУГ|LEVEL)$/i.exec(higher);if(!hm)throw new Error('СНРВЫШЕ: используйте «+1 ЗА КРУГ».');step=Number(hm[1]);}
             var max=Math.min(50,base+step*delta),projectileDamageText=multiResolverValue(lines,['СНРУРОН','PROJECTILEDAMAGE']);
-            // Native SpellCard first: when СНРУРОН is not explicitly overridden in
-            // Description, use the live standard Roll20 spell Damage/Type fields.
-            // This keeps manual edits in the spell card authoritative.
+            // 4.3.137: ATTACK is now the required output for mechanical spells, so
+            // Multi Resolver must read the original damage definition from the live
+            // repeating_spell row, not from SpellCard-only fields. Explicit СНРУРОН
+            // still overrides the sheet. As a final compatibility fallback accept
+            // the already-hydrated card fields / direct damage field.
             if(!projectileDamageText){
-                var nativeDamage=String(f.ad5spelldamage||f.spelldamage||'').trim();
-                var nativeDamageType=String(f.ad5spelldamagetype||f.spelldamagetype||'').trim();
+                var nativeDamage=String((spellMeta&&spellMeta.damage1)||f.ad5spelldamage||f.spelldamage||f.dmg1||'').trim();
+                var nativeDamageType=String((spellMeta&&spellMeta.damageType1)||f.ad5spelldamagetype||f.spelldamagetype||f.dmg1type||'').trim();
                 if(nativeDamage&&nativeDamageType)projectileDamageText=nativeDamage+' '+nativeDamageType;
             }
             var damage=multiResolverDamage(projectileDamageText);
             var hit=normalizeUserText(multiResolverValue(lines,['СНРПОП','PROJECTILEHIT'])||'авто');
-            if(['авто','auto','автопопадание'].indexOf(hit)<0)throw new Error('4.3.90: пока СНРПОП поддерживает только АВТО.');
-            return {mode:'projectile',base:base,max:max,damage:damage,hit:'auto',baseLevel:baseLevel,castLevel:castLevel,range:String(f.range||f.distance||(spellMeta&&spellMeta.range)||''),payloadDescription:multiResolverPayloadDescription(lines)};
+            if(['авто','auto','автопопадание'].indexOf(hit)<0)throw new Error('4.3.137: СНРПОП поддерживает только АВТО.');
+            // Auto-projectiles are direct-hit damage packets: no d20, no AC and no
+            // attack-hit reactions. In this campaign Shield never intercepts them.
+            return {mode:'projectile',base:base,max:max,damage:damage,hit:'auto',ignoreAC:true,triggerShield:false,baseLevel:baseLevel,castLevel:castLevel,range:String(f.range||f.distance||(spellMeta&&spellMeta.range)||''),payloadDescription:multiResolverPayloadDescription(lines)};
         }
         if(mode==='пул'||mode==='pool'){
             var pool=multiResolverValue(lines,['ПУЛ','POOL']);if(!pool)throw new Error('Для МУЛЬТИ: ПУЛ укажите ПУЛ: формула.');
@@ -5641,22 +6090,12 @@ var AD5 = (function () {
         if(!q||q.status!=='applied')return;
         var i=Number(q.projectileIndex)||0;if(i>=q.projectiles.length){q.processing=false;projectileReport(q);return;}
         var shot=q.projectiles[i],tok=getObj('graphic',shot.id);if(!tok){q.projectileResults[i]={targetId:shot.id,name:shot.name,status:'цель отсутствует'};q.projectileIndex=i+1;setTimeout(function(){projectileNext(q);},0);return;}
-        if(typeof AD5SpellEffects!=='undefined'&&/^\s*AD5СНАРЯД\s*:\s*magic-missile\s*$/im.test(q.resolverSpec.payloadDescription||'')){
-            q.shieldAsked=q.shieldAsked||{};
-            if(!q.shieldAsked[shot.id]){
-                q.shieldAsked[shot.id]=true;
-                AD5SpellEffects.missile({source:q.sourceToken,target:shot.id},function(blocked){
-                    if(blocked){q.projectileResults[i]={targetId:shot.id,name:shot.name,status:'Щит: снаряд заблокирован'};q.projectileIndex=i+1;}
-                    setTimeout(function(){projectileNext(q);},0);
-                });return;
-            }
-            if(typeof AD5Reactions!=='undefined'&&AD5Reactions.blocksMagicMissile(tok)){
-                q.projectileResults[i]={targetId:shot.id,name:shot.name,status:'Щит: снаряд заблокирован'};q.projectileIndex=i+1;setTimeout(function(){projectileNext(q);},0);return;
-            }
-        }
+        // 4.3.137 campaign rule: СНРПОП: АВТО never enters the attack/hit
+        // reaction pipeline. It ignores target AC and does not offer or consult
+        // Shield, including the old Magic Missile special bridge.
         q.projectileActiveIndex=i;q.projectileAwaiting=true;
-        var amount=areaRollExpression(q.resolverSpec.damage.formula,0);q.projectileRolls=q.projectileRolls||[];q.projectileRolls[i]={formula:String(q.resolverSpec.damage.formula||''),total:Number(amount),type:String(q.resolverSpec.damage.type||''),targetId:String(shot.id||''),name:String(shot.name||shot.id||'')};var sf=Object.create(null);sf.rname=q.name+' · снаряд '+(i+1);sf.charname=(getObj('character',q.actor)||{get:function(){return '';}}).get('name')||'';sf.range=q.resolverSpec.range;sf.target='1 существо';sf.description=q.resolverSpec.payloadDescription||'';sf.desc=sf.description;sf.ad5source=q.actor;sf.ad5sourcetoken=q.sourceToken;sf.ad5target=shot.id;sf.damage='1';sf.dmg1flag='1';sf.dmg1=String(amount);sf.dmg1type=q.resolverSpec.damage.type;sf.ad5auto='1';
-        var sm={type:'general',playerid:q.owner,who:sf.charname||q.name,rolltemplate:'dmg',content:templateContentFromFields(sf)+' {{ad5auto=1}}',inlinerolls:[]};
+        var amount=areaRollExpression(q.resolverSpec.damage.formula,0);q.projectileRolls=q.projectileRolls||[];q.projectileRolls[i]={formula:String(q.resolverSpec.damage.formula||''),total:Number(amount),type:String(q.resolverSpec.damage.type||''),targetId:String(shot.id||''),name:String(shot.name||shot.id||'')};var sf=Object.create(null);sf.rname=q.name+' · снаряд '+(i+1);sf.charname=(getObj('character',q.actor)||{get:function(){return '';}}).get('name')||'';sf.range=q.resolverSpec.range;sf.target='1 существо';sf.description=q.resolverSpec.payloadDescription||'';sf.desc=sf.description;sf.ad5source=q.actor;sf.ad5sourcetoken=q.sourceToken;sf.ad5target=shot.id;sf.damage='1';sf.dmg1flag='1';sf.dmg1=String(amount);sf.dmg1type=q.resolverSpec.damage.type;sf.ad5auto='1';sf.ad5projectileauto='1';
+        var sm={type:'general',playerid:q.owner,who:sf.charname||q.name,rolltemplate:'dmg',content:templateContentFromFields(sf)+' {{ad5auto=1}} {{ad5projectileauto=1}}',inlinerolls:[]};
         событиеAD5('СНАРЯД ПЕРЕД ПОПАДАНИЕМ',{игрокId:q.owner,источникПерсонажId:q.actor,источникТокенId:q.sourceToken,цельТокенId:shot.id,имяДействия:q.name,номер:i+1,всего:q.projectiles.length});
         событиеAD5('СНАРЯД ПОПАЛ',{игрокId:q.owner,источникПерсонажId:q.actor,источникТокенId:q.sourceToken,цельТокенId:shot.id,имяДействия:q.name,номер:i+1,всего:q.projectiles.length});
         processMessage(sm,{batch:q.id,tid:shot.id,reactionResume:true,multiProjectile:true});
@@ -5699,14 +6138,14 @@ var AD5 = (function () {
             steps.push(step);
         });
         q.poolResolved={total:pool,remaining:remaining,steps:steps,excluded:excluded};q.targets=chosen;
-        q.f.description=q.resolverSpec.payloadDescription;q.f.desc=q.resolverSpec.payloadDescription;q.msg.content=templateSetSimpleField(q.msg.content,'description',q.resolverSpec.payloadDescription);
+        q.f.description=q.resolverSpec.payloadDescription;q.f.desc=q.resolverSpec.payloadDescription;q.msg.content=templateContentFromFields(q.f);
     }
     function resolverUndoAll(q,pid){
         if(!playerIsGM(pid))throw new Error('Групповая отмена доступна только GM.');
         var keys=[];(q.projectileResults||[]).forEach(function(r){if(r&&r.historyKey)keys.push(r.historyKey);});Object.keys(q.results||{}).forEach(function(k){var r=q.results[k];if(r&&r.key&&keys.indexOf(r.key)<0)keys.push(r.key);});
         keys.reverse().forEach(function(k){var h=history[k];if(h&&!h.undone)historyChange(k,pid,false,true);});gm('<b>'+esc(q.name)+'</b>: отменено транзакций '+keys.length+'.');
     }
-    function secondaryAreaConfig(msg,f){
+    function secondaryAreaConfig(msg,f,spellMeta){
         if(!active(f,'ad5secondary'))return null;
         var trigger=normalizeUserText(f.ad5secondarytrigger||'attack');
         trigger=(trigger==='hit'||trigger==='попадание'||trigger==='при попадании')?'hit':'attack';
@@ -5715,26 +6154,47 @@ var AD5 = (function () {
         var areaText=String(f.ad5secondaryarea||'').trim();
         var parsed=parseDistanceSpec(areaText);
         if(!parsed.area)throw new Error('Вторичная область: не распознана площадь «'+areaText+'».');
+        var ctx=spellDslContext(spellMeta||{});
+        function expand(v){v=String(v==null?'':v).trim();return v?spellDslExpand(v,ctx):'';}
         var cfg={
             trigger:trigger,origin:'target',area:areaText,areaSpec:parsed.area,
             target:String(f.ad5secondarytarget||'каждое существо').trim(),
             name:String(f.ad5secondaryname||'Вторичная область').trim(),
-            description:String(f.ad5secondarydesc||'ЗАКЛ').trim()||'ЗАКЛ',
-            damage1:String(f.ad5secondarydmg1||'').trim(),
+            description:expand(f.ad5secondarydesc||'ЗАКЛ')||'ЗАКЛ',
+            hidden:active({x:f.ad5secondaryhidden},'x'),
+            damage1:expand(f.ad5secondarydmg1||''),
             damageType1:String(f.ad5secondarydmg1type||'').trim(),
-            damage2:String(f.ad5secondarydmg2||'').trim(),
+            damage2:expand(f.ad5secondarydmg2||''),
             damageType2:String(f.ad5secondarydmg2type||'').trim(),
             save:active(f,'ad5secondarysave'),
             saveattr:String(f.ad5secondarysaveattr||'').trim(),
-            savedc:String(f.ad5secondarysavedc||'').trim(),
+            savedc:expand(f.ad5secondarysavedc||''),
             savedesc:String(f.ad5secondarysavedesc||'').trim(),
             excludePrimary:active(f,'ad5secondaryexcludeprimary')
         };
         if(!cfg.damage1&&!cfg.damage2&&!cfg.description)
             throw new Error('Вторичная область не содержит урона или эффектов.');
-        if(cfg.save&&(!cfg.saveattr||!cfg.savedc))
-            throw new Error('Вторичная область: для спасброска нужны saveattr и savedc.');
+        if(cfg.save&&!cfg.saveattr)
+            throw new Error('Вторичная область: для спасброска нужна характеристика saveattr.');
         return cfg;
+    }
+    function hiddenSecondaryTargetIds(origin,spec,excludePrimary){
+        if(!origin||!spec)throw new Error('Скрытая вторичная область: не определён центр или геометрия.');
+        var pageId=String(origin.get('_pageid')||'');
+        if(!pageId||pageId!==partyPageId())throw new Error('Скрытая вторичная область: центр должен находиться на активной карте.');
+        var rows=[],seen=Object.create(null),originId=String(origin.id||'');
+        if(!excludePrimary&&isCombatTargetCandidate(origin,pageId)){
+            seen[originId]=true;rows.push({id:originId,name:String(origin.get('name')||originId),distance:0});
+        }
+        (findObjs({_type:'graphic',_subtype:'token',_pageid:pageId,layer:'objects'})||[]).forEach(function(t){
+            var id=String(t&&t.id||'');if(!id||id===originId||seen[id])return;seen[id]=true;
+            if(!centeredAreaCheapMaybe(origin,t,spec))return;
+            if(!isCombatTargetCandidate(t,pageId))return;
+            if(!centeredAreaContains(origin,t,spec))return;
+            rows.push({id:id,name:String(t.get('name')||id),distance:combatRangeFeet(origin,t)});
+        });
+        rows.sort(function(a,b){var d=Number(a.distance)-Number(b.distance);if(Math.abs(d)>1e-9)return d;return a.name.localeCompare(b.name,'ru');});
+        return rows.map(function(x){return x.id;});
     }
     function secondaryAreaFields(cfg,actorId,sourceTokenId){
         var f=Object.create(null);
@@ -5771,7 +6231,7 @@ var AD5 = (function () {
         return out.join(' ');
     }
     function launchSecondaryArea(msg,f,attackContext,hit,spellMeta){
-        var cfg=secondaryAreaConfig(msg,f);
+        var cfg=secondaryAreaConfig(msg,f,spellMeta);
         if(!cfg)return false;
         if(cfg.trigger==='hit'&&!hit)return false;
         if(!attackContext||!attackContext.target)throw new Error('Вторичная область: не определена первичная цель.');
@@ -5782,6 +6242,11 @@ var AD5 = (function () {
         if(!source||!isCombatToken(source,partyPageId())||!sourceTokenMatchesActor(source,attackContext.actor))
             throw new Error('Вторичная область: не определён физический токен заклинателя.');
 
+        if(cfg.save&&!cfg.savedc){
+            var autoDc=payloadAutoSaveDc(attackContext.actor);
+            if(!Number.isFinite(autoDc))throw new Error('Вторичная область: в листе не найдена СЛ заклинаний.');
+            cfg.savedc=String(autoDc);
+        }
         var sf=secondaryAreaFields(cfg,attackContext.actor,source.id);
         var sm=JSON.parse(JSON.stringify(msg));
         sm.rolltemplate='dmg';
@@ -5808,7 +6273,19 @@ var AD5 = (function () {
             expires:Date.now()+3600000
         };
         drafts[id]=q;
-        record('Вторичная область: '+cfg.name+' · trigger='+cfg.trigger+' · origin='+origin.id+' · area='+cfg.area+'.');
+        record('Вторичная область: '+cfg.name+' · trigger='+cfg.trigger+' · origin='+origin.id+' · area='+cfg.area+' · '+(cfg.hidden?'без шаблона':'с шаблоном')+'.');
+        if(cfg.hidden){
+            try{
+                var ids=hiddenSecondaryTargetIds(origin,cfg.areaSpec,!!cfg.excludePrimary);
+                multiTargets(q,ids,msg.playerid,true,true);
+                record('Скрытая вторичная область: целей='+ids.length+' · '+ids.join(',')+'.');
+                multiApply(q,msg.playerid,{allowEmptyTargets:true,emptyReason:'в скрытой области нет доступных целей',reactionResolved:true,conditionSourceTokenId:attackContext.conditionSourceToken||null});
+            }catch(hiddenError){
+                delete drafts[id];
+                throw hiddenError;
+            }
+            return true;
+        }
         setTimeout(function(){
             try{
                 if(typeof AD5Areas==='undefined'||!AD5Areas||typeof AD5Areas.resolveFixed!=='function')
@@ -5930,7 +6407,7 @@ var AD5 = (function () {
             :'default';
         var storedSpellMeta=spellMeta?{name:String(spellMeta.name||multiName||'Заклинание'),spellLevel:spellMeta.castLevel,castLevel:spellMeta.castLevel,baseSpellLevel:spellMeta.baseSpellLevel,castLevelSource:String(spellMeta.castLevelSource||''),castingTime:String(spellMeta.castingTime||''),range:String(spellMeta.range||f.range||f.distance||''),npc:!!spellMeta.npc,tagged:!!spellMeta.tagged,prefix:spellMeta.prefix||null}:null;
         if(isSpellDraft&&!storedSpellMeta)storedSpellMeta={name:String(multiName||'Заклинание'),spellLevel:null,castingTime:hasPlayerSpellTag(spellTagText)?'способность · ЗАКЛ':'',range:String(f.range||f.distance||''),npc:active(f,'ad5npcspell'),tagged:hasPlayerSpellTag(spellTagText),prefix:f.ad5spellprefix||null};
-        var q={id:id,owner:msg.playerid,originalOwner:msg.playerid,gmLocked:false,actor:c.id,page:multiFront.pageId,msg:JSON.parse(JSON.stringify(msg)),f:JSON.parse(JSON.stringify(f)),name:multiName,max:max,maxLabel:allArea?'∞':String(max),allArea:allArea,areaSpec:areaSpec?{raw:(centeredSpec?centeredSpec.raw:(f.range||f.distance||'площадной эффект')),shape:areaSpec.shape,size:areaSpec.size,width:areaSpec.width,length:areaSpec.length,height:(areaSpec.height===null||areaSpec.height===undefined?null:Number(areaSpec.height)),volume:areaSpec.volume||'',environmentType:areaSpec.environmentType||'',ignoreCover:!!areaSpec.ignoreCover,duration:(areaSpec.duration===-1?-1:(areaSpec.duration||null)),aura:!!areaSpec.aura,count:Math.max(1,Number(areaSpec.count)||1),batchTotal:Math.max(1,Number(areaSpec.batchTotal||areaSpec.count)||1),batchIndex:Math.max(1,Number(areaSpec.batchIndex)||1)}:null,targets:[],areaTargetMeta:{},results:{},status:'choosing',processing:false,compactSaveReport:false,sourceToken:resolvedAreaSourceToken?resolvedAreaSourceToken.id:null,conditionSourceToken:null,concentrationId:concentrationId||null,spellMeta:storedSpellMeta,isSpell:isSpellDraft,spellSource:spellSource,targetMode:spellTargetMode,reactionResolved:!!reactionResolved,resolverSpec:resolverSpec?JSON.parse(JSON.stringify(resolverSpec)):null,centeredArea:centeredSpec?JSON.parse(JSON.stringify(centeredSpec)):null,expires:Date.now()+3600000};
+        var q={id:id,owner:msg.playerid,originalOwner:msg.playerid,gmLocked:false,actor:c.id,page:multiFront.pageId,msg:JSON.parse(JSON.stringify(msg)),f:JSON.parse(JSON.stringify(f)),name:multiName,max:max,maxLabel:allArea?'∞':String(max),allArea:allArea,areaSpec:areaSpec?{raw:(centeredSpec?centeredSpec.raw:(f.range||f.distance||'площадной эффект')),shape:areaSpec.shape,size:areaSpec.size,width:areaSpec.width,length:areaSpec.length,height:(areaSpec.height===null||areaSpec.height===undefined?null:Number(areaSpec.height)),volume:areaSpec.volume||'',environmentType:areaSpec.environmentType||'',ignoreCover:!!areaSpec.ignoreCover,duration:(areaSpec.duration===-1?-1:(areaSpec.duration||null)),aura:!!areaSpec.aura,count:Math.max(1,Number(areaSpec.count)||1),batchTotal:Math.max(1,Number(areaSpec.batchTotal||areaSpec.count)||1),batchIndex:Math.max(1,Number(areaSpec.batchIndex)||1)}:null,targets:[],areaTargetMeta:{},results:{},status:'choosing',processing:false,compactSaveReport:false,sourceToken:resolvedAreaSourceToken?resolvedAreaSourceToken.id:null,conditionSourceToken:null,concentrationId:concentrationId||null,spellMeta:storedSpellMeta,isSpell:isSpellDraft,spellSource:spellSource,targetMode:spellTargetMode,reactionResolved:!!reactionResolved,resolverSpec:resolverSpec?JSON.parse(JSON.stringify(resolverSpec)):null,centeredArea:centeredSpec?JSON.parse(JSON.stringify(centeredSpec)):null,forcedMovementPlan:forcedMovementPlan(f.description!==undefined?f.description:(f.desc||'')),expires:Date.now()+3600000};
         if(q.centeredArea)q.targetMode='all';
         if(q.centeredArea){
             var centeredPayload=stripCenteredAreaDirective(q.f.description!==undefined?q.f.description:(q.f.desc||''));
@@ -5983,7 +6460,7 @@ var AD5 = (function () {
                 q.msg.inlinerolls=[];
                 record('Native POOL SpellCard: внутренний transport template:spell → template:dmg; Auto Roll Damage не требуется.');
             }else{
-                q.msg.content=templateSetSimpleField(q.msg.content,'description',q.resolverSpec.payloadDescription);
+                q.msg.content=templateContentFromFields(q.f);
             }
         }
         drafts[id]=q;
@@ -6460,14 +6937,30 @@ var AD5 = (function () {
         if(['save','save-cancel','saves'].indexOf(sub)>=0){saveCommand(msg,args);return;}
         if(sub==='spells'||sub==='spellbook'){
             var spellAction=normalizeUserText(args[2]||'status'),spellChar=selectedSpellCharacter(msg,pid);
-            if(spellAction==='sync'||spellAction==='синхронизация'){
-                var sr=syncSpellbookCharacter(spellChar.id);
-                var spellSummary='<b>'+esc(spellChar.get('name'))+'</b><br>Механических заклинаний: '+sr.mechanical+'. ВЫВОД=Атака: <b>'+sr.ready+'</b>. Связаны через spellattackid: '+sr.linked+'. Без ВЫВОД=Атака: '+sr.notAttack+'.<br>AD5 не изменяет переключатель ВЫВОД — его выставляет игрок в самом заклинании.';
-                if(startCharacterButtonPatch(pid,spellChar.id,spellSummary)){
-                    reply(pid,spellSummary+'<br>Связанные attack-строки поставлены в безопасную очередь обновления.');
-                }
+            if(spellAction==='bind'){
+                var bindRows=spellRows(spellChar.id).filter(function(row){return row.structured;}),bindCount=0;
+                function bindNext(){var row=bindRows.shift();if(!row){reply(pid,'Привязки обновлены: '+bindCount+'. Режим вывода сохранён.');return;}
+                    var a=attr(spellChar.id,row.prefix+'spelldescription',true),block=AD5Text.split(a.get('current'));
+                    var value=AD5Text.compose(block.narrative,block.mechanics,spellChar.id,row.prefix);
+                    if(a.get('current')!==value){a.setWithWorker({current:value});bindCount++;}
+                    setTimeout(bindNext,50);
+                }bindNext();
+            }else if(spellAction==='sync'||spellAction==='синхронизация'){
+                reply(pid,'<b>'+esc(spellChar.get('name'))+'</b>: применяю единую политику вывода Spellbook. Механические заклинания → <b>Атака</b>; только нарративные → <b>Карточка заклинания</b>.');
+                enforceSpellbookOutputPolicy(spellChar.id,function(syncErr,sr){
+                    try{
+                        if(syncErr){reply(pid,'Синхронизация Spellbook: '+esc(syncErr.message||syncErr));return;}
+                        var spellSummary='<b>'+esc(spellChar.get('name'))+'</b><br>Всего: '+sr.total+
+                            '. Механических: <b>'+sr.mechanical+'</b>. Нарративных: <b>'+sr.narrative+'</b>.'+
+                            '<br>Переведено в Атаку: '+sr.toAttack+'. Переведено в SpellCard: '+sr.toCard+'. Подтверждено патчей: '+sr.patched+'.'+
+                            (sr.errors.length?'<br><b>Ошибки:</b><br>'+sr.errors.map(esc).join('<br>'):'');
+                        if(startCharacterButtonPatch(pid,spellChar.id,spellSummary)){
+                            reply(pid,spellSummary+'<br>Связанные attack-строки поставлены в безопасную очередь обновления.');
+                        }else reply(pid,spellSummary);
+                    }catch(syncCallbackError){reply(pid,'Синхронизация Spellbook: '+esc(syncCallbackError.message||syncCallbackError));}
+                });
             }else if(spellAction==='status'||spellAction==='статус')reply(pid,spellbookStatusHtml(spellChar.id));
-            else throw new Error('Используйте !ad5 spells status или !ad5 spells sync.');
+            else throw new Error('Используйте !ad5 spells status, !ad5 spells sync или !ad5 spells bind.');
             return;
         }
         if (sub === 'visibility') {
@@ -6510,9 +7003,8 @@ var AD5 = (function () {
                 if(!msg.selected||msg.selected.length!==1)throw new Error('Для !ad5 buttons selected выделите один токен владельца способности.');
                 var bt=getObj('graphic',msg.selected[0]._id),bc=bt&&getObj('character',bt.get('represents'));
                 if(!bc)throw new Error('У выбранного токена нет листа персонажа.');
-                var nativeMulti=prepareNativeMultiSpellCards(bc.id);
-                if(startCharacterButtonPatch(pid,bc.id,'Ручной ремонт листа <b>'+esc(bc.get('name'))+'</b> завершён.<br>Native SpellCard МУЛЬТИ: строк '+nativeMulti.rows+', изменений '+nativeMulti.changed+'.')){
-                    reply(pid,'Лист <b>'+esc(bc.get('name'))+'</b>: запущен ручной ремонт кнопок. МУЛЬТИ-заклинания переведены на штатный Roll20 SPELLCARD; repeating_attack для их механики больше не используется.');
+                if(startCharacterButtonPatch(pid,bc.id,'Ручной ремонт листа <b>'+esc(bc.get('name'))+'</b> завершён.')){
+                    reply(pid,'Лист <b>'+esc(bc.get('name'))+'</b>: запущен ручной ремонт связанных attack-строк. Механические Spellbook-заклинания, включая МУЛЬТИ/DSL, должны использовать ВЫВОД=Атака.');
                 }
             }else if(allOnly){
                 if(startAllButtonPatch(pid,'Полный обход нужен только для явной миграции старых кнопок; автоматическое обновление строк отключено.')){
@@ -6572,12 +7064,12 @@ var AD5 = (function () {
             return;
         }
         if (sub === 'help') {
-            reply(pid, 'Обычная одиночная способность → Roll20 предлагает выбрать цель на карте. Заклинание из Spellbook с ВЫВОД=Атака → AD5 показывает безопасный одноразовый список целей после броска, без Jumpgate token_id.<br>' +
+            reply(pid, 'Обычная одиночная способность и Spellbook с ВЫВОД=Атака → Roll20 предлагает выбрать цель на карте. Если старая/непропатченная строка дошла без token_id, AD5 показывает одну кнопку «Выбрать цель», которая запускает штатный Target Roll20; список токенов больше не строится.<br>' +
                 'Назначить: <code>!ad5 target ID</code>; сбросить: <code>!ad5 cancel</code>.<br>' +
                 'GM: атака из любого PC/NPC листа, <code>!ad5 actor</code> не требуется. Новые/изменённые кнопки обновляются автоматически.<br>' +
                 'Игрок: при неоднозначном скрытом имени выделите свой токен и введите <code>!ad5 actor</code>. Сброс: <code>!ad5 actor clear</code>.<br>' +
                 'Мастер: <code>!ad5 setup</code> создаёт/восстанавливает макрос; одиночная цель выбирается нативным кликом по токену на карте; <code>!ad5 check</code> проверяет выбранный токен.<br>' +
-                '<code>!ad5 ping</code> — проверка запуска; <code>!ad5 target-audit</code> — какие токены реально считаются боевыми целями на Party Ribbon; <code>!ad5 debug on</code> — диагностика; <code>!ad5 report</code> — отчёт.<br><code>!ad5 spells status</code> — проверка раздела Заклинания; <code>!ad5 spells sync</code> — заново пропатчить уже созданные связанные attack-строки заклинаний; ВЫВОД=Атака выставляет игрок.<br>AutoFront постоянно держит боевые токены поверх шаблонов; одиночная способность сразу запускает нативный выбор цели на карте. Площади, конусы, линии и способности до N целей используют Areas/мультивыбор.'); return;
+                '<code>!ad5 ping</code> — проверка запуска; <code>!ad5 target-audit</code> — какие токены реально считаются боевыми целями на Party Ribbon; <code>!ad5 debug on</code> — диагностика; <code>!ad5 report</code> — отчёт.<br><code>!ad5 spells status</code> — проверка раздела Заклинания; <code>!ad5 spells sync</code> — заново пропатчить уже созданные связанные attack-строки заклинаний; политику ВЫВОД=Атака для механических заклинаний обеспечивает AD5 Spell Library; для уже существующих строк используйте <code>!ad5 spells sync</code> (все Spellbook-строки) или <code>!ad5spell repair</code> (импортированные Library-строки).<br>AutoFront постоянно держит боевые токены поверх шаблонов; одиночная способность сразу запускает нативный выбор цели на карте. Площади, конусы, линии и способности до N целей используют Areas/мультивыбор.'); return;
         }
         if (sub === 'cancel') { delete armed[pid]; delete pending[pid]; delete deferred[pid]; reply(pid, 'Ожидающая способность, цель и урон сброшены.'); return; }
         if (sub === 'setup') {
@@ -6591,7 +7083,7 @@ var AD5 = (function () {
         var index = 2, id;
         if (args[index] && args[index].indexOf('--') !== 0) id = args[index++];
         if (!id) {
-            if (!msg.selected || msg.selected.length !== 1) throw new Error('Укажите цель кнопкой из списка AD5. Для ручного вызова GM может выделить ровно один токен.');
+            if (!msg.selected || msg.selected.length !== 1) throw new Error('Нажмите кнопку «Выбрать цель» и укажите токен на карте. Для ручного вызова GM может выделить ровно один токен.');
             id = msg.selected[0]._id;
         }
         var mode = 'normal', factor = 1, requestId = '', seen = {};
@@ -6613,12 +7105,12 @@ var AD5 = (function () {
             if (!waitingAction) {
                 delete armed[pid]; delete pending[pid]; delete deferred[pid];
                 record('Цель проигнорирована без ожидающей способности: игрок=' + pid + '; token=' + id);
-                reply(pid, 'Сейчас нет способности, ожидающей цель. Сначала используйте атаку/способность, затем выберите цель из списка AD5.');
+                reply(pid, 'Сейчас нет способности, ожидающей цель. Сначала используйте атаку/способность, затем нажмите «Выбрать цель».');
                 return;
             }
             if (requestId && waitingAction.requestId && requestId !== waitingAction.requestId) {
                 record('Устаревшая кнопка цели: игрок=' + pid + '; request=' + requestId + '; current=' + waitingAction.requestId);
-                reply(pid, 'Эта кнопка цели относится к старой способности и больше недействительна. Используйте список под последней способностью.');
+                reply(pid, 'Эта кнопка цели относится к старой способности и больше недействительна. Используйте кнопку под последней способностью.');
                 return;
             }
             // Consume the request BEFORE resuming. Even if processMessage throws,
@@ -6644,6 +7136,11 @@ var AD5 = (function () {
         reply(pid, 'Цель на следующую атаку: <b>' + esc(t.token.get('name') || 'Токен') + '</b>.');
     }
     function processMessage(msg,context) {
+        // 4.3.141: an AD5-generated attack reroll is consumed by its sendChat callback,
+        // never by the public chat listener. Some Roll20 sandbox builds can publish
+        // the synthetic card with a non-API player id; the explicit marker prevents
+        // re-entry and a chat:message watchdog loop.
+        if(!context&&msg&&/\{\{ad5internalroll=1\}\}/i.test(String(msg.content||'')))return;
         var trustedReactionApi=!!(msg&&msg.playerid==='API'&&/\{\{ad5reactionexec=1\}\}/i.test(String(msg.content||'')));
         if (!msg.playerid || (!trustedReactionApi && (msg.playerid === 'API' || !getObj('player', msg.playerid)))) return;
         try {
@@ -6662,6 +7159,9 @@ var AD5 = (function () {
                 (msg.selected||[]).forEach(function(x){var st=x&&x._type==='graphic'&&getObj('graphic',x._id);if(st)rememberPhysicalSourceToken(st,pid);});
             }catch(ignoreSelectedSourceMemory){}
             var f = fields(msg.content);
+            // New structured SpellCards are reference output only. Switching the native
+            // selector to ATTACK is the player's explicit request to execute.
+            if(isNativeSpellCard&&active(f,'ad5structured'))return;
             var directNativeSpellMeta=isNativeSpellCard?nativeMultiSpellCardMeta(msg,f):null;
             // Ordinary Roll20 spell cards remain purely presentational. AD5 only
             // consumes native template:spell directly when the live card declares
@@ -6673,7 +7173,8 @@ var AD5 = (function () {
             // 4.3.92: identify Spellbook casts by the native repeating_attack
             // row pointer first.  ad5spellprefix is legacy compatibility only.
             var spellSourceId=(f.ad5attackrow||f.ad5spellprefix)?spellActorId(msg,f):null;
-            var spellMeta=directNativeSpellMeta||(spellSourceId?enrichSpellFields(msg,f,spellSourceId):null);
+            var batchDraft=context&&context.batch&&drafts[context.batch];
+            var spellMeta=batchDraft&&batchDraft.spellMeta?JSON.parse(JSON.stringify(batchDraft.spellMeta)):(directNativeSpellMeta||(spellSourceId?enrichSpellFields(msg,f,spellSourceId):null));
             if(!spellMeta)spellMeta=npcSpellMetaForFields(f);
             if(!spellMeta)spellMeta=taggedPlayerSpellMetaForFields(msg,f);
             if(spellMeta){
@@ -6689,6 +7190,7 @@ var AD5 = (function () {
                     ' · '+spellLevelDescribe({baseLevel:spellMeta.baseSpellLevel,castLevel:spellMeta.castLevel})+
                     ' · источник='+resolvedLevels.source);
             }
+            if(spellMeta&&spellMeta.structured&&!spellValueActive(spellMeta.attack)&&!spellValueActive(spellMeta.damage1)&&!spellValueActive(spellMeta.damage2)&&!spellValueActive(spellMeta.healing)&&!spellValueActive(spellMeta.save)&&!spellHasAd5Syntax(spellMeta.description)){return;}
             var spellDslRuntime=spellMeta?spellDslApplyRuntime(f,spellMeta):{active:false,targetDirective:false,durationDirective:false,targets:null,duration:null,context:{delta:0}};
             if(spellDslRuntime.active)record('Spell DSL: '+spellLevelDescribe({baseLevel:spellMeta.baseSpellLevel,castLevel:spellMeta.castLevel})+' · ПОВ='+spellDslRuntime.context.delta+(spellDslRuntime.targets!==null?' · целей='+spellDslRuntime.targets:'')+(spellDslRuntime.duration!==null?' · длительность='+spellDslRuntime.duration:''));
             if(active(f,'ad5directspell'))record('Прямой Spellbook-roll: attack-row не используется.');
@@ -6862,7 +7364,8 @@ var AD5 = (function () {
                         : false;
                 }catch(ignoreDirectMechanical){}
             }
-            var automatic=isDmg&&!hasAttack&&!hasSave&&(hasEffectComponents(f)||directMechanical);
+            var specialMechanical=typeof AD5SpellEffects!=='undefined'&&AD5SpellEffects.parse(f.description||f.desc||'').some(function(x){return ['shield','hellish'].indexOf(x.kind)<0;});
+            var automatic=(isDmg||isAtk)&&!hasAttack&&!hasSave&&(hasEffectComponents(f)||directMechanical||specialMechanical);
             if ((isAtk && hasAttack) || (isDmg && hasSave) || automatic) {
                 // Every new attack supersedes pending damage and any older deferred target request.
                 delete pending[pid];
@@ -6890,6 +7393,7 @@ var AD5 = (function () {
                 var linkedSpellHasNativeTarget=!!spellMeta && !missingInlineTarget && f.ad5target!==undefined && !blank(f.ad5target);
                 if (((targetMode()==='selected' && !linkedSpellHasNativeTarget) || missingInlineTarget) && !active(f,'ad5reactionexec') && !context && !isPostTargetResume) {
                     delete armed[pid];
+                    if(missingInlineTarget&&spellMeta)record('Target transport missing for '+String(spellMeta.name||'заклинание')+'; current cast uses one-shot Target fallback. Repair is manual/library-owned.');
                     // Required order for EVERY fresh single-target ability:
                     // 1) ability card reaches AD5; 2) all combat tokens to front;
                     // 3) target is chosen; 4) the saved roll continues unchanged.
@@ -7202,7 +7706,9 @@ var AD5 = (function () {
                                         if(событиеАтаки)событиеAD5('ПРОМАХ',данныеСобытияАтаки({итогАтаки:r.total,натуральныйБросок:die,крит:false,концентрацияId:concentrationId||null,послеРеакции:true}));
                                         sendChat('Шепот звезд','промах');if(context)multiResult(context.batch,context.tid,'попадание отменено реакцией');
                                         gm('<b>'+esc(name)+'</b> → '+esc(t.token.get('name')||t.token.id)+'<br>Реакция «'+esc(hitReactionResult.reactionName||'Реакция')+'» отменила попадание.<br>Применённый урон: 0. HP не изменены.');
-                                        if(targetMode()==='selected'){delete armed[pid];delete deferred[pid];delete pending[pid];}return;
+                                        if(targetMode()==='selected'){delete armed[pid];delete deferred[pid];delete pending[pid];}
+                                        launchSecondaryArea(msg,f,{actor:c.id,sourceToken:sourceAttack.token?sourceAttack.token.id:null,target:t.token.id,concentrationId:concentrationId||null,name:name,conditionSourceToken:(context&&context.reflectionSourceTokenId)?String(context.reflectionSourceTokenId):null},false,spellMeta);
+                                        return;
                                     }
                                     if(hitReactionResult&&hitReactionResult.rerollAttack){
                                         var oldDie=die,oldTotal=r.total,newDie=(typeof randomInteger==='function'?randomInteger(20):(Math.floor(Math.random()*20)+1)),flatBonus=oldTotal-oldDie;
@@ -7213,7 +7719,9 @@ var AD5 = (function () {
                                         if(!hit){
                                             if(событиеАтаки)событиеAD5('ПРОМАХ',данныеСобытияАтаки({итогАтаки:r.total,натуральныйБросок:die,крит:false,концентрацияId:concentrationId||null,послеРеакции:true}));
                                             sendChat('Шепот звезд','промах');if(context)multiResult(context.batch,context.tid,'промах после переброса реакции');
-                                            if(targetMode()==='selected'){delete armed[pid];delete deferred[pid];delete pending[pid];}return;
+                                            if(targetMode()==='selected'){delete armed[pid];delete deferred[pid];delete pending[pid];}
+                                            launchSecondaryArea(msg,f,{actor:c.id,sourceToken:sourceAttack.token?sourceAttack.token.id:null,target:t.token.id,concentrationId:concentrationId||null,name:name,conditionSourceToken:(context&&context.reflectionSourceTokenId)?String(context.reflectionSourceTokenId):null},false,spellMeta);
+                                            return;
                                         }
                                     }
                                     // A hit reaction may change the target AC (Shield / Defensive Duelist).
@@ -7246,7 +7754,7 @@ var AD5 = (function () {
                             specialShieldChecked=true;
                             AD5SpellEffects.offerShield({source:sourceAttack.token&&sourceAttack.token.id,target:t.token.id},function(used){
                                 if(used){acModifier=targetAcModifier(t.token)+coverAcBonus;ac=acBase+acModifier;hit=attackConditionRule.autoHitClose?die!==1:(die!==1&&(die===20||r.total>=ac));}
-                                if(!hit){if(context)multiResult(context.batch,context.tid,'промах после Щита');sendChat('Шепот звезд','Щит: промах');if(targetMode()==='selected'){delete armed[pid];delete deferred[pid];delete pending[pid];}return;}
+                                if(!hit){if(context)multiResult(context.batch,context.tid,'промах после Щита');sendChat('Шепот звезд','Щит: промах');if(targetMode()==='selected'){delete armed[pid];delete deferred[pid];delete pending[pid];}launchSecondaryArea(msg,f,{actor:c.id,sourceToken:sourceAttack.token?sourceAttack.token.id:null,target:t.token.id,concentrationId:concentrationId||null,name:name,conditionSourceToken:(context&&context.reflectionSourceTokenId)?String(context.reflectionSourceTokenId):null},false,spellMeta);return;}
                                 continueAttackAfterHitReactions();
                             });return;
                         }
@@ -7490,7 +7998,6 @@ var AD5 = (function () {
         finish(msg,f,p);
         return true;
     }
-
     function persistentAreaOwner(snapshot){
         if(snapshot&&snapshot.owner&&getObj('player',snapshot.owner))return snapshot.owner;
         var players=findObjs({_type:'player'}),gmPlayer=null;
@@ -7823,6 +8330,12 @@ var AD5 = (function () {
         on('add:attribute',scheduleSheetHealth);
         on('change:attribute',scheduleSheetHealth);
         on('destroy:attribute',scheduleSheetHealth);
+        // 4.3.140 ATTRIBUTE LOOP-SAFE: do not subscribe the linked-spell repair
+        // to add/change:attribute. Legacy Sheet Workers can emit a very large burst
+        // while Output=ATTACK is being built; any Mod callback in that publish chain
+        // increases the chance of Roll20's infinite-loop watchdog stopping the sandbox.
+        // Linked spell transport is repaired explicitly by Spell Library / !ad5 spells
+        // sync, and an individual stale row is still self-repaired on actual use.
     });
     on('add:graphic', function(token){if(!AD5Background.isReady())return;scheduleTokenBarSync(token);scheduleCombatFront('add-token');});
     on('change:graphic', function(token,prev){
@@ -7928,9 +8441,9 @@ var AD5 = (function () {
         // 4.3.123: READY is intentionally free of Character-attribute/Ability migrations.
         // Large Legacy campaigns can have thousands of Sheet Worker attribute events;
         // startup repair must never join that event stream automatically.
-        gm('Режим цели: <b>PC Attack → Target на карте; МУЛЬТИ/DSL → штатный Roll20 SpellCard; NPC/Transform → Native Map Target</b>. Автоматическая запись/миграция строк листа на READY и из add/change:attribute <b>ОТКЛЮЧЕНА</b>. Ручной ремонт: <code>!ad5 buttons selected</code>; полная разовая миграция: <code>!ad5 buttons all</code>; Spellbook: <code>!ad5 spells sync</code>.');
+        gm('Режим цели: <b>механические Spellbook-заклинания (включая МУЛЬТИ/DSL) → Output=Attack; одиночные → Target на карте; NPC/Transform → Native Map Target</b>. Общая автоматическая миграция строк листа на READY и из add/change:attribute <b>ОТКЛЮЧЕНА</b>; включён только точечный автопатч связанной Spellbook attack-строки для нативного Target. Ручной ремонт: <code>!ad5 buttons selected</code>; полная разовая миграция: <code>!ad5 buttons all</code>; Spellbook: <code>!ad5 spells sync</code>.');
     });
-    return {version:VERSION,special:{temp:function(token,amount,owner){var t={token:token,cid:token.get('represents')};commitTemp(t,2,amount,amount);AD5EffectTurns.setTempHpOwner(token.id,owner);}},syntax:AD5Syntax,combatTargets:{isTargetable:isCombatTargetCandidate,reason:combatTargetCandidateReason,insidePage:tokenCenterInsidePage},события:{сообщить:событиеAD5},phaseBridge:{effectType:effectType,complete:multiResult},damageDefense:{area:areaDamageDefense},reaction:{damage:reactionDamage},environment:{damage:environmentalDamage,cover:function(a,b){return (typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.coverBetween==='function')?AD5Environment.coverBetween(a,b):null;}},parseDistanceSpec:parseDistanceSpec,conditions:AD5Conditions,conditionRules:{has:hasCombatCondition,entry:conditionEntry,source:conditionSourceToken,sourceMatches:conditionSourceMatches,rangeFeet:combatRangeFeet,attackRule:conditionAttackRule,saveRule:conditionSaveRule,damageDefense:conditionDamageDefense,mode:conditionMode,abilityCheckRule:function(token,ability,context){try{return (typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&AD5ConditionEngine.abilityCheckRule)?AD5ConditionEngine.abilityCheckRule(token,ability,context):{autoFail:false,mode:'normal',labels:[]};}catch(ignore){return {autoFail:false,mode:'normal',labels:[]};}},canAct:function(token){try{return (typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&AD5ConditionEngine.canAct)?AD5ConditionEngine.canAct(token):{allowed:true,reasons:[]};}catch(ignore){return {allowed:true,reasons:[]};}},canReact:function(token){try{return (typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&AD5ConditionEngine.canReact)?AD5ConditionEngine.canReact(token):{allowed:true,reasons:[]};}catch(ignore){return {allowed:true,reasons:[]};}}},attackBuff:{value:AD5AttackBuff.value,set:AD5AttackBuff.set},concentration:{endEffects:concentrationEndEffects},spellLevel:{resolve:resolveSpellLevels,value:spellLevelValue,test:spellLevelTest,describe:spellLevelDescribe},dsl:{context:spellDslContext,expand:spellDslExpand,eval:spellDslEval,apply:spellDslApplyRuntime,needsCastLevel:spellDslNeedsCastLevel,targetDirective:spellDslHasTargetDirective,durationDirective:spellDslHasDurationDirective},multiResolver:{parse:multiResolverSpec},spellbook:{rows:spellRows,find:spellByName,sync:syncSpellbookCharacter,enrich:enrichSpellFields,patchLinkedAttack:patchLinkedSpellAttack,prepareNativeMulti:prepareNativeMultiSpellCards},_test:{sleepExclusion:sleepExclusion,wakeManagedSleep:wakeManagedSleep,finish:finish,processMessage:processMessage,projectileNext:projectileNext,saveSpec:saveSpec,nativeMultiSpellCardMeta:nativeMultiSpellCardMeta,nativeMultiSpellCardRollcontent:nativeMultiSpellCardRollcontent,multiResolverSpec:multiResolverSpec,poolSortCandidates:poolSortCandidates,poolResolve:poolResolve,payloadAutoSaveDc:payloadAutoSaveDc,payloadPrepareBundle:payloadPrepareBundle,payloadOutcomeDescription:payloadOutcomeDescription,spellRowCanUpcast:spellRowCanUpcast,spellDslEval:spellDslEval,spellDslExpand:spellDslExpand,spellDslControl:spellDslControl,spellDslApplyRuntime:spellDslApplyRuntime,spellDslCastQuery:spellDslCastQuery,spellPrefersNativeCard:spellPrefersNativeCard,isExactSelfRange:isExactSelfRange,sourceTokenMatchesActor:sourceTokenMatchesActor,rememberPhysicalSourceToken:rememberPhysicalSourceToken,rememberedPhysicalSourceToken:rememberedPhysicalSourceToken,sourceAttackModifier:sourceAttackModifier,rangeConcentrationSpec:rangeConcentrationSpec,duplicatePersistentTurnPhase:duplicatePersistentTurnPhase,effectType:effectType,fields:fields,normalizeUserText:normalizeUserText,centeredAreaDirective:centeredAreaDirective,centeredAreaContains:centeredAreaContains,centeredAreaCheapMaybe:centeredAreaCheapMaybe,centeredAreaTargetIds:centeredAreaTargetIds,stripCenteredAreaDirective:stripCenteredAreaDirective,descriptionSaveDirective:descriptionSaveDirective,stripDescriptionSaveDirective:stripDescriptionSaveDirective,materializeMultiLiteralEffects:materializeMultiLiteralEffects,decodeTargetRef:decodeTargetRef,unresolvedTargetRef:unresolvedTargetRef,partyPageId:partyPageId,isCombatToken:isCombatToken,effectComponentIndexes:effectComponentIndexes,damageTypesFromText:damageTypesFromText,conditionTypesFromText:conditionTypesFromText,typedDamage:typedDamage,npcSheetDefenses:npcSheetDefenses,areaDamageDefense:areaDamageDefense,areaRollExpression:areaRollExpression,effectModifiersForToken:effectModifiersForToken,rollEffectModifierRows:rollEffectModifierRows,targetAcModifier:targetAcModifier,targetSaveModifier:targetSaveModifier,combinedAttackModifier:combinedAttackModifier,combineSaveModes:combineSaveModes,saveNatural:saveNatural,saveCritical:saveCritical,saveSucceeded:saveSucceeded,saveDamageMultiplier:saveDamageMultiplier,applyOutgoingDamageModifiers:applyOutgoingDamageModifiers,spellRows:spellRows,spellByName:spellByName,spellByAttackRowId:spellByAttackRowId,spellByNativeAttackRow:spellByNativeAttackRow,patchLinkedSpellAttack:patchLinkedSpellAttack,spellMechanical:spellMechanical,npcSpellMetaForFields:npcSpellMetaForFields,resolveSpellLevels:resolveSpellLevels,spellLevelValue:spellLevelValue,spellLevelTest:spellLevelTest,forcedMovementDirectives:forcedMovementDirectives,secondaryAreaConfig:secondaryAreaConfig,parseAttackRangeSpec:parseAttackRangeSpec,resolveAttackRangeText:resolveAttackRangeText,attackRangeRule:attackRangeRule,combatRangeFeet:combatRangeFeet},area:{snapshot:persistentAreaSnapshot,trigger:persistentAreaTrigger,prepareMovement:persistentAreaMovementRule,triggerMovement:persistentAreaMovementTrigger},periodic:{trigger:periodicEffectTrigger},movement:{undo:movementUndo,redo:movementRedo,pendingCount:movementPendingCount,isCancelled:function(txn){return !!cancelledMovementTransactions[String(txn||'')];}},multi:{
+    return {version:VERSION,special:{temp:function(token,amount,owner){var t={token:token,cid:token.get('represents')};commitTemp(t,2,amount,amount);AD5EffectTurns.setTempHpOwner(token.id,owner);}},syntax:AD5Syntax,combatTargets:{isTargetable:isCombatTargetCandidate,reason:combatTargetCandidateReason,insidePage:tokenCenterInsidePage},события:{сообщить:событиеAD5},phaseBridge:{effectType:effectType,complete:multiResult},damageDefense:{area:areaDamageDefense},reaction:{damage:reactionDamage},environment:{damage:environmentalDamage,cover:function(a,b){return (typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.coverBetween==='function')?AD5Environment.coverBetween(a,b):null;}},parseDistanceSpec:parseDistanceSpec,conditions:AD5Conditions,conditionRules:{has:hasCombatCondition,entry:conditionEntry,source:conditionSourceToken,sourceMatches:conditionSourceMatches,rangeFeet:combatRangeFeet,attackRule:conditionAttackRule,saveRule:conditionSaveRule,damageDefense:conditionDamageDefense,mode:conditionMode,abilityCheckRule:function(token,ability,context){try{return (typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&AD5ConditionEngine.abilityCheckRule)?AD5ConditionEngine.abilityCheckRule(token,ability,context):{autoFail:false,mode:'normal',labels:[]};}catch(ignore){return {autoFail:false,mode:'normal',labels:[]};}},canAct:function(token){try{return (typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&AD5ConditionEngine.canAct)?AD5ConditionEngine.canAct(token):{allowed:true,reasons:[]};}catch(ignore){return {allowed:true,reasons:[]};}},canReact:function(token){try{return (typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&AD5ConditionEngine.canReact)?AD5ConditionEngine.canReact(token):{allowed:true,reasons:[]};}catch(ignore){return {allowed:true,reasons:[]};}}},attackBuff:{value:AD5AttackBuff.value,set:AD5AttackBuff.set},concentration:{endEffects:concentrationEndEffects},spellLevel:{resolve:resolveSpellLevels,value:spellLevelValue,test:spellLevelTest,describe:spellLevelDescribe},dsl:{context:spellDslContext,expand:spellDslExpand,eval:spellDslEval,apply:spellDslApplyRuntime,needsCastLevel:spellDslNeedsCastLevel,targetDirective:spellDslHasTargetDirective,durationDirective:spellDslHasDurationDirective},multiResolver:{parse:multiResolverSpec},spellbook:{rows:spellRows,find:spellByName,sync:syncSpellbookCharacter,enforceOutputPolicy:enforceSpellbookOutputPolicy,enrich:enrichSpellFields,patchLinkedAttack:patchLinkedSpellAttack,hydrateLinkedAttack:hydrateLinkedSpellAttackRow,isMechanicalDefinition:spellDefinitionMechanical,desiredOutput:function(def){return spellDefinitionMechanical(def)?'ATTACK':'SPELLCARD';},prepareNativeMulti:prepareNativeMultiSpellCards},_test:{sleepExclusion:sleepExclusion,wakeManagedSleep:wakeManagedSleep,finish:finish,processMessage:processMessage,projectileNext:projectileNext,saveSpec:saveSpec,nativeMultiSpellCardMeta:nativeMultiSpellCardMeta,nativeMultiSpellCardRollcontent:nativeMultiSpellCardRollcontent,multiResolverSpec:multiResolverSpec,poolSortCandidates:poolSortCandidates,poolResolve:poolResolve,payloadAutoSaveDc:payloadAutoSaveDc,payloadPrepareBundle:payloadPrepareBundle,payloadOutcomeDescription:payloadOutcomeDescription,spellRowCanUpcast:spellRowCanUpcast,spellDslEval:spellDslEval,spellDslExpand:spellDslExpand,spellDslControl:spellDslControl,spellDslApplyRuntime:spellDslApplyRuntime,spellDslCastQuery:spellDslCastQuery,spellPrefersNativeCard:spellPrefersNativeCard,isExactSelfRange:isExactSelfRange,sourceTokenMatchesActor:sourceTokenMatchesActor,rememberPhysicalSourceToken:rememberPhysicalSourceToken,rememberedPhysicalSourceToken:rememberedPhysicalSourceToken,sourceAttackModifier:sourceAttackModifier,rangeConcentrationSpec:rangeConcentrationSpec,duplicatePersistentTurnPhase:duplicatePersistentTurnPhase,effectType:effectType,fields:fields,normalizeUserText:normalizeUserText,centeredAreaDirective:centeredAreaDirective,centeredAreaContains:centeredAreaContains,centeredAreaCheapMaybe:centeredAreaCheapMaybe,centeredAreaTargetIds:centeredAreaTargetIds,stripCenteredAreaDirective:stripCenteredAreaDirective,descriptionSaveDirective:descriptionSaveDirective,stripDescriptionSaveDirective:stripDescriptionSaveDirective,materializeMultiLiteralEffects:materializeMultiLiteralEffects,decodeTargetRef:decodeTargetRef,unresolvedTargetRef:unresolvedTargetRef,partyPageId:partyPageId,isCombatToken:isCombatToken,effectComponentIndexes:effectComponentIndexes,damageTypesFromText:damageTypesFromText,conditionTypesFromText:conditionTypesFromText,typedDamage:typedDamage,npcSheetDefenses:npcSheetDefenses,areaDamageDefense:areaDamageDefense,areaRollExpression:areaRollExpression,effectModifiersForToken:effectModifiersForToken,rollEffectModifierRows:rollEffectModifierRows,targetAcModifier:targetAcModifier,targetSaveModifier:targetSaveModifier,combinedAttackModifier:combinedAttackModifier,combineSaveModes:combineSaveModes,saveNatural:saveNatural,saveCritical:saveCritical,saveSucceeded:saveSucceeded,saveDamageMultiplier:saveDamageMultiplier,saveOutcomeDamageMode:saveOutcomeDamageMode,applyOutgoingDamageModifiers:applyOutgoingDamageModifiers,spellRows:spellRows,spellByName:spellByName,spellByAttackRowId:spellByAttackRowId,spellByNativeAttackRow:spellByNativeAttackRow,patchLinkedSpellAttack:patchLinkedSpellAttack,hydrateLinkedSpellAttackRow:hydrateLinkedSpellAttackRow,spellMechanical:spellMechanical,spellDefinitionMechanical:spellDefinitionMechanical,npcSpellMetaForFields:npcSpellMetaForFields,resolveSpellLevels:resolveSpellLevels,spellLevelValue:spellLevelValue,spellLevelTest:spellLevelTest,forcedMovementList:forcedMovementList,forcedMovementPlan:forcedMovementPlan,forcedMovementDirectives:forcedMovementDirectives,forcedMovementSource:forcedMovementSource,secondaryAreaConfig:secondaryAreaConfig,hiddenSecondaryTargetIds:hiddenSecondaryTargetIds,parseAttackRangeSpec:parseAttackRangeSpec,resolveAttackRangeText:resolveAttackRangeText,attackRangeRule:attackRangeRule,combatRangeFeet:combatRangeFeet},area:{snapshot:persistentAreaSnapshot,trigger:persistentAreaTrigger,prepareMovement:persistentAreaMovementRule,triggerMovement:persistentAreaMovementTrigger},periodic:{trigger:periodicEffectTrigger},movement:{undo:movementUndo,redo:movementRedo,pendingCount:movementPendingCount,isCancelled:function(txn){return !!cancelledMovementTransactions[String(txn||'')];}},multi:{
         get:function(id,pid){var q=multiGet(id,pid,true);return {id:q.id,name:q.name,actor:q.actor,owner:q.owner,originalOwner:q.originalOwner||q.owner,gmLocked:!!q.gmLocked,max:q.max,maxLabel:q.maxLabel,allArea:q.allArea,areaSpec:q.areaSpec,status:q.status,concentrationId:q.concentrationId||null,sourceToken:q.sourceToken||null,areaOriginToken:q.areaOriginToken||null,conditionSourceToken:q.conditionSourceToken||null,spellMeta:q.spellMeta?JSON.parse(JSON.stringify(q.spellMeta)):null,isSpell:!!q.isSpell,spellSource:String(q.spellSource||''),targetMode:String(q.targetMode||'default'),target:(q.f&&q.f.target)||'',reactionResolved:!!q.reactionResolved,description:(q.f&&q.f.description!==undefined?q.f.description:(q.f&&q.f.desc!==undefined?q.f.desc:'')),selected:q.msg.selected||[]};},
         setTargets:function(id,pid,ids,quiet){multiTargets(multiGet(id,pid,true),ids,pid,true,!!quiet);},
         setTargetMeta:function(id,pid,meta){var q=multiGet(id,pid,true),out={};meta=meta&&typeof meta==='object'?meta:{};Object.keys(meta).forEach(function(tid){var m=meta[tid];if(!m||typeof m!=='object')return;out[String(tid)]={dexAdvantage:!!m.dexAdvantage,coverLabel:String(m.coverLabel||'')};});q.areaTargetMeta=out;return true;},
