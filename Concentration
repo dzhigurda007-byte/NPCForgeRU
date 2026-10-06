@@ -16,7 +16,7 @@ if(typeof AD5Concentration!=='undefined'&&AD5Concentration) {
  */
 var AD5Concentration=(function(){
     'use strict';
-    var VERSION='1.2.7',SCRIPT='AD5 Concentration',SEQ=0;
+    var VERSION='1.2.8',SCRIPT='AD5 Concentration',SEQ=0;
     var FALLBACK_MARKERS=['overdrive','aura','stopwatch','white-tower'];
     var ACTION_NAME=Array(21).join('\u200b')+'AD5 · Снять концентрацию',ACTION_CMD='!ad5conc endselected',runtimeTurnKey='';
 
@@ -351,7 +351,7 @@ var AD5Concentration=(function(){
         var cs=findObjs({_type:'character',name:name});if(cs.length!==1)cs=findObjs({_type:'character'}).filter(function(x){return norm(x.get('name'))===norm(name);});return cs.length===1?cs[0]:null;
     }
     function spellCard(msg){
-        if(!msg||msg.playerid==='API'||msg.rolltemplate!=='spell')return false;var f=fields(msg.content);if(!activeField(f.concentration)&&!rangeConcentration(f.range||f.distance||''))return false;
+        if(!msg||msg.playerid==='API'||msg.rolltemplate!=='spell')return false;if(/\[\/?AD5\]/i.test(String(msg.content||'')))return false;var f=fields(msg.content);if(!activeField(f.concentration)&&!rangeConcentration(f.range||f.distance||''))return false;
         var c=actorFromSpellCard(msg,f);if(!c){gm('Не удалось определить заклинателя концентрационного spellcard «'+esc(f.name||'заклинание')+'».');return true;}
         var controls=String(c.get('controlledby')||'').split(',').map(function(x){return x.trim();});
         if(!playerIsGM(msg.playerid)&&controls.indexOf('all')<0&&controls.indexOf(msg.playerid)<0)return false;
