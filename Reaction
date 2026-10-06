@@ -34,7 +34,7 @@ if(typeof AD5Reactions!=='undefined'&&AD5Reactions) {
 var AD5Reactions = (function(){
     'use strict';
 
-    var VERSION='1.6.5', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
+    var VERSION='1.6.7', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
     var opportunityPending=Object.create(null);
     var runtimePending=Object.create(null), seq=0, recentMove=Object.create(null), lastAreaCheck=null, movementHookRegistered=false, featherCollecting=Object.create(null), reactionRowCache=Object.create(null);
     // 1.4.2 Fast Fall: cache Feather Fall card discovery per character.
@@ -44,8 +44,8 @@ var AD5Reactions = (function(){
     // 1.4.3: O(1) Feather Fall lookup during an actual fall.  The expensive
     // Roll20 attribute scan is moved out of the fall critical path and built
     // once at startup, then maintained incrementally when relevant attributes change.
-    var featherCasterIndex=Object.create(null), featherIndexReady=false, featherRebuildTimers=Object.create(null), featherDirty=Object.create(null);
-    var FEATHER_BATCH_MS=5;
+    var featherCasterIndex=Object.create(null), featherIndexReady=false, featherRebuildTimers=Object.create(null), featherDirty=Object.create(null), featherCacheStamp=Object.create(null);
+    var FEATHER_BATCH_MS=5, REACTION_CACHE_TTL_MS=1500, FEATHER_CACHE_TTL_MS=1500;
 
     function root(){
         state[STATE_KEY]=state[STATE_KEY]||{version:6,used:{},shields:{},countershots:{},turnEpoch:{},developerMode:false};
@@ -531,7 +531,7 @@ var AD5Reactions = (function(){
         playerAttackRows(cid).forEach(function(row){base.push(row);});
         playerSpellRows(cid).forEach(function(row){if(reactionRangeSpec(row.range).isReaction)base.push({prefix:row.attackPrefix||row.prefix,name:row.name,range:row.range,description:row.description||'',level:row.level,sourceKind:'spell',spellPrefix:row.prefix});});
         var mapped=base.map(function(row){
-            var desc=String(row.description||''),rawTrigger=descriptionField(desc,'(?:ТРИГ|Триггер)'),trigger=normalizeTrigger(rawTrigger,row.name,desc),rawEffect=descriptionField(desc,'(?:Эффект реакции)'),effect=normalizeEffect(rawEffect,row.name,desc),rs=reactionRangeSpec(row.range),result=reactionResultSpec('',row.name,desc,effect);
+            var desc=typeof AD5Text!=='undefined'?AD5Text.mechanics(row.description):String(row.description||''),rawTrigger=descriptionField(desc,'(?:ТРИГ|Триггер)'),trigger=normalizeTrigger(rawTrigger,row.name,desc),rawEffect=descriptionField(desc,'(?:Эффект реакции)'),effect=normalizeEffect(rawEffect,row.name,desc),rs=reactionRangeSpec(row.range),result=reactionResultSpec('',row.name,desc,effect);
             return {id:'pc:'+row.prefix,name:row.name,prefix:row.prefix,spellPrefix:row.spellPrefix||'',kind:'player',sourceKind:row.sourceKind||'attack',rangeText:row.range,range:rs.range,description:desc,trigger:trigger,effect:effect,result:result,condition:reactionConditionSpec(desc),reactionLimit:reactionLimitFromDescription(desc),sideRelation:normalizeRelation(descriptionField(desc,'Сторона'),trigger,effect),execute:descriptionField(desc,'(?:Действие|Заклинание реакции|Исполнить)'),subject:normalizeSubject(descriptionField(desc,'(?:Субъект|Цель события)')||rawTrigger,trigger),targetMode:normalizeTargetMode(descriptionField(desc,'Цель реакции'),trigger),effectMatch:norm(effectMatchFrom(rawTrigger,desc)),levelRule:parseReactionLevelRule(cid,row.prefix,desc),spellAbility:descriptionField(desc,'(?:Заклинательная характеристика|Характеристика заклинаний|Spellcasting Ability)'),spellDefenseLevel:parseSpellDefenseLevel(cid,row.prefix,desc,row.name,effect),spellLevel:row.level,resource:reactionResourceSpec(desc)};
         }),seen=Object.create(null),out=[];
         mapped.forEach(function(r){var key=norm(r.name)+'|'+String(r.prefix||'');if(seen[key]){if(r.sourceKind==='spell'){for(var i=0;i<out.length;i++){if(norm(out[i].name)+'|'+String(out[i].prefix||'')===key){out[i]=r;break;}}}return;}seen[key]=true;out.push(r);});
@@ -539,8 +539,14 @@ var AD5Reactions = (function(){
     }
     function reactionsForToken(token){
         if(!token)return [];var cid=String(token.get('represents')||'');if(!cid)return [];
-        var kind=isNpc(token)?'npc':'player',cached=reactionRowCache[cid];if(cached&&cached.kind===kind)return cached.rows;
-        var rows=kind==='npc'?npcReactionRows(cid):playerReactionRows(cid);reactionRowCache[cid]={kind:kind,rows:rows};return rows;
+        var kind=isNpc(token)?'npc':'player',cached=reactionRowCache[cid],now=Date.now();
+        // 1.6.7: do not depend on add/change:attribute listeners. Those listeners
+        // are invoked once for every field created by Legacy sheet workers and can
+        // trip Roll20's infinite-loop watchdog during spell imports. A short TTL
+        // keeps manual sheet edits fresh without participating in the attribute
+        // publish chain at all.
+        if(cached&&cached.kind===kind&&(now-Number(cached.time||0))<REACTION_CACHE_TTL_MS)return cached.rows;
+        var rows=kind==='npc'?npcReactionRows(cid):playerReactionRows(cid);reactionRowCache[cid]={kind:kind,rows:rows,time:now};return rows;
     }
     function invalidateCharacter(cid){
         cid=String(cid||'');if(!cid)return;
@@ -1263,7 +1269,7 @@ var AD5Reactions = (function(){
         var c=getObj('character',cid);
         if(!c){delete featherRowCache[cid];delete featherCasterIndex[cid];return [];}
         var rows=parseFeatherRowsFromAttributes(findObjs({_type:'attribute',_characterid:cid}));
-        featherRowCache[cid]=rows;featherCasterIndex[cid]=rows.length>0;delete featherDirty[cid];
+        featherRowCache[cid]=rows;featherCasterIndex[cid]=rows.length>0;featherCacheStamp[cid]=Date.now();delete featherDirty[cid];
         return rows;
     }
     function rebuildFeatherIndexAll(){
@@ -1275,11 +1281,11 @@ var AD5Reactions = (function(){
             var n=String(a.get('name')||'');if(!featherCacheRelevantName(n)&&!/^npc$/i.test(n))return;
             (grouped[cid]||(grouped[cid]=[])).push(a);
         });
-        featherRowCache=Object.create(null);featherCasterIndex=Object.create(null);featherDirty=Object.create(null);
+        featherRowCache=Object.create(null);featherCasterIndex=Object.create(null);featherDirty=Object.create(null);featherCacheStamp=Object.create(null);
         Object.keys(grouped).forEach(function(cid){
             if(!getObj('character',cid))return;
             var rows=parseFeatherRowsFromAttributes(grouped[cid]);
-            featherRowCache[cid]=rows;featherCasterIndex[cid]=rows.length>0;
+            featherRowCache[cid]=rows;featherCasterIndex[cid]=rows.length>0;featherCacheStamp[cid]=Date.now();
         });
         featherIndexReady=true;
         return {characters:Object.keys(grouped).length,casters:Object.keys(featherCasterIndex).filter(function(cid){return featherCasterIndex[cid];}).length,ms:Date.now()-started};
@@ -1301,18 +1307,17 @@ var AD5Reactions = (function(){
     function featherFallRows(token){
         if(!token||!token.get||token.get('_subtype')!=='token'||token.get('isdrawing'))return [];
         var cid=String(token.get('represents')||'');if(!cid||!getObj('character',cid))return [];
-        if(Object.prototype.hasOwnProperty.call(featherRowCache,cid))return featherRowCache[cid]||[];
-        // Rare race: a fall can happen before startup indexing finishes, or on the same
-        // tick as a sheet edit. Rebuild only this one character as a safe fallback.
+        var fresh=Object.prototype.hasOwnProperty.call(featherRowCache,cid)&&(Date.now()-Number(featherCacheStamp[cid]||0))<FEATHER_CACHE_TTL_MS;
+        if(fresh)return featherRowCache[cid]||[];
+        // 1.6.7: lazy refresh replaces attribute event listeners. Falls are rare,
+        // so one character-local read here is safer than subscribing to every
+        // Sheet Worker field creation in the campaign.
         return rebuildFeatherCharacter(cid);
     }
     function hasFeatherFall(token){
         if(!token||!token.get)return false;var cid=String(token.get('represents')||'');if(!cid)return false;
-        if(Object.prototype.hasOwnProperty.call(featherCasterIndex,cid))return !!featherCasterIndex[cid];
-        // If this character was edited and the debounced rebuild has not run yet,
-        // resolve only that character synchronously so a real reaction is never missed.
-        if(featherDirty[cid])return rebuildFeatherCharacter(cid).length>0;
-        if(featherIndexReady)return false;
+        var fresh=Object.prototype.hasOwnProperty.call(featherCasterIndex,cid)&&(Date.now()-Number(featherCacheStamp[cid]||0))<FEATHER_CACHE_TTL_MS;
+        if(fresh)return !!featherCasterIndex[cid];
         return featherFallRows(token).length>0;
     }
     function fallStartRangeFeet(caster,ev){
@@ -1504,7 +1509,7 @@ var AD5Reactions = (function(){
         Object.keys(groups).forEach(function(k){
             var g=groups[k],name=g.name||g.base;if(!name)return;
             var attackId=String(attrVal(cid,g.prefix+'spellattackid')||'').trim(),attackPrefix=attackId?('repeating_attack_'+attackId+'_'):'';
-            out.push({prefix:g.prefix,attackPrefix:attackPrefix,name:name,level:g.level==='cantrip'?0:(/^\d+$/.test(g.level)?Number(g.level):null),castingTime:attrVal(cid,g.prefix+'spellcastingtime'),range:attrVal(cid,g.prefix+'spellrange'),description:attrVal(cid,g.prefix+'spelldescription')});
+            out.push({prefix:g.prefix,attackPrefix:attackPrefix,name:name,level:g.level==='cantrip'?0:(/^\d+$/.test(g.level)?Number(g.level):null),castingTime:attrVal(cid,g.prefix+'spellcastingtime'),range:attrVal(cid,g.prefix+'spellrange'),description:(typeof AD5Text!=='undefined'?AD5Text.mechanics(attrVal(cid,g.prefix+'spelldescription')):attrVal(cid,g.prefix+'spelldescription'))});
         });
         return out;
     }
@@ -1538,7 +1543,7 @@ var AD5Reactions = (function(){
         if(picked.length===1)return picked[0];return matches.length===1?matches[0]:null;
     }
     function observePlayerSpellbookCard(msg){
-        if(!msg||msg.playerid==='API'||String(msg.rolltemplate||'').toLowerCase()!=='spell')return;
+        if(!msg||msg.playerid==='API'||String(msg.rolltemplate||'').toLowerCase()!=='spell')return;if(/\[\/?AD5\]/i.test(String(msg.content||'')))return ;
         var name=fieldFromTemplate(msg.content,'name')||fieldFromTemplate(msg.content,'rname');if(!name)return;
         var source=playerSourceTokenForSpell(msg,name);if(!source)return;
         beforeSpellCast({playerId:msg.playerid,actorId:source.token.get('represents'),sourceTokenId:source.token.id,actionName:name,spellName:name,spellLevel:source.row.level,castingTime:source.row.castingTime,range:source.row.range},function(result){
@@ -1993,7 +1998,6 @@ var AD5Reactions = (function(){
                 if(!pcheck.ok)throw new Error(pcheck.error||'Не удалось выполнить проверку Контрзаклинания.');
                 var cerr=reactionResourceError(pt,pr);if(cerr)throw new Error(cerr);var csp=consumeManualReactionResource(pt,pr);if(!csp.ok)throw new Error(csp.error||'Не удалось списать ресурс Контрзаклинания.');
                 if(!spendAny(pt,'Контрзаклинание '+slot+' круга'))throw new Error('Реакция персонажа уже потрачена.');
-
                 var resultCard=spellDefenseResultCard(pev,pt,pr,'cancel',pcheck);
                 controllers(pt).forEach(function(pid){whisperPlayer(pid,resultCard);});
                 if(developerMode())sendChat(SCRIPT,'/w gm '+resultCard,null,{noarchive:true});
@@ -2142,11 +2146,13 @@ var AD5Reactions = (function(){
         if(msg.type==='api'&&/^!ad5react(?:\s|$)/i.test(msg.content||'')){command(msg);return;}
         observeDirectNpcReaction(msg);observeTaggedPlayerTrait(msg);observePlayerSpellbookCard(msg);
     });
-    // Keep the per-character Feather Fall cache correct when a sheet is edited.
-    on('add:attribute',function(a){invalidateFeatherCacheFromAttribute(a);invalidateReactionCacheFromAttribute(a);});
-    on('change:attribute',function(a,prev){invalidateFeatherCacheFromAttribute(a);if(prev&&featherCacheRelevantName(prev.name)&&!featherCacheRelevantName(a.get('name')))scheduleFeatherCharacterRebuild(a.get('_characterid'));invalidateReactionCacheFromAttribute(a);});
-    on('destroy:attribute',function(a){invalidateFeatherCacheFromAttribute(a);invalidateReactionCacheFromAttribute(a);});
-    on('destroy:character',function(c){if(!c)return;var cid=String(c.id||'');if(featherRebuildTimers[cid]){clearTimeout(featherRebuildTimers[cid]);delete featherRebuildTimers[cid];}delete featherRowCache[cid];delete featherCasterIndex[cid];delete featherDirty[cid];delete reactionRowCache[cid];});
+    // 1.6.7 ATTRIBUTE LOOP-SAFE: intentionally NO add/change/destroy:attribute
+    // listeners. Spell imports can create dozens of Legacy attributes and Sheet
+    // Worker derived fields in one burst; subscribing Reactions to that stream made
+    // Roll20's watchdog report this module at the last add:attribute callback even
+    // though the cache code itself did not need to write sheet data. Reaction and
+    // Feather Fall caches now refresh lazily by TTL or explicit invalidateCharacter().
+    on('destroy:character',function(c){if(!c)return;var cid=String(c.id||'');if(featherRebuildTimers[cid]){clearTimeout(featherRebuildTimers[cid]);delete featherRebuildTimers[cid];}delete featherRowCache[cid];delete featherCasterIndex[cid];delete featherDirty[cid];delete featherCacheStamp[cid];delete reactionRowCache[cid];});
     on('change:campaign:turnorder',turnChanged);
     on('change:graphic',function(token,prev){
         // Movement Engine 2.x owns the trajectory. This fallback exists only for
@@ -2164,7 +2170,7 @@ var AD5Reactions = (function(){
         try{featherStats=rebuildFeatherIndexAll();}catch(e){featherIndexReady=false;log(SCRIPT+' Feather startup index: '+(e.stack||e.message||e));}
         var hooked=registerMovementHook();
         if(!hooked)setTimeout(registerMovementHook,250);
-        sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' '+VERSION+'</b> запущен. Универсальные PC/NPC реакции активны: Range «Реакция N фт», описание ТРИГ/УСЛ/РЕЗ. GM Developer Mode: <code>!ad5react dev</code>, сейчас <b>'+(developerMode()?'ВКЛ':'ВЫКЛ')+'</b>. Упреждающий выстрел: режим до начала следующего хода владельца; после активации автоматически обрабатывает первое ПОПАДАНИЕ каждого вражеского токена в его ход (промах попытку не расходует). Sheet First: runtime предпочитает текущий rollbase Legacy-листа, а при его отсутствии читает сырые поля repeating_attack. Устаревший/пустой row ID автоматически перепривязывается к наиболее полной текущей строке с тем же названием. Generic Resource Binding: РЕСУРС/РЕС + РЕСУРСРАСХ/РЕСРАСХ + РЕСУРСМОМЕНТ/РЕСМОМ читаются из текущего листа; при 0/недостатке реакция не предлагается и не срабатывает. Парсер 1.5.3 принимает реальные переносы строк и буквальные \\n. Контрзаклинание/Отражение NPC без указанного круга считаются 3 кругом. Если круг цели ≤ круг реакции — автоматический успех; иначе d20 + заклинательная характеристика против DC 10 + фактический круг цели. Игрок с Контрзаклинанием в Spellbook получает выбор ячейки 3–9 круга; выбранный круг является порогом гарантированной отмены. Если заклинательная характеристика не задана, используется максимум ИНТ/МДР/ХАР. Провал тратит реакцию и передаёт очередь следующему реактору.',null,{noarchive:true});
+        sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' '+VERSION+'</b> запущен. Attribute Loop-Safe: add/change:attribute listeners отключены; кэши обновляются лениво. Универсальные PC/NPC реакции активны: Range «Реакция N фт», описание ТРИГ/УСЛ/РЕЗ. GM Developer Mode: <code>!ad5react dev</code>, сейчас <b>'+(developerMode()?'ВКЛ':'ВЫКЛ')+'</b>. Упреждающий выстрел: режим до начала следующего хода владельца; после активации автоматически обрабатывает первое ПОПАДАНИЕ каждого вражеского токена в его ход (промах попытку не расходует). Sheet First: runtime предпочитает текущий rollbase Legacy-листа, а при его отсутствии читает сырые поля repeating_attack. Устаревший/пустой row ID автоматически перепривязывается к наиболее полной текущей строке с тем же названием. Generic Resource Binding: РЕСУРС/РЕС + РЕСУРСРАСХ/РЕСРАСХ + РЕСУРСМОМЕНТ/РЕСМОМ читаются из текущего листа; при 0/недостатке реакция не предлагается и не срабатывает. Парсер 1.5.3 принимает реальные переносы строк и буквальные \\n. Контрзаклинание/Отражение NPC без указанного круга считаются 3 кругом. Если круг цели ≤ круг реакции — автоматический успех; иначе d20 + заклинательная характеристика против DC 10 + фактический круг цели. Игрок с Контрзаклинанием в Spellbook получает выбор ячейки 3–9 круга; выбранный круг является порогом гарантированной отмены. Если заклинательная характеристика не задана, используется максимум ИНТ/МДР/ХАР. Провал тратит реакцию и передаёт очередь следующему реактору.',null,{noarchive:true});
     });
 
     return {
