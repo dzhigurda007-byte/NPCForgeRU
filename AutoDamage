@@ -72,7 +72,7 @@ hp листа используется однократно как началь�
 Поле «Описание» способности является источником исходов спасброска. Элементы разделяются запятыми: ПРВ: ... для провала, УСП: ... для успеха. Таймеры и маркеры ведёт отдельный AD5 Effect Turns. Если УСП отсутствует, успешный спас автоматически означает 0 урона и 0 эффектов.
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
-4.3.144: Token damage defenses from Effect Turns («сопр огонь 10», «имм яд 10») join zone/aura defenses (strongest wins); Warding Bond shares typeless damage with the bond's source.
+4.3.144: Token damage defenses from Effect Turns («сопр огонь 10», «имм яд 10») join zone/aura defenses (strongest wins); Warding Bond shares typeless damage with the bond's source. Spell casts pass spell/spellLevel to Effect Turns for Dispel Magic.
 4.3.143: Ice Knife fix. Если HP цели изменились во время асинхронного чтения сопротивлений NPC (например, попадание ножом и взрыв по той же цели), чтение повторяется до 3 раз вместо ошибки «HP изменились…»; урон взрыва больше не теряется.
 4.3.142: Native Spell Attack transport + report fix. Spell Library 2.3.14 rebuilds imported ATTACK links through the Legacy sheet worker instead of API-created repeating_attack rows. Core report no longer prints “Без броска атаки” for a real attack merely because it had no dynamic attack modifiers.
 4.3.141: Native Spell Link + Chat Loop-Safe. Linked Spellbook attack hydration now mirrors Legacy fields (spell ability, damage ability, separate dmg/dmg2 flags, native save DC). AD5-generated attack reroll cards carry ad5internalroll=1 and are ignored by the top-level chat listener, preventing a synthetic attack card from re-entering AD5.
@@ -5495,7 +5495,10 @@ var AD5 = (function () {
             durationBonus:(active(f,'save')&&saveCrit==='failure')?1:0,
             criticalSave:active(f,'save')?saveCrit:'',
             payloadSustainConcentration:p.payloadSustainConcentration===true,
-            payloadIdentity:p.payloadIdentity||null
+            payloadIdentity:p.payloadIdentity||null,
+            // 4.3.144: spell metadata for Dispel Magic («рассеивает N»).
+            spell:!!(explicitSpell||active(f,'ad5isspell')),
+            spellLevel:Number.isFinite(Number(f.ad5castlevel))&&String(f.ad5castlevel).trim()!==''?Number(f.ad5castlevel):null
         };
         var effectTurnPlan=null;
         if(effectTurnsAvailable){
@@ -7216,6 +7219,7 @@ var AD5 = (function () {
                 // Legacy compatibility: spellLevel means effective level of this
                 // casting. New integrations should use castLevel/baseSpellLevel.
                 spellMeta.spellLevel=resolvedLevels.castLevel;
+                f.ad5isspell='1';if(resolvedLevels.castLevel!==null&&resolvedLevels.castLevel!==undefined)f.ad5castlevel=String(resolvedLevels.castLevel);
                 record((spellMeta.npc?'NPC spell: ':'Spellbook: ')+spellMeta.name+
                     (spellMeta.prefix?' · '+spellMeta.prefix:'')+
                     ' · '+spellLevelDescribe({baseLevel:spellMeta.baseSpellLevel,castLevel:spellMeta.castLevel})+
