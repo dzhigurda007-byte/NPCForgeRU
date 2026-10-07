@@ -1,13 +1,15 @@
-/* AD5 Spell Effects 1.1.3 — card-driven combat profiles, Legacy 2014.
+/* AD5 Spell Effects 1.1.4 — card-driven combat profiles, Legacy 2014.
  * AD5ЭФФ: {"kind":"link",...} — one JSON profile per line.
  * No library lookup, eval, sheet migration, recurring scan, or add:attribute hook.
  * 1.1.1: link repeat remains turn-gated in initiative, but can be exercised outside Turn Tracker for testing/noncombat use.
+ * 1.1.4: armor — a missing armorAttribute means no armour worn (Mage Armor on sheets without that field);
+ *        retaliation {"noTemp":true} works without temporary HP (Fire Shield).
  * 1.1.3: mark effects own the Roll20 archery-target marker for their current target; transfer/end/undo restore it safely.
  */
 if(typeof AD5SpellEffects!=='undefined'&&AD5SpellEffects){log('AD5SpellEffects: duplicate skipped');}else{
 var AD5SpellEffects=(function(){
 'use strict';
-var VERSION='1.1.3',windows=Object.create(null),MARK_MARKER='archery-target';
+var VERSION='1.1.4',windows=Object.create(null),MARK_MARKER='archery-target';
 function root(){var r=state.AD5SpellEffects=state.AD5SpellEffects||{};r.effects=r.effects||{};r.turns=r.turns||{};r.actions=r.actions||{};r.bonus=r.bonus||{};r.markMarkerBase=r.markMarkerBase&&typeof r.markMarkerBase==='object'?r.markMarkerBase:{};r.sequence=Number(r.sequence)||0;r.clock=Number(r.clock)||0;return r;}
 function uid(prefix){return prefix+(++root().sequence).toString(36);}
 function clone(x){return x==null?x:JSON.parse(JSON.stringify(x));}
@@ -105,9 +107,9 @@ function validate(description,ctx){
  profiles=profiles.filter(function(p){return ['shield','hellish'].indexOf(p.kind)<0;}).map(function(p){
   var s=token(ctx.source),t=token(ctx.target);if(!s||!t)throw Error('AD5ЭФФ: не найден источник/цель');p=resolved(p,s);
   if(['link','mark','duel','heroism','periodic','protection'].indexOf(p.kind)>=0&&!ctx.concentration)throw Error('AD5ЭФФ '+p.kind+': требуется концентрация карточки');
-  if(p.kind==='armor'&&numeric(value(t.get('represents'),p.armorAttribute,NaN),p.armorAttribute,0,1000)>0)throw Error('Доспехи мага: цель носит доспех');
+  if(p.kind==='armor'&&numeric(value(t.get('represents'),p.armorAttribute,0),p.armorAttribute,0,1000)>0)throw Error('Доспехи мага: цель носит доспех');
   if(p.kind==='retaliation'&&p.amountFromTemporary)p.amount=ctx.temporaryAmount;
-  if(p.kind==='retaliation'&&(!ctx.temporary||ctx.temporaryAmount<=0||ctx.source!==ctx.target))throw Error('Ответный эффект требует своих временных HP от этого применения на себя');
+  if(p.kind==='retaliation'&&!p.noTemp&&(!ctx.temporary||ctx.temporaryAmount<=0||ctx.source!==ctx.target))throw Error('Ответный эффект требует своих временных HP от этого применения на себя');
   if(p.condition)AD5EffectTurns.planDirect(t,p.condition,{}, {sourceToken:s.id,actor:s.get('represents'),concentrationId:ctx.concentration});
   if(p.kind==='periodic'&&p.minIntelligence&&Number(value(t.get('represents'),'intelligence',0))<p.minIntelligence)p.ineligible=true;
   return p;
@@ -143,18 +145,18 @@ function protectionBlocks(t,condition,sourceContext){
 }
 function protectionRecovery(t,e){return !!e&&protectionBlocks(t,e.condition,e.source);}
 function immune(tid){var out={};records(tid).forEach(function(r){if(r.kind==='heroism')out.frightened=true;});return out;}
-function armor(t,base){records(t.id).forEach(function(r){if(r.kind!=='armor')return;var cid=t.get('represents'),worn=numeric(value(cid,r.armorAttribute,NaN),r.armorAttribute,0,1000);if(worn>0){end(r.id,'надет доспех');return;}var dex=numeric(value(cid,'dexterity_mod',NaN),'dexterity_mod',-20,100),shield=r.shieldAttribute?numeric(value(cid,r.shieldAttribute,0),r.shieldAttribute,0,100):0,extra=r.bonusAttribute?numeric(value(cid,r.bonusAttribute,0),r.bonusAttribute,-100,100):0;base=Math.max(base,(r.base===undefined?13:r.base)+dex+shield+extra);});return base;}
+function armor(t,base){records(t.id).forEach(function(r){if(r.kind!=='armor')return;var cid=t.get('represents'),worn=numeric(value(cid,r.armorAttribute,0),r.armorAttribute,0,1000);if(worn>0){end(r.id,'надет доспех');return;}var dex=numeric(value(cid,'dexterity_mod',NaN),'dexterity_mod',-20,100),shield=r.shieldAttribute?numeric(value(cid,r.shieldAttribute,0),r.shieldAttribute,0,100):0,extra=r.bonusAttribute?numeric(value(cid,r.bonusAttribute,0),r.bonusAttribute,-100,100):0;base=Math.max(base,(r.base===undefined?13:r.base)+dex+shield+extra);});return base;}
 function onAction(source,kind,except){if(kind==='bonus'){root().bonus[source]=epoch(token(source));return;}if(kind!=='action')return;records().slice().forEach(function(r){if(r.source===source&&r.kind==='link'&&r.id!==except)end(r.id,'использовано другое действие');});root().actions[source]=epoch(token(source));}
 function actionFromCard(source,casting,description,reaction){if(!source||reaction)return;var m=/^\s*AD5ДЕЙСТВИЕ\s*:\s*(action|bonus|free|reaction)\s*$/im.exec(description||'');var kind=m?m[1]:/реакц|reaction/i.test(casting)?'reaction':/бонус|bonus/i.test(casting)?'bonus':'action';onAction(source,kind);}
 function tempOwnerChanged(tid,owner){
- Object.keys(root().effects).forEach(function(id){var r=root().effects[id];if(r.target===tid&&r.kind==='retaliation'&&(!owner||owner.castId!==r.tempOwner))end(id,'временные HP заменены или исчерпаны');});
+ Object.keys(root().effects).forEach(function(id){var r=root().effects[id];if(r.target===tid&&r.kind==='retaliation'&&!r.noTemp&&(!owner||owner.castId!==r.tempOwner))end(id,'временные HP заменены или исчерпаны');});
 }
 function manualTempChange(t,previous,current){
  previous=Number(previous)||0;current=Number(current)||0;
  // A decrease can be ordinary damage. An increase from the UI has no cast ID.
  if(current<=0||current>previous)AD5EffectTurns.setTempHpOwner(t.id,null);
 }
-function preHit(ctx){return records(ctx.target).filter(function(r){return r.kind==='retaliation'&&ctx.melee&&ownsTemp(r,token(ctx.target));}).map(clone);}
+function preHit(ctx){return records(ctx.target).filter(function(r){return r.kind==='retaliation'&&ctx.melee&&(r.noTemp||ownsTemp(r,token(ctx.target)));}).map(clone);}
 function hitCommitted(ctx){(ctx.retaliations||[]).forEach(function(r){if(token(ctx.source)&&token(r.source))damage(r,ctx.source,r.formula||String(r.amount||0));});}
 function markComponents(ctx,base){var out=[];records(ctx.target).forEach(function(r){if(r.kind!=='mark'||r.source!==ctx.source||r.attack!=='any'&&ctx.spell)return;var f=r.formula||'1d6',n=roll(f);if(ctx.critical){var dice=f.match(/\d*d\d+/gi)||[];if(dice.length)n+=roll(dice.join('+'));}var type=r.type||base;if(!type)return;out.push({amount:n,type:type,label:r.name,formula:f,index:90});});return out;}
 function side(t){return typeof AD5Sides!=='undefined'?AD5Sides.side(t):owners(t).length?'players':'npcs';}
@@ -254,7 +256,7 @@ on('change:graphic',function(t,prev){if(prev&&String(prev.bar2_value)!==String(t
 on('destroy:graphic',function(t){Object.keys(root().effects).forEach(function(id){var r=root().effects[id];if(r.source===t.id||r.target===t.id)end(id,'токен удалён');});delete root().markMarkerBase[t.id];});
 on('ready',function(){
  on('change:attribute',function(a,prev){var cid=a.get('_characterid'),name=String(a.get('name')||'');records().slice().forEach(function(r){var t=token(r.target);if(r.kind==='armor'&&t&&t.get('represents')===cid&&r.armorAttribute===name&&Number(a.get('current'))>0)end(r.id,'надет доспех');if(r.kind==='retaliation'&&t&&prev&&t.get('represents')===cid&&(name==='hp_temp'||t.get('bar2_link')===a.id))manualTempChange(t,prev.current,a.get('current'));});});
- root();Object.keys(root().effects).forEach(function(k){var r=root().effects[k];delete r.movePending;if(!activeSource(r)||!token(r.target))end(k,'источник отсутствует',true);else if(r.kind==='retaliation'&&!ownsTemp(r,token(r.target)))end(k,'временные HP отсутствуют',true);});var markTargets={};records().forEach(function(r){if(r.kind==='mark')markTargets[r.target]=true;});Object.keys(markTargets).forEach(syncMarkMarker);log('AD5 Spell Effects '+VERSION+' ready');});
+ root();Object.keys(root().effects).forEach(function(k){var r=root().effects[k];delete r.movePending;if(!activeSource(r)||!token(r.target))end(k,'источник отсутствует',true);else if(r.kind==='retaliation'&&!r.noTemp&&!ownsTemp(r,token(r.target)))end(k,'временные HP отсутствуют',true);});var markTargets={};records().forEach(function(r){if(r.kind==='mark')markTargets[r.target]=true;});Object.keys(markTargets).forEach(syncMarkMarker);log('AD5 Spell Effects '+VERSION+' ready');});
 return {version:VERSION,canStand:function(t){return !records(t.id).some(function(r){return r.preventStanding;});},strip:strip,hasConcentration:function(id){return records().some(function(r){return r.concentration===id;});},parse:parse,releaseRestrained:function(tid){records(tid).slice().forEach(function(r){if(AD5EffectTurns.conditionKey(r.condition)==='restrained')end(r.id,'опутывание снято GM');});},creatureType:creatureType,protectedFrom:protectedFrom,protectionBlocks:protectionBlocks,protectionRecovery:protectionRecovery,validate:validate,applied:applied,immune:immune,armor:armor,onAction:onAction,actionFromCard:actionFromCard,preHit:preHit,hitCommitted:hitCommitted,markComponents:markComponents,afterDamage:afterDamage,harmful:harmful,attackRule:attackRule,checkDisadvantage:checkDisadvantage,gateMove:gateMove,removeConcentration:removeConcentration,offerShield:offerShield,missile:missile,snapshot:snapshot,historyCheck:historyCheck,restore:restore,
  tempOwnerChanged:tempOwnerChanged,_test:{add:add,end:end,records:records,repeat:repeat,transfer:transfer,turn:turn,gateMove:gateMove,grant:grant,check:check,decide:decide,windows:function(){return windows;},reactionProfiles:reactionProfiles,resources:resources,epoch:epoch}};
 }());

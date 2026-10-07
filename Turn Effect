@@ -3,7 +3,8 @@ if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
     log('AD5EffectTurns: duplicate module skipped; keep one installed copy.');
 } else {
 /*
-AD5 Effect Turns 1.6.13
+AD5 Effect Turns 1.6.14
+1.6.14: modifiers «магическое оружие», «имм <состояние>», «прем/пом спас против <состояние|заклинаний>», «увёртливость против заклинаний», «макс хиты не снижаются», «регенерация N», «оживление N», «размер ±1» (токен ×2 / ×½), «полёт N» (падение по окончании); conditions «без действия» (маркер stopwatch) and «слабоумие»; ПОПАДЗАМЕНА / ПОПАДПРОМАХ.
 1.6.13: «ОБЛАСТИ: N» (Areas grouped placement) is not an effect.
 1.6.12: recognizesDirect() also accepts AutoDamage hit-point lines (ХИТЫ<=, СЛУЧАЙНО, ВАМП, НЕ НИЖЕ 1, СНИЖ МАКС), so NPC actions with only these lines are mechanical.
 1.6.11: «ОДИН РАЗ» (Areas multi-area directive) is not an effect.
@@ -60,7 +61,7 @@ var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5
 // silently shadow every newer fix.
 var AD5EffectTurns = (function () {
     'use strict';
-    var VERSION='1.6.13', SCRIPT='AD5 Effect Turns';
+    var VERSION='1.6.14', SCRIPT='AD5 Effect Turns';
     var runtimeLastGroup=Object.create(null);
     var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
     var markerCacheRaw=null, markerCacheByName=Object.create(null);
@@ -138,7 +139,11 @@ var AD5EffectTurns = (function () {
         reactionless:{marker:'interdiction',label:'Нет реакций',aliases:['нет реакций','реакции запрещены','без реакций до конца']},
         teleport:{marker:'blue',label:'Телепортация',aliases:['телепортация','телепорт','teleport']},
         confused:{marker:'drink-me',label:'Замешательство',aliases:['замешательство','смятение','в замешательстве','confused','confusion']},
-        no_healing:{marker:'death-zone',label:'Без лечения',aliases:['без лечения','запрет лечения','не может восстанавливать хиты','no healing']}
+        no_healing:{marker:'death-zone',label:'Без лечения',aliases:['без лечения','запрет лечения','не может восстанавливать хиты','no healing']},
+        // 1.6.14: lost action — a reminder marker only (the table resolves it).
+        no_action:{marker:'stopwatch',label:'Без действия',aliases:['без действия','теряет действие','потеря действия','no action']},
+        // 1.6.14: Feeblemind — Intelligence and Charisma are 1 (mod −5) and the creature cannot cast spells.
+        feebleminded:{marker:'yellow',label:'Слабоумие',aliases:['слабоумие','слабоумен','feeblemind','feebleminded']}
     };
     var ALIAS={};
 
@@ -317,6 +322,9 @@ var AD5EffectTurns = (function () {
         for(var i=0;i<parts.length;i++){
             var p=matchNorm(parts[i]);if(!p)return null;
             if(/^(?:все|всё|весь урон|любой урон|all)$/.test(p)){out.push('*');continue;}
+            // 1.6.14: weapon damage groups — «оружие» (all six), «немаг оружие», «маг оружие».
+            var group=/^(?:немаг(?:ическое)?(?:\s+оружие)?|немагический урон|физический)$/.test(p)?['рубящий','колющий','дробящий']:(/^(?:маг(?:ическое)?\s+оружие)$/.test(p)?['магический рубящий','магический колющий','магический дробящий']:(/^(?:оружие|урон оружием)$/.test(p)?['рубящий','колющий','дробящий','магический рубящий','магический колющий','магический дробящий']:null));
+            if(group){group.forEach(function(g){if(out.indexOf(g)<0)out.push(g);});continue;}
             var t=null;try{if(typeof AD5!=='undefined'&&AD5&&AD5._test&&typeof AD5._test.effectType==='function')t=AD5._test.effectType(p);}catch(ignoreType){}
             if(!t||['лечение','временное хп','атака'].indexOf(t)>=0)return null;
             if(out.indexOf(t)<0)out.push(t);
@@ -331,10 +339,91 @@ var AD5EffectTurns = (function () {
         var names=types.map(function(t){return t==='*'?'весь урон':t;}).join('/');
         return {type:'defense',kind:kind,types:types,percent:percent,positive:true,label:(kind==='immunity'?'Имм ':'Сопр ')+names+(kind==='resistance'&&percent!==50?' '+percent+'%':'')};
     }
+    // 1.6.14: flag-style modifiers.
+    //   «магическое оружие» — the bearer's weapon bludgeoning/piercing/slashing becomes magical;
+    //   «имм очарован/испуган» — condition immunity; «прем спас против отравлен|заклинаний»;
+    //   «увёртливость против заклинаний»; «макс хиты не снижаются»; «регенерация 1» (start of turn);
+    //   «оживление 1» (start of turn at 0 HP); «размер +1 / -1»; «полёт 60».
+    function conditionList(raw){
+        var keys=[];var ok=String(raw||'').split(/\s*[\/,]\s*|\s+и\s+/).every(function(x){
+            x=x.trim();if(!x)return true;var k=conditionKey(x);
+            if(!k){try{if(typeof AD5Conditions!=='undefined'&&AD5Conditions&&AD5Conditions.key)k=AD5Conditions.key(x);}catch(ignoreKey){}}
+            if(!k)return false;if(keys.indexOf(k)<0)keys.push(k);return true;
+        });
+        return ok&&keys.length?keys:null;
+    }
+    function extraModifierCore(text){
+        var m;
+        if(/^(?:магическое оружие|magic weapon)$/i.test(text))return {type:'magicWeapon',positive:true,label:'Магическое оружие'};
+        if((m=/^(?:имм|иммунитет)\s+(?:к\s+)?(?:состояни[юяе]\s+|состояниям\s+)?(.+)$/i.exec(text))){var ck=conditionList(m[1]);if(ck)return {type:'conditionImmunity',conditions:ck,ability:ck.join('/'),positive:true,label:'Имм '+ck.map(function(k){return CONDITIONS[k]?CONDITIONS[k].label:k;}).join('/')};}
+        if((m=/^(прем|преим|преимущество|пом|помеха)\s+(?:на\s+)?спас\S*\s+против\s+(.+)$/i.exec(text))){
+            if(/\s\d{1,3}$/.test(m[2]))return null;
+            var mode=/^п(?:рем|реим)/i.test(m[1])?'adv':'dis',vsRaw=m[2].trim(),vs=/^(?:заклинан|магии|магия|spells?)/i.test(vsRaw)?['spell']:conditionList(vsRaw);
+            if(vs)return {type:'saveVs',mode:mode,vs:vs,ability:mode+':'+vs.join('/'),positive:mode==='adv',label:(mode==='adv'?'ПРЕМ':'ПОМ')+' спас против '+vsRaw};
+        }
+        if((m=/^(?:увертливость|увёртливость|evasion)(?:\s+против\s+(.+))?$/i.exec(text))&&!(m[1]&&/\s\d{1,3}$/.test(m[1]))){var ev=m[1]&&/^(?:заклинан|магии|spells?)/i.test(m[1])?'spell':'all';return {type:'evasion',vs:ev,ability:ev,positive:true,label:'Увёртливость'+(ev==='spell'?' против заклинаний':'')};}
+        if(/^макс(?:имум)?\.?\s*(?:хитов|хиты|хп)\s+не\s+сниж\S*$/i.test(text))return {type:'maxHpLock',positive:true,label:'Максимум хитов не снижается'};
+        if((m=/^регенерация\s+(\d{1,3})$/i.exec(text)))return {type:'regen',value:Number(m[1]),positive:true,label:'Регенерация '+m[1]};
+        if((m=/^оживление\s+(\d{1,3})$/i.exec(text)))return {type:'zeroHeal',value:Number(m[1]),positive:true,label:'Оживление '+m[1]+' при 0 хитов'};
+        if((m=/^размер\s*([+-])\s*1$/i.exec(text))){var sv=m[1]==='-'?-1:1;return {type:'size',value:sv,ability:'size',positive:sv>0,label:sv>0?'Увеличение':'Уменьшение'};}
+        if((m=/^(?:полет|полёт|скорость полета|скорость полёта|fly)\s+(\d{1,3})$/i.exec(text)))return {type:'fly',value:Number(m[1]),positive:true,label:'Полёт '+m[1]+' фт'};
+        return null;
+    }
+    function modifierRowsForToken(tokenId,type){
+        var rec=root().tokens[String(tokenId&&tokenId.id||tokenId||'')];if(!rec)return [];
+        return activeModifierEntries(rec).filter(function(row){return row.modifier&&row.modifier.type===type;});
+    }
+    // Conditions named in the failure outcome of a description (for «прем спас против …»).
+    function conditionsInOutcome(description){
+        var out=[];try{var parsed=sectionParse(description);((parsed&&parsed.failure&&parsed.failure.items)||[]).forEach(function(item){
+            var words=matchNorm(item).split(' ');for(var n=Math.min(4,words.length);n>=1;n--){var k=conditionKey(words.slice(0,n).join(' '));if(k){if(out.indexOf(k)<0)out.push(k);break;}}
+        });}catch(ignoreParse){}
+        return out;
+    }
+    function hasModifierType(tokenId,type){return modifierRowsForToken(tokenId,type).length>0;}
+    function buffConditionImmunities(token){
+        var out={};modifierRowsForToken(token&&token.id||token,'conditionImmunity').forEach(function(row){(row.modifier.conditions||[]).forEach(function(k){out[k]=true;});});
+        return out;
+    }
+    // Save context: advantage/disadvantage against named conditions or against spells, and evasion.
+    function saveContextRule(token,context){
+        context=context||{};var adv=[],dis=[],evasion=false,conds=context.conditions||[];
+        modifierRowsForToken(token&&token.id||token,'saveVs').forEach(function(row){
+            var m=row.modifier,hit=(m.vs||[]).some(function(v){return v==='spell'?!!context.spell:conds.indexOf(v)>=0;});
+            if(hit)(m.mode==='adv'?adv:dis).push(m.label);
+        });
+        modifierRowsForToken(token&&token.id||token,'evasion').forEach(function(row){if(row.modifier.vs!=='spell'||context.spell)evasion=true;});
+        return {advantage:adv,disadvantage:dis,evasion:evasion};
+    }
+    // Size: the token grows/shrinks while «размер ±1» is active.
+    function sizeOf(rec){var v=0;if(rec)activeModifierEntries(rec).forEach(function(row){if(row.modifier&&row.modifier.type==='size')v=Number(row.modifier.value)||0;});return v;}
+    function sizeChanged(token,old,rec){
+        var before=sizeOf(old),after=sizeOf(rec);if(before===after)return;
+        var r=root();r.baseSize=r.baseSize||{};
+        if(r.baseSize[token.id]===undefined)r.baseSize[token.id]={w:Number(token.get('width'))||70,h:Number(token.get('height'))||70};
+        var base=r.baseSize[token.id],k=after>0?2:(after<0?0.5:1);
+        token.set({width:Math.max(35,base.w*k),height:Math.max(35,base.h*k)});
+        if(!after)delete r.baseSize[token.id];
+        sendChat(SCRIPT,'<b>'+esc(token.get('name')||'Существо')+'</b> '+(after>0?'увеличивается':(after<0?'уменьшается':'возвращает обычный размер'))+'.');
+    }
+    // Fly: when the flight effect ends, an airborne creature falls (AD5 Height).
+    function flyChanged(token,old,rec){
+        var had=old&&activeModifierEntries(old).some(function(row){return row.modifier&&row.modifier.type==='fly';}),has=rec&&activeModifierEntries(rec).some(function(row){return row.modifier&&row.modifier.type==='fly';});
+        if(had&&!has){var id=token.id;setTimeout(function(){var live=getObj('graphic',id);if(!live)return;try{if(typeof AD5Height!=='undefined'&&AD5Height&&AD5Height.isFlying&&AD5Height.isFlying(live)&&AD5Height.forceFall)AD5Height.forceFall(live,'полёт закончился');}catch(ignoreFall){}},50);}
+    }
+    // Start of the bearer's turn: «регенерация N» heals N; «оживление N» heals N only at 0 HP.
+    function turnStartHealing(token){
+        var heal=0,labels=[],hp=Number(token.get('bar1_value'));
+        modifierRowsForToken(token.id,'regen').forEach(function(row){heal=Math.max(heal,Number(row.modifier.value)||0);labels.push(row.modifier.label);});
+        if(Number.isFinite(hp)&&hp<=0)modifierRowsForToken(token.id,'zeroHeal').forEach(function(row){heal=Math.max(heal,Number(row.modifier.value)||0);labels.push(row.modifier.label);});
+        if(heal<=0||typeof AD5==='undefined'||!AD5||!AD5.reaction||typeof AD5.reaction.damage!=='function')return;
+        var id=token.id;setTimeout(function(){var live=getObj('graphic',id);if(!live)return;try{AD5.reaction.damage(id,heal,'лечение',labels.join(', '),{healing:true,sourceTokenId:id,actorId:String(live.get('represents')||'')});}catch(e){sendChat(SCRIPT,'/w gm '+esc(labels.join(', '))+': '+esc(e.message||e),null,{noarchive:true});}},60);
+    }
     function modifierCore(label){
         var text=norm(label),m,ability,metric,spec;
         if(!text)return null;
         var defense=defenseCore(text);if(defense)return defense;
+        var extra=extraModifierCore(text);if(extra)return extra;
         // 1.6.10: walking speed («скорость +10» — Longstrider).
         m=/^(?:скорость|speed)\s*([+-])\s*(\d{1,3})(?:\s*(?:фт\.?|футов|ft\.?))?$/i.exec(text)||/^([+-])\s*(\d{1,3})\s*(?:фт\.?\s*)?(?:скорость|скорости|speed)$/i.exec(text);
         if(m){var spv=(m[1]==='-'?-1:1)*Number(m[2]);if(spv)return {type:'speed',value:spv,positive:spv>0,label:'Скорость '+(spv>0?'+':'')+spv+' фт'};}
@@ -574,7 +663,13 @@ var AD5EffectTurns = (function () {
             .replace(/&quot;/gi,'"')
             .replace(/&#39;|&apos;/gi,"'"));
     }
+    // 1.6.14: sheet immunities plus «имм <состояние>» effects on the token.
     function sheetConditionImmunities(token){
+        var out=sheetConditionImmunitiesRaw(token)||{};
+        try{Object.keys(buffConditionImmunities(token)).forEach(function(k){out[k]=true;});}catch(ignoreBuff){}
+        return out;
+    }
+    function sheetConditionImmunitiesRaw(token){
         var out=typeof AD5SpellEffects!=='undefined'&&token?AD5SpellEffects.immune(token.id):{},cid=token&&token.get('represents');if(!cid)return out;
         var names={
             npc_condition_immunities:true,
@@ -872,7 +967,7 @@ var AD5EffectTurns = (function () {
             .replace(/\r/g,'\n').split(/\n+/).map(function(x){return String(x||'').trim();}).filter(Boolean);
     }
     function строкаHitPayload(line){
-        return /^\s*(?:ПОПАД|ПОПАДУСЛ|ПОПАДЦЕЛЬ|ПОПАДУРОН|ПОПАДСПАС|ПОПАДПРВ|ПОПАДУСП|ПОПАДЭФФ|ПОПАДКОН|ПОПАДОБЛ|ПОПАДОБЛЦЕЛЬ|ПОПАДОБЛУРОН|ПОПАДОБЛСПАС|ПОПАДОБЛПРВ|ПОПАДОБЛУСП|ПОПАДОБЛИСКЛ)\s*[:：—–-]/i.test(String(line||''));
+        return /^\s*(?:ПОПАД|ПОПАДУСЛ|ПОПАДЦЕЛЬ|ПОПАДУРОН|ПОПАДСПАС|ПОПАДПРВ|ПОПАДУСП|ПОПАДЭФФ|ПОПАДКОН|ПОПАДОБЛ|ПОПАДОБЛЦЕЛЬ|ПОПАДОБЛУРОН|ПОПАДОБЛСПАС|ПОПАДОБЛПРВ|ПОПАДОБЛУСП|ПОПАДОБЛИСКЛ|ПОПАДЗАМЕНА|ПОПАДПРОМАХ)\s*[:：—–-]/i.test(String(line||''));
     }
     function убратьУсловныеСтроки(описание){
         return условныеСтроки(описание).filter(function(x){return !/^\s*(?:ПОКА|СНЯТЬ|РАСХ|ДО|УСЛЭФ|УСЛ\s*ЭФФ|УСЛОВНЫЙ\s+ЭФФЕКТ)\s*[:：—–-]/i.test(x)&&!строкаHitPayload(x);}).join('\n');
@@ -1003,7 +1098,7 @@ var AD5EffectTurns = (function () {
     function разобратьHitPayloads(описание){
         var out=[],cur=null,errors=[];
         условныеСтроки(описание).forEach(function(line){
-            var m=/^\s*(ПОПАД|ПОПАДУСЛ|ПОПАДЦЕЛЬ|ПОПАДУРОН|ПОПАДСПАС|ПОПАДПРВ|ПОПАДУСП|ПОПАДЭФФ|ПОПАДКОН|ПОПАДОБЛ|ПОПАДОБЛЦЕЛЬ|ПОПАДОБЛУРОН|ПОПАДОБЛСПАС|ПОПАДОБЛПРВ|ПОПАДОБЛУСП|ПОПАДОБЛИСКЛ)\s*[:：—–-]\s*(.*?)\s*$/i.exec(line);if(!m)return;
+            var m=/^\s*(ПОПАД|ПОПАДУСЛ|ПОПАДЦЕЛЬ|ПОПАДУРОН|ПОПАДСПАС|ПОПАДПРВ|ПОПАДУСП|ПОПАДЭФФ|ПОПАДКОН|ПОПАДОБЛ|ПОПАДОБЛЦЕЛЬ|ПОПАДОБЛУРОН|ПОПАДОБЛСПАС|ПОПАДОБЛПРВ|ПОПАДОБЛУСП|ПОПАДОБЛИСКЛ|ПОПАДЗАМЕНА|ПОПАДПРОМАХ)\s*[:：—–-]\s*(.*?)\s*$/i.exec(line);if(!m)return;
             var key=matchNorm(m[1]),body=String(m[2]||'').trim();
             if(key==='попад'){
                 var mode=payloadMode(body);if(!mode){errors.push(line);return;}
@@ -1024,6 +1119,10 @@ var AD5EffectTurns = (function () {
             if(key==='попадоблспас'){cur.area=cur.area||{range:'',target:'каждое существо',damage:[],save:null,failure:'',success:'',excludePrimary:false};var asv=payloadSave(body);if(!asv)errors.push(line);else cur.area.save=asv;return;}
             if(key==='попадоблпрв'){cur.area=cur.area||{range:'',target:'каждое существо',damage:[],save:null,failure:'',success:'',excludePrimary:false};cur.area.failure=body;return;}
             if(key==='попадоблусп'){cur.area=cur.area||{range:'',target:'каждое существо',damage:[],save:null,failure:'',success:'',excludePrimary:false};cur.area.success=body;return;}
+            // 1.6.14: «ПОПАДЗАМЕНА: да» — the payload damage replaces the weapon's damage (Lightning Arrow);
+            // «ПОПАДПРОМАХ: половина» — on a miss the payload still deals half damage (and its area).
+            if(key==='попадзамена'){cur.replaceWeapon=!/^(?:нет|no|0)$/i.test(matchNorm(body));return;}
+            if(key==='попадпромах'){cur.missHalf=/половин|half/i.test(matchNorm(body));return;}
             if(key==='попадоблискл'){cur.area=cur.area||{range:'',target:'каждое существо',damage:[],save:null,failure:'',success:'',excludePrimary:false};cur.area.excludePrimary=payloadAreaExclude(body);return;}
         });
         out.forEach(function(p){if(!p.damage.length&&!p.effect&&!p.save&&!p.area)errors.push('ПОПАД #'+p.index+': нет УРОН/ЭФФ/СПАС/ОБЛ');if(p.area&&!p.area.range)errors.push('ПОПАД #'+p.index+': ПОПАДОБЛ без области');});
@@ -1558,6 +1657,7 @@ var AD5EffectTurns = (function () {
         // after the current AD5 transaction to avoid re-entrant HP writes.
         absenceChanged(token,old,newRec);
         controlChanged(token,old,newRec);
+        try{sizeChanged(token,old,newRec);flyChanged(token,old,newRec);}catch(sizeErr){sendChat(SCRIPT,'/w gm Размер/полёт: '+esc(sizeErr.message||sizeErr),null,{noarchive:true});}
         var maxHpDiff=maxHpBonusOf(newRec)-maxHpBonusOf(old);
         if(maxHpDiff&&typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.maxHpChanged==='function'){try{AD5ConditionEngine.maxHpChanged(token,maxHpDiff);}catch(maxHpError){sendChat(SCRIPT,'/w gm Максимум хитов: '+esc(maxHpError.message||maxHpError),null,{noarchive:true});}}
         try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.effectsChanged==='function')AD5Height.effectsChanged(token,old,newRec);}catch(heightEffectError){sendChat(SCRIPT,'/w gm Высота/падение: '+esc(heightEffectError.message||heightEffectError),null,{noarchive:true});}
@@ -1752,6 +1852,16 @@ var AD5EffectTurns = (function () {
         out.hit=die!==1&&(die===20||Number(attackTotal)>=out.ac);
         if(out.hit){e.images=images-1;out.left=e.images;e.label=CONDITIONS.mirror_image.label+' '+e.images;if(e.images<=0)delete rec.effects[key];writeRecord(target,rec);}else out.left=images;
         return out;
+    }
+    // 1.6.14: «ВСТРЯСКА» — effects of such a spell end when an ally uses an action to shake the creature
+    // (Hypnotic Pattern). AutoDamage registers the spell name; !ad5fx shake <token> removes its effects.
+    function registerShakeable(name){var r=root();r.shakeable=r.shakeable||{};if(name)r.shakeable[matchNorm(name)]=true;}
+    function shake(token){
+        var rec=snapshot(token.id),list=root().shakeable||{},removed=0;if(!rec)return 0;
+        Object.keys(rec.effects).forEach(function(k){var e=rec.effects[k],n=matchNorm(e&&e.source&&e.source.actionName||'');if(n&&list[n]){delete rec.effects[k];removed++;}});
+        if(removed)writeRecord(token,rec);
+        sendChat(SCRIPT,'<b>'+esc(token.get('name')||'Существо')+'</b>'+(removed?' приходит в себя — его растормошили.':': нечего снимать встряской.'));
+        return removed;
     }
     function timeStopTurn(token,pid){
         if(!playerIsGM(pid))throw new Error('Только Мастер ведёт ходы в остановленном времени.');
@@ -2101,6 +2211,7 @@ var AD5EffectTurns = (function () {
             var token=getObj('graphic',tokenId);if(!token){delete db[tokenId];return;}
             if(token.get('_pageid')!==pageId||groupKey(token)!==key)return;
             var before=snapshot(tokenId),after=cleanRecord(before),touched=false;
+            try{turnStartHealing(token);}catch(ignoreHeal){}
             Object.keys(after.effects).sort().forEach(function(k){
                 var e=after.effects[k];if(!e)return;
                 if(e.condition==='no_reactions'){e.reactionTurnStarted=true;e.remaining=1;touched=true;return;}
@@ -2477,7 +2588,7 @@ var AD5EffectTurns = (function () {
         if(!rec||!rec.effects)return {multiplier:1,label:''};
         if(rec.effects['condition:defilement'] && (type==='некротическая энергия'||type==='некротический'||type==='necrotic'))
             return {multiplier:2,label:'Осквернение'};
-        if(rec.effects['condition:fracture'] && (type==='рубящий'||type==='slashing'||type==='дробящий'||type==='bludgeoning'||type==='колющий'||type==='piercing'))
+        if(rec.effects['condition:fracture'] && (type==='рубящий'||type==='slashing'||type==='дробящий'||type==='bludgeoning'||type==='колющий'||type==='piercing'||/^магический (?:рубящий|колющий|дробящий)$/.test(String(type))))
             return {multiplier:2,label:'Разлом'};
         return {multiplier:1,label:''};
     }
@@ -2493,6 +2604,7 @@ var AD5EffectTurns = (function () {
                 if(!condition)throw new Error('Не указан эффект для снятия.');
                 playerRecovery(token,condition,msg.playerid);return;
             }
+            if(sub==='shake'){var sht=getObj('graphic',String(parts[2]||(msg.selected&&msg.selected[0]&&msg.selected[0]._id)||''));if(!sht)throw new Error('Выберите токен, который нужно растормошить.');shake(sht);return;}
             if(sub==='timestop'){var tst=getObj('graphic',parts[2]);if(!tst)throw new Error('Токен не найден.');timeStopTurn(tst,msg.playerid);return;}
             if(sub==='unrestrain'){var selected=String(msg.content||'').trim().split(/\s+/)[2],rt=getObj('graphic',selected||((msg.selected||[])[0]||{})._id);releaseRestrained(rt,msg.playerid);sendChat(SCRIPT,'/w gm Опутывание снято.',null,{noarchive:true});return;}
             if(sub==='ping'){sendChat(SCRIPT,'/w gm '+SCRIPT+' <b>'+VERSION+'</b> активен.'+(AD5EffectTurns_PreviousVersion?' До него в sandbox уже была загружена версия <b>'+esc(AD5EffectTurns_PreviousVersion)+'</b>; отключите старую вкладку Effect Turns и перезапустите API, чтобы не было двух обработчиков Turn Tracker.':''));return;}
@@ -2589,6 +2701,7 @@ var AD5EffectTurns = (function () {
     on('ready',function(){var ids={};(findObjs({_type:'graphic',_subtype:'token'})||[]).forEach(function(t){var cid=t.get('represents');if(cid)ids[cid]=true;});Object.keys(ids).forEach(syncRestrainedAction);});
     return {
         version:VERSION,
+        conditionsInOutcome:conditionsInOutcome,registerShakeable:registerShakeable,shake:shake,hasModifierType:hasModifierType,modifierRowsForToken:modifierRowsForToken,buffConditionImmunities:buffConditionImmunities,saveContextRule:saveContextRule,
         parse:sectionParse,
         damageMode:damageMode,
         hasSection:hasSection,

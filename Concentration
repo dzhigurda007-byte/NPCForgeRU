@@ -2,7 +2,8 @@
 if(typeof AD5Concentration!=='undefined'&&AD5Concentration) {
     log('AD5Concentration: duplicate module skipped; keep one installed copy.');
 } else {
-/* AD5 Concentration 1.2.10
+/* AD5 Concentration 1.2.11
+ * 1.2.11: checkDc(token, dc, reason) — a concentration save with a fixed DC (AD5 Areas «КОНЦЕНТРАЦИЯ:» zones).
  * 1.2.10: counts the caster's turns under each concentration (elapsed(id)) for Phases «РОСТ».
  * 1.2.9: NPC flag lookup memoized per event (performance).
  * Concentration manager for AD5 / D&D 5E by Roll20 (2014).
@@ -18,7 +19,7 @@ if(typeof AD5Concentration!=='undefined'&&AD5Concentration) {
  */
 var AD5Concentration=(function(){
     'use strict';
-    var VERSION='1.2.10',SCRIPT='AD5 Concentration',SEQ=0;
+    var VERSION='1.2.11',SCRIPT='AD5 Concentration',SEQ=0;
     var FALLBACK_MARKERS=['overdrive','aura','stopwatch','white-tower'];
     var ACTION_NAME=Array(21).join('\u200b')+'AD5 · Снять концентрацию',ACTION_CMD='!ad5conc endselected',runtimeTurnKey='';
 
@@ -352,6 +353,15 @@ var AD5Concentration=(function(){
         if(!res.success)endById(rec.id,'провален спасбросок концентрации СЛ '+dc);
         return res;
     }
+    // 1.2.11: a concentration save with an explicit DC (Sleet Storm, Earthquake zones).
+    function checkDc(token,dc,reason){
+        var rec=currentForToken(token);if(!rec)return null;
+        if(incapacitated(token)){endById(rec.id,'заклинатель недееспособен или имеет 0 HP');return {success:false,automaticLoss:true};}
+        dc=Math.max(1,Number(dc)||10);var res=autoSave(token,dc),name=String(token.get('name')||rec.casterName||'Персонаж');
+        notify('<b>Концентрация — '+esc(name)+'</b>'+(reason?' ('+esc(reason)+')':'')+': '+res.total+' против СЛ '+dc+' — <b>'+(res.success?'УСПЕХ':'ПРОВАЛ')+'</b>.');
+        if(!res.success)endById(rec.id,(reason?reason+': ':'')+'провален спасбросок концентрации СЛ '+dc);
+        return res;
+    }
     function actorFromSpellCard(msg,f){
         var cid=f.charid||f.characterid||'',c=cid&&getObj('character',cid);if(c)return c;
         var name=String(f.charname||msg.who||'').replace(/\s+\(GM\)$/,'').trim();if(!name)return null;
@@ -386,6 +396,6 @@ var AD5Concentration=(function(){
     on('change:graphic',function(t,prev){try{if(!currentForToken(t))return;var hpChanged=String(t.get('bar1_value'))!==String(prev&&prev.bar1_value),statusChanged=String(t.get('statusmarkers'))!==String(prev&&prev.statusmarkers);if(hpChanged||statusChanged)onStateChange(t);}catch(ignore){}});
     on('change:campaign:turnorder',function(c,p){try{turnChanged(c,p);}catch(e){gm('Ошибка счётчика концентрации: '+esc(e.message||e));}});
     on('ready',function(){root();var deduped=enforceSingleActive();clearAllConcentrationActions();Object.keys(root().active).forEach(function(id){var rec=root().active[id];if(rec){syncConcentrationAction(rec.actorId);syncMarkerCounter(rec);}});initTurn();gm('<b>'+SCRIPT+' '+VERSION+'</b> запущен. Концентрация: «КОН»/«КОН N» в Дистанции или штатный {{concentration=1}} spellcard. Одновременно у одного существа действует только одна концентрация; новая автоматически завершает предыдущую. Счётчик берётся из N или Duration. Маркер: overdrive, при занятости — aura/stopwatch. AD5 Transform: Дикая форма подавляет проверки концентрации от урона; Полиморф сохраняет проверки.'+(deduped?' Удалено старых дубликатов концентрации: '+deduped+'.':''));});
-    return {version:VERSION,elapsed:elapsed,claimAction:claimAction,bindSource:bindSource,onDamage:onDamage,onStateChange:onStateChange,end:endById,currentForToken:currentForToken,refreshToken:refreshToken,tooltipLines:tooltipLines,_test:{effectiveActorId:effectiveActorId,rangeConcentration:rangeConcentration,rangeConcentrationTurns:rangeConcentrationTurns,durationToTurns:durationToTurns,sheetSpellConcentration:sheetSpellConcentration,ownerKey:ownerKey,sameConcentrator:sameConcentrator,enforceSingleActive:enforceSingleActive,incapacitated:incapacitated}};
+    return {version:VERSION,checkDc:checkDc,elapsed:elapsed,claimAction:claimAction,bindSource:bindSource,onDamage:onDamage,onStateChange:onStateChange,end:endById,currentForToken:currentForToken,refreshToken:refreshToken,tooltipLines:tooltipLines,_test:{effectiveActorId:effectiveActorId,rangeConcentration:rangeConcentration,rangeConcentrationTurns:rangeConcentrationTurns,durationToTurns:durationToTurns,sheetSpellConcentration:sheetSpellConcentration,ownerKey:ownerKey,sameConcentrator:sameConcentrator,enforceSingleActive:enforceSingleActive,incapacitated:incapacitated}};
 }());
 }
