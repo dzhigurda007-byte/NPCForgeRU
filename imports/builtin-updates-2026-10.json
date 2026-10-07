@@ -1,5 +1,152 @@
 [
  {
+  "id": "wall-of-fire",
+  "name": "Стена огня",
+  "aliases": [
+   "Wall of Fire",
+   "Стена огня"
+  ],
+  "level": 4,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "линия 5/60/20 фт, обл",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true,
+   "material": "небольшой кусочек фосфора"
+  },
+  "concentration": true,
+  "save": "DEX",
+  "saveSuccess": "Половина первоначального урона",
+  "damage": "5d8",
+  "damageType": "огонь",
+  "higherDieCount": "1",
+  "higherDieType": "d8",
+  "higherText": "За каждый круг ячейки выше 4-го урон увеличивается на 1d8.",
+  "output": "ATTACK",
+  "description": "ЗАКЛ\nПримечание: при нажатии выберите вариант. Стена — линия 60 фт; кольцо — внешний диаметр 20 фт, толщина 1 фт. Сторона жара — 10 фт от выбранной стороны.\nВАРИАНТ: Стена жар от вас\nЦЕЛЬ: линия 5/60/20 фт, обл\nКАСТ: УСП: Урон1, половина урона; ПРВ: Урон1, полный урон\nВХОД: Урон1\nКНЦТ: Урон1\nСТОРОНА: 10 ОТ ЗАКЛИНАТЕЛЯ\nВАРИАНТ: Стена жар к вам\nЦЕЛЬ: линия 5/60/20 фт, обл\nКАСТ: УСП: Урон1, половина урона; ПРВ: Урон1, полный урон\nВХОД: Урон1\nКНЦТ: Урон1\nСТОРОНА: 10 К ЗАКЛИНАТЕЛЮ\nВАРИАНТ: Кольцо жар внутрь\nЦЕЛЬ: 10 фт круг, обл\nКАСТ: УСП: Урон1, половина урона; ПРВ: Урон1, полный урон\nВХОД: Урон1\nКНЦТ: Урон1\nКОЛЬЦО: 1\nСТОРОНА: 10 ВНУТРЬ\nВАРИАНТ: Кольцо жар наружу\nЦЕЛЬ: 10 фт круг, обл\nКАСТ: УСП: Урон1, половина урона; ПРВ: Урон1, полный урон\nВХОД: Урон1\nКНЦТ: Урон1\nКОЛЬЦО: 1\nСТОРОНА: 10 НАРУЖУ",
+  "duplicateKey": "wall-of-fire",
+  "automation": "full",
+  "source": "Арвенор",
+  "ad5Tag": true,
+  "ad5Mechanical": true,
+  "classes": "Друид, Чародей, Волшебник",
+  "spellAbility": "auto",
+  "mode": "replace"
+ },
+ {
+  "id": "chromatic-orb",
+  "name": "Цветной шарик",
+  "aliases": [
+   "Chromatic Orb",
+   "Хроматическая сфера",
+   "Цветной шарик"
+  ],
+  "level": 1,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "90 фт",
+  "target": "1 существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true,
+   "material": "алмаз стоимостью не менее 50 зм"
+  },
+  "attack": "Ranged",
+  "damage": "3d8",
+  "damageType": "кислота",
+  "higherDieCount": "1",
+  "higherDieType": "d8",
+  "higherText": "За каждый круг ячейки выше 1-го урон увеличивается на 1d8.",
+  "output": "ATTACK",
+  "description": "ЗАКЛ\nПримечание: тип урона выбирается при нажатии.\nВАРИАНТ: Кислота\nТИП: кислота\nВАРИАНТ: Холод\nТИП: холод\nВАРИАНТ: Огонь\nТИП: огонь\nВАРИАНТ: Электричество\nТИП: электричество\nВАРИАНТ: Яд\nТИП: яд\nВАРИАНТ: Звук\nТИП: звук",
+  "duplicateKey": "chromatic-orb",
+  "automation": "full",
+  "source": "Арвенор",
+  "ad5Tag": true,
+  "ad5Mechanical": true,
+  "classes": "Чародей, Волшебник",
+  "spellAbility": "auto",
+  "mode": "replace"
+ },
+ {
+  "id": "blindness-deafness",
+  "name": "Слепота/глухота",
+  "aliases": [
+   "Blindness/Deafness",
+   "Blindness Deafness",
+   "Слепота/Глухота",
+   "Слепота",
+   "Глухота"
+  ],
+  "level": 2,
+  "school": "Некромантия",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "1 существо",
+  "duration": "1 минута",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "save": "CON",
+  "saveSuccess": "Нет эффекта",
+  "output": "ATTACK",
+  "ad5Mechanical": true,
+  "description": "ЗАКЛ\nВАРИАНТ: Слепота\nПРВ: ослеплен ТЕЛ{DC} 10; УСП: нет эффекта\nВАРИАНТ: Глухота\nПРВ: оглохший ТЕЛ{DC} 10; УСП: нет эффекта",
+  "duplicateKey": "blindness-deafness",
+  "automation": "full",
+  "source": "Арвенор",
+  "ad5Tag": true,
+  "classes": "Бард, Жрец, Чародей, Волшебник",
+  "spellAbility": "auto",
+  "mode": "replace"
+ },
+ {
+  "id": "spirit-guardians",
+  "name": "Духовные стражи",
+  "aliases": [
+   "Spirit Guardians",
+   "Духовные стражи"
+  ],
+  "level": 3,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "аура 15 фт, обл",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true,
+   "material": "священный символ"
+  },
+  "concentration": true,
+  "save": "WIS",
+  "saveSuccess": "Половина урона",
+  "damage": "3d8",
+  "damageType": "излучение",
+  "higherDieCount": "1",
+  "higherDieType": "d8",
+  "higherText": "За каждый круг ячейки выше 3-го урон увеличивается на 1d8.",
+  "output": "ATTACK",
+  "description": "ЗАКЛ\nПримечание: тип урона выбирается при нажатии (добрые и нейтральные — излучение, злые — некротическая энергия); снижение скорости и исключённых союзников контролируйте вручную.\nВХОД: УСП: Урон1, половина урона; ПРВ: Урон1, полный урон. ОБЛН: УСП: Урон1, половина урона; ПРВ: Урон1, полный урон\nВАРИАНТ: Излучение\nТИП: излучение\nВАРИАНТ: Некротическая энергия\nТИП: некротическая энергия",
+  "duplicateKey": "spirit-guardians",
+  "automation": "partial",
+  "source": "Арвенор",
+  "ad5Tag": true,
+  "ad5Mechanical": true,
+  "classes": "Жрец",
+  "spellAbility": "auto",
+  "mode": "replace"
+ },
+ {
   "id": "fire-storm",
   "name": "Огненная буря",
   "aliases": [
@@ -101,44 +248,6 @@
   "ad5Tag": true,
   "ad5Mechanical": true,
   "classes": "Чародей, Волшебник",
-  "spellAbility": "auto",
-  "mode": "replace"
- },
- {
-  "id": "wall-of-fire",
-  "name": "Стена огня",
-  "aliases": [
-   "Wall of Fire",
-   "Стена огня"
-  ],
-  "level": 4,
-  "school": "Воплощение",
-  "castingTime": "1 действие",
-  "range": "120 фт",
-  "target": "линия 5/60/20 фт, обл",
-  "duration": "Концентрация, до 1 минуты",
-  "components": {
-   "v": true,
-   "s": true,
-   "m": true,
-   "material": "небольшой кусочек фосфора"
-  },
-  "concentration": true,
-  "save": "DEX",
-  "saveSuccess": "Половина первоначального урона",
-  "damage": "5d8",
-  "damageType": "огонь",
-  "higherDieCount": "1",
-  "higherDieType": "d8",
-  "higherText": "За каждый круг ячейки выше 4-го урон увеличивается на 1d8.",
-  "output": "ATTACK",
-  "description": "ЗАКЛ\nКАСТ: УСП: Урон1, половина урона; ПРВ: Урон1, полный урон\nВХОД: Урон1\nКНЦТ: Урон1\nСТОРОНА: 10\nПримечание: опасная сторона создаётся со стороны, противоположной заклинателю.",
-  "duplicateKey": "wall-of-fire",
-  "automation": "full",
-  "source": "Арвенор",
-  "ad5Tag": true,
-  "ad5Mechanical": true,
-  "classes": "Друид, Чародей, Волшебник",
   "spellAbility": "auto",
   "mode": "replace"
  },
@@ -310,5 +419,45 @@
   "spellAbility": "auto",
   "nativeCard": false,
   "mode": "replace"
+ },
+ {
+  "id": "chromatic-orb-acid",
+  "delete": true
+ },
+ {
+  "id": "chromatic-orb-cold",
+  "delete": true
+ },
+ {
+  "id": "chromatic-orb-fire",
+  "delete": true
+ },
+ {
+  "id": "chromatic-orb-lightning",
+  "delete": true
+ },
+ {
+  "id": "chromatic-orb-poison",
+  "delete": true
+ },
+ {
+  "id": "chromatic-orb-thunder",
+  "delete": true
+ },
+ {
+  "id": "blindness-deafness-blind",
+  "delete": true
+ },
+ {
+  "id": "blindness-deafness-deaf",
+  "delete": true
+ },
+ {
+  "id": "spirit-guardians-radiant",
+  "delete": true
+ },
+ {
+  "id": "spirit-guardians-necrotic",
+  "delete": true
  }
 ]

@@ -48,7 +48,7 @@ var AD5Background = (function(){
     return {put:put,isReady:function(){return ready;}};
 }());
 /*
-AutoDamage 4.3.153 / NPC Forge RU 2.7.4 — «шепот звезд».
+AutoDamage 4.3.154 / NPC Forge RU 2.7.4 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Обычная атака игрока -> Target AD5 на карте -> штатные запросы преимущества/помехи/доп. урона Roll20 -> бросок -> урон и крит. NPC/Transform сохраняют штатный Target Roll20. AutoFront заранее держит боевые токены на переднем плане. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -72,6 +72,7 @@ hp листа используется однократно как началь�
 Поле «Описание» способности является источником исходов спасброска. Элементы разделяются запятыми: ПРВ: ... для провала, УСП: ... для успеха. Таймеры и маркеры ведёт отдельный AD5 Effect Turns. Если УСП отсутствует, успешный спас автоматически означает 0 урона и 0 эффектов.
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
+4.3.154: Spell variants: «ВАРИАНТ: имя» blocks in a description add a «Вариант» query to the attack button (like the slot-level menu); the chosen block is used, with optional «ЦЕЛЬ:» (own target/area) and «ТИП:»/«ТИП2:» (damage types).
 4.3.153: HP directives НЕ НИЖЕ 1, СНИЖ МАКС and ВАМП are uppercase-only, so narrative text («не ниже 1 фута», «вампир») never triggers them.
 4.3.152: Antimagic: spells (attack, save or phase) do nothing to a target protected by an Areas «АНТИМАГИЯ:» zone — Globe of Invulnerability (level ≤ N from outside) or Antimagic Field (any spell on or from a creature inside). Area directives АНТИМАГИЯ/ДРЕЙФ/КОЛЬЦО/СТОРОНА make a spell mechanical.
 4.3.151: Damage to a «подчинён МДР15» target triggers its repeated save (Dominate).
@@ -770,7 +771,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.153', diagnostics = [], debug = false;
+    var VERSION = '4.3.154', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -889,7 +890,8 @@ var AD5 = (function () {
         // hard-coded to a previously selected token. Remove both the native
         // @{target|...|token_id} form and any stale concrete token id left by an
         // old/custom rollbase before rebuilding the row's targeting workflow.
-        return text.replace(/\s*{{ad5target=@{target\|[^{}]+}}}/gi, '')
+        return text.replace(/\s*\{\{ad5(?:variant|castlevel)=\?\{[^{}]*\}\}\}/gi, '')
+            .replace(/\s*{{ad5target=@{target\|[^{}]+}}}/gi, '')
             .replace(/\s*{{ad5target=[^{}]*}}/gi, '')
             .replace(/\s*{{ad5source=[^{}]*}}/gi, '')
             .replace(/\s*{{ad5transform=[^{}]*}}/gi, '')
@@ -1747,8 +1749,42 @@ var AD5 = (function () {
         });
         return {description:keep.join('\n'),targets:targets,duration:duration,targetDirective:targetDirective,durationDirective:durationDirective};
     }
+    // 4.3.154: spell variants. Description blocks
+    //   ВАРИАНТ: Стена            (common lines above the first ВАРИАНТ apply to all)
+    //   ЦЕЛЬ: линия 5/60/20 фт, обл   (optional: target/area of this variant)
+    //   ТИП: огонь / ТИП2: излучение  (optional: damage type of Урон1 / Урон2)
+    //   …effect lines…
+    // The attack button asks «Вариант» like the slot-level menu; the chosen block is used.
+    function spellVariants(text){
+        var lines=spellDslText(text).split(/\n/),common=[],variants=[],cur=null;
+        lines.forEach(function(line){
+            var m=/^\s*(?:ВАРИАНТ|VARIANT)\s*:\s*(.+?)\s*$/i.exec(line);
+            if(m){cur={name:m[1].replace(/[|,{}]/g,' ').replace(/\s+/g,' ').trim(),lines:[],target:null,type:null};variants.push(cur);return;}
+            if(!cur){common.push(line);return;}
+            m=/^\s*(?:ЦЕЛЬ|TARGET)\s*:\s*(.+?)\s*$/i.exec(line);if(m){cur.target=m[1];return;}
+            m=/^\s*(?:ТИП2|TYPE2)\s*:\s*(.+?)\s*$/i.exec(line);if(m){cur.type2=m[1];return;}
+            m=/^\s*(?:ТИП|TYPE)\s*:\s*(.+?)\s*$/i.exec(line);if(m){cur.type=m[1];return;}
+            cur.lines.push(line);
+        });
+        return variants.length?{common:common,variants:variants}:null;
+    }
+    function spellVariantTransport(row){
+        var v=row&&spellVariants(row.description);if(!v)return '';
+        return ' {{ad5variant=?{Вариант|'+v.variants.map(function(x){return x.name;}).join('|')+'}}}';
+    }
+    function spellVariantApply(f,meta){
+        var raw=String(f.description!==undefined?f.description:(f.desc||'')),v=spellVariants(raw);if(!v)return null;
+        var want=normalizeUserText(String(f.ad5variant||'')),pick=v.variants.filter(function(x){return normalizeUserText(x.name)===want;})[0]||v.variants[0];
+        var desc=v.common.concat(pick.lines).join('\n');f.description=desc;f.desc=desc;meta.description=desc;f.ad5variant=pick.name;
+        if(pick.target){f.target=pick.target;meta.target=pick.target;delete f.ad5area;}
+        if(pick.type){var ty=effectType(pick.type);if(ty){f.dmg1type=ty;meta.damageType1=ty;f.ad5spelldamagetype=ty;}}
+        if(pick.type2){var ty2=effectType(pick.type2);if(ty2){f.dmg2type=ty2;meta.damageType2=ty2;f.ad5spelldamagetype2=ty2;}}
+        record('Вариант заклинания: '+pick.name);
+        return pick;
+    }
     function spellDslApplyRuntime(f,meta){
         if(!f||!meta)return {active:false,targetDirective:false,durationDirective:false,context:spellDslContext(meta),targets:null,duration:null};
+        try{spellVariantApply(f,meta);}catch(variantError){record('Вариант: '+(variantError.message||variantError));}
         var ctx=spellDslContext(meta),rawDesc=String(f.description!==undefined?f.description:(f.desc||''));
         var activeDsl=spellDslHasVariables(rawDesc)||spellDslHasTargetDirective(rawDesc)||spellDslHasDurationDirective(rawDesc)||spellDslExplicitNativeCard(rawDesc)||/(?:^|[\n;])\s*(?:ПОВЫШЕНИЕ|UPCAST)\s*:/i.test(spellDslText(rawDesc));
         if(!activeDsl)return {active:false,targetDirective:false,durationDirective:false,targets:null,duration:null,context:ctx};
@@ -1980,7 +2016,7 @@ var AD5 = (function () {
         // For upcastable Multi spells the selected slot level is printed in the
         // native level field, which nativeMultiSpellCardMeta already reads as the
         // authoritative cast level. No slot counters/resources are touched.
-        return '@{wtype}&{template:spell} {{level=@{spellschool} '+levelExpr+'}} {{name=@{spellname}}} {{castingtime=@{spellcastingtime}}} {{range=@{spellrange}}} {{target=@{spelltarget}}} @{spellcomp_v} @{spellcomp_s} @{spellcomp_m} {{material=@{spellcomp_materials}}} {{duration=@{spellduration}}} {{description=@{spelldescription}}} {{athigherlevels=@{spellathigherlevels}}} @{spellritual} {{innate=@{innate}}} @{spellconcentration} {{ad5source='+String(cid||'').replace(/[{}]/g,'')+'}} {{ad5baselevel=@{spelllevel}}}'+upcastMarker+' {{ad5spellattack=@{spellattack}}} {{ad5spelldamage=@{spelldamage}}} {{ad5spelldamagetype=@{spelldamagetype}}} {{ad5spelldamage2=@{spelldamage2}}} {{ad5spelldamagetype2=@{spelldamagetype2}}} {{ad5spellhealing=@{spellhealing}}} {{ad5spellsave=@{spellsave}}} {{ad5spellsavesuccess=@{spellsavesuccess}}} {{ad5spelldmgmod=@{spelldmgmod}}} {{ad5spellability=@{spell_ability}}} @{charname_output}';
+        return '@{wtype}&{template:spell} {{level=@{spellschool} '+levelExpr+'}} {{name=@{spellname}}} {{castingtime=@{spellcastingtime}}} {{range=@{spellrange}}} {{target=@{spelltarget}}} @{spellcomp_v} @{spellcomp_s} @{spellcomp_m} {{material=@{spellcomp_materials}}} {{duration=@{spellduration}}} {{description=@{spelldescription}}} {{athigherlevels=@{spellathigherlevels}}} @{spellritual} {{innate=@{innate}}} @{spellconcentration} {{ad5source='+String(cid||'').replace(/[{}]/g,'')+'}} {{ad5baselevel=@{spelllevel}}}'+upcastMarker+' {{ad5spellattack=@{spellattack}}} {{ad5spelldamage=@{spelldamage}}} {{ad5spelldamagetype=@{spelldamagetype}}} {{ad5spelldamage2=@{spelldamage2}}} {{ad5spelldamagetype2=@{spelldamagetype2}}} {{ad5spellhealing=@{spellhealing}}} {{ad5spellsave=@{spellsave}}} {{ad5spellsavesuccess=@{spellsavesuccess}}} {{ad5spelldmgmod=@{spelldmgmod}}} {{ad5spellability=@{spell_ability}}} @{charname_output}'+spellVariantTransport(row);
     }
     function nativeMultiSpellCardRollcontentBroken(value){
         var v=String(value||'');
@@ -2441,7 +2477,7 @@ var AD5 = (function () {
         }else{
             next=base+' {{ad5source=' + cid + '}}'+transformSourceTokenField+attackRowPointer+(linkedSpell?' {{ad5spellprefix='+linkedSpell.prefix+'}}':'');
         }
-        if(linkedSpell)next+=spellDslUpcastTransport(linkedSpell);
+        if(linkedSpell)next+=spellDslUpcastTransport(linkedSpell)+spellVariantTransport(linkedSpell);
         if (next === String(a.get('current')||'')) return false;
         // Ignore the change event produced by this exact AD5 rollbase write.
         if(autoButtonIgnoreUntil)autoButtonIgnoreUntil[a.id]=Date.now()+2000;

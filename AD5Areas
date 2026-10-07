@@ -1,12 +1,14 @@
 /* Disable old Areas before installing this guarded module. */
 if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skipped.');}else{
-/* AD5 Areas 2.25.2 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
+/* AD5 Areas 2.25.3 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
  * 2.25.0: директивы описания — «ДРЕЙФ: 10» (область уходит от заклинателя в начале его хода:
  *          Смертельное облако, Испепеляющее облако), «КОЛЬЦО: 5» (круг действует только полосой
  *          шириной 5 фт у края: Клинковый барьер), «СТОРОНА: 10» (у линии/стены появляется полоса
  *          10 фт со стороны, противоположной заклинателю, с фазами КНЦТ/ОБЛК: Огненная стена),
  *          «ОДИН РАЗ» (несколько областей одного каста — «4×» — задевают существо один раз:
  *          Огненная буря, Метеоритный дождь).
+ * 2.25.3: «СТОРОНА: 10 ОТ ЗАКЛИНАТЕЛЯ | К ЗАКЛИНАТЕЛЮ | ВНУТРЬ | НАРУЖУ» — сторона жара у стены и кольца;
+ *          тонкое кольцо (тоньше клетки) задевает существо, чьё пространство его касается.
  * 2.25.2: «ОБЛАСТИ: 10» — до N шаблонов одного каста: кнопка «Новая область k/N», одно «Применить»
  *          для всех; каждое существо затрагивается один раз (Огненная буря, Метеоритный дождь).
  * 2.25.1: «АНТИМАГИЯ: 5 | КРУГ-1 | ВСЕ» — Сфера неуязвимости, Антимагическое поле (AD5 проверяет
@@ -49,7 +51,7 @@ if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skip
  */
 var AD5Areas=(function(){
     'use strict';
-    var VERSION='2.25.2';
+    var VERSION='2.25.3';
     var resolutionSequence=0;
     function nextResolutionId(prefix){return String(prefix||'area')+':'+Date.now().toString(36)+':'+(++resolutionSequence);}
     function root(){
@@ -737,7 +739,15 @@ var AD5Areas=(function(){
     function containsGeometry(a,path,left,top,centerLeft,centerTop,rotation){
         var dx=Number(left)-Number(centerLeft),dy=Number(top)-Number(centerTop);
         var r=Number(rotation||0)*Math.PI/180,x=dx*Math.cos(r)+dy*Math.sin(r),y=-dx*Math.sin(r)+dy*Math.cos(r),e=1e-7,shape=geometryShape(a,path);
-        if(shape==='circle'){var rr=a.w/2,d2=x*x+y*y;if(d2>rr*rr+e)return false;if(Number(a.ringPx)>0){var inner=Math.max(0,rr-Number(a.ringPx));return d2>=inner*inner-e;}return true;}
+        if(shape==='circle'){
+            var rr=a.w/2,d2=x*x+y*y,ring=Number(a.ringPx)||0;
+            if(ring>0){
+                // A thin ring (thinner than one square) counts a creature whose space touches it.
+                var tol=ring<70?35:0,outer=rr+tol,inner=Math.max(0,rr-ring-tol);
+                return d2<=outer*outer+e&&d2>=inner*inner-e;
+            }
+            return d2<=rr*rr+e;
+        }
         if(shape==='cone'){var depth=a.h/2-y;return depth>=-e&&depth<=a.h+e&&Math.abs(x)<=depth*a.w/(2*a.h)+e;}
         if(shape==='polygon'&&Array.isArray(a.coveragePolygon))return pointInPolygonLocal({x:x,y:y},a.coveragePolygon);
         return Math.abs(x)<=a.w/2+e&&Math.abs(y)<=a.h/2+e;
@@ -1606,7 +1616,7 @@ var AD5Areas=(function(){
         var antimagic=antimagicDirective(q.description,q.spellMeta&&(q.spellMeta.castLevel!==undefined?q.spellMeta.castLevel:q.spellMeta.spellLevel));if(antimagic!==null)rec.antimagic=antimagic;
         persistentDb()[a.id]=rec;
         stylePersistentPath(path);
-        var sideFeet=areaGeometryDirective(q.description,'сторона');if(sideFeet>0)try{createSideStrip(rec,path,sideFeet);}catch(sideErr){tell(pid,'СТОРОНА: '+escape(sideErr.message||sideErr));}
+        var side=areaSideDirective(q.description);if(side&&side.feet>0)try{createSideStrip(rec,path,side.feet,side.dir);}catch(sideErr){tell(pid,'СТОРОНА: '+escape(sideErr.message||sideErr));}
         syncEnvironmentArea(rec,path);
         var passiveCount=seedMembership(rec,path);
         delete db()[a.id];
@@ -1630,14 +1640,26 @@ var AD5Areas=(function(){
     }
     // Wall of Fire: the damaging side is a separate persistent strip on the side away from
     // the caster. It keeps only the end-of-turn phases (КНЦТ/ОБЛК) of the wall.
-    function createSideStrip(rec,path,feet){
-        if(rec.shape!=='line'&&rec.shape!=='square')throw new Error('нужна линия или прямоугольник.');
+    // «СТОРОНА: 10 [ОТ ЗАКЛИНАТЕЛЯ|К ЗАКЛИНАТЕЛЮ|ВНУТРЬ|НАРУЖУ]».
+    function areaSideDirective(value){
+        var scan=defenseDirectiveMarks(value),out=null;
+        scan.marks.forEach(function(mark,i){
+            if(normalizeUserText(mark.label).replace(/\./g,'').trim()!=='сторона')return;
+            var body=normalizeUserText(scan.text.slice(mark.bodyStart,i+1<scan.marks.length?scan.marks[i+1].start:scan.text.length)),m=/^\s*(\d+(?:[.,]\d+)?)/.exec(body);if(!m)return;
+            out={feet:Number(m[1].replace(',','.')),dir:/внутр/.test(body)?'in':/наруж/.test(body)?'out':/к\s+заклинател/.test(body)?'toward':'away'};
+        });
+        return out;
+    }
+    function createSideStrip(rec,path,feet,dir){
         if(!rec.rules||!(rec.rules.targetEnd||rec.rules.areaEnd))throw new Error('у стены нет фазы КНЦТ или ОБЛК.');
+        if(rec.shape==='circle')return createRingSide(rec,path,feet,dir);
+        if(rec.shape!=='line'&&rec.shape!=='square')throw new Error('нужна линия, прямоугольник или кольцо.');
         var px=feetToPx(rec.page,feet),rot=pathRotation(path)*Math.PI/180,cx=pathLeft(path),cy=pathTop(path);
         // The sides are across the thin axis: local x when the wall is tall, local y when it is wide.
         var acrossX=rec.w<=rec.h,ux=acrossX?Math.cos(rot):-Math.sin(rot),uy=acrossX?Math.sin(rot):Math.cos(rot);
         var src=getObj('graphic',String(rec.source||(rec.snapshot&&rec.snapshot.sourceToken)||'')),sign=1;
         if(src){var sx=Number(src.get('left'))-cx,sy=Number(src.get('top'))-cy;if(sx*ux+sy*uy>0)sign=-1;}
+        if(dir==='toward')sign=-sign;
         var off=(acrossX?rec.w:rec.h)/2+px/2,left=cx+sign*ux*off,top=cy+sign*uy*off,sw=acrossX?px:rec.w,sh=acrossX?rec.h:px;
         var strip=createAreaPath(rec.page,'square',sw,sh,left,top,pathRotation(path),'','#ff3300',2);if(!strip)throw new Error('не удалось создать полосу.');
         var r2=JSON.parse(JSON.stringify(rec));
@@ -1646,6 +1668,20 @@ var AD5Areas=(function(){
         r2.moveProgress={};r2.affected={};r2.occupancy={};r2.boundarySeen={};r2.sideOf=rec.id;delete r2.driftFeet;delete r2.ringPx;
         persistentDb()[strip.id]=r2;stylePersistentPath(strip);strip.set({stroke:'#ff3300'});seedMembership(r2,strip);rec.sideStrip=strip.id;
         return r2;
+    }
+    // Ring wall (Wall of Fire as a ring): the hot side is the inside of the ring or a band of
+    // N ft around its outside.
+    function createRingSide(rec,path,feet,dir){
+        var px=feetToPx(rec.page,feet),rr=rec.w/2,ring=Number(rec.ringPx)||0,outside=dir==='out';
+        var r2=outside?rr+px:Math.max(1,rr-ring),strip=createAreaPath(rec.page,'circle',2*r2,2*r2,pathLeft(path),pathTop(path),0,'','#ff3300',2);
+        if(!strip)throw new Error('не удалось создать зону.');
+        var z=JSON.parse(JSON.stringify(rec));
+        z.id=strip.id;z.pathType=pathObjectType(strip);z.shape='circle';z.w=2*r2;z.h=2*r2;z.name=(rec.name||'Стена')+' — опасная сторона ('+(outside?'снаружи':'внутри')+')';
+        z.rules={phased:true,persistent:true,targetEnd:rec.rules.targetEnd||null,areaEnd:rec.rules.areaEnd||null,source:''};
+        z.moveProgress={};z.affected={};z.occupancy={};z.boundarySeen={};z.sideOf=rec.id;delete z.driftFeet;
+        if(outside)z.ringPx=px;else delete z.ringPx;
+        persistentDb()[strip.id]=z;stylePersistentPath(strip);strip.set({stroke:'#ff3300'});seedMembership(z,strip);rec.sideStrip=strip.id;
+        return z;
     }
     // Cloudkill/Incendiary Cloud: at the start of the caster's turn the area moves N ft away.
     function driftAreas(page,turnToken){
