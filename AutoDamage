@@ -48,7 +48,7 @@ var AD5Background = (function(){
     return {put:put,isReady:function(){return ready;}};
 }());
 /*
-AutoDamage 4.3.144 / NPC Forge RU 2.7.4 — «шепот звезд».
+AutoDamage 4.3.145 / NPC Forge RU 2.7.4 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Обычная атака игрока -> Target AD5 на карте -> штатные запросы преимущества/помехи/доп. урона Roll20 -> бросок -> урон и крит. NPC/Transform сохраняют штатный Target Roll20. AutoFront заранее держит боевые токены на переднем плане. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -72,6 +72,7 @@ hp листа используется однократно как началь�
 Поле «Описание» способности является источником исходов спасброска. Элементы разделяются запятыми: ПРВ: ... для провала, УСП: ... для успеха. Таймеры и маркеры ведёт отдельный AD5 Effect Turns. Если УСП отсутствует, успешный спас автоматически означает 0 урона и 0 эффектов.
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
+4.3.145: Hit point rules: «НЕ НИЖЕ 1» (damage leaves at least 1 HP), «СНИЖ МАКС» (HP maximum drops by the HP lost, Harm), «ВАМП [N%]» (source regains N% of damage dealt, Vampiric Touch). Healing is blocked on a target with «без лечения» (Chill Touch).
 4.3.144: Token damage defenses from Effect Turns («сопр огонь 10», «имм яд 10») join zone/aura defenses (strongest wins); Warding Bond shares typeless damage with the bond's source. Spell casts pass spell/spellLevel to Effect Turns for Dispel Magic. Death and dying hooks (Condition Engine adjustHp/afterHp); a dying PC shows no skull.
 4.3.143: Ice Knife fix. Если HP цели изменились во время асинхронного чтения сопротивлений NPC (например, попадание ножом и взрыв по той же цели), чтение повторяется до 3 раз вместо ошибки «HP изменились…»; урон взрыва больше не теряется.
 4.3.142: Native Spell Attack transport + report fix. Spell Library 2.3.14 rebuilds imported ATTACK links through the Legacy sheet worker instead of API-created repeating_attack rows. Core report no longer prints “Без броска атаки” for a real attack merely because it had no dynamic attack modifiers.
@@ -761,7 +762,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.144', diagnostics = [], debug = false;
+    var VERSION = '4.3.145', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -5072,6 +5073,15 @@ var AD5 = (function () {
         }
         return null;
     }
+    // 4.3.145: hit point rules in a description — «НЕ НИЖЕ 1» (Harm: damage leaves at least
+    // 1 HP), «СНИЖ МАКС» (HP maximum drops by the HP damage taken), «ВАМП [N%]» (the source
+    // regains N% of the damage dealt, 50% by default — Vampiric Touch).
+    function hpRuleDirectives(text){
+        text=String(text||'').replace(/<br\s*\/?\s*>|<\/p>|<\/div>/gi,'\n').replace(/<[^>]*>/g,' ').replace(/&nbsp;|&#160;/gi,' ');
+        var out={floorOne:/(?:^|[\s,;|])НЕ\s+НИЖЕ\s+1(?=$|[\s,;.!?])/im.test(text),reduceMax:/(?:^|[\s,;|])СНИЖ(?:ЕНИЕ)?\s+МАКС(?:ИМУМА)?(?=$|[\s,;.!?])/im.test(text),vampire:0};
+        var m=/(?:^|[\s,;|])ВАМП(?:ИРИЗМ)?(?:\s+(\d{1,3})\s*%)?(?=$|[\s,;.!?])/im.exec(text);if(m)out.vampire=m[1]?Math.min(100,Number(m[1])):50;
+        return out;
+    }
     function applyForcedMovementDirectives(targetToken,p,description,saveActive,success,pid){
         var draft=(p&&p.batch&&drafts[p.batch])||null,precomputed=draft&&draft.forcedMovementPlan;
         var dirs=forcedMovementDirectives(description,saveActive,success,precomputed);if(!dirs.length)return [];
@@ -5532,7 +5542,11 @@ var AD5 = (function () {
         // Reaching 0 HP ends the beast form before any healing component in the
         // same transaction can revive that temporary form. Overflow is resolved
         // against the original creature by AD5 Transform below.
-        var nextHp=afterDamageHp;if(hasHealing&&saveMultiplier!==0&&!(transformDamagePlan&&transformDamagePlan.breaks))nextHp=Math.min(Number(plan.max),afterDamageHp+healingAmount);
+        var hpRules=hpRuleDirectives(complexDescription),healingBlocked=false;
+        if(hpRules.floorOne&&!transformDamagePlan&&plan.value>=1&&afterDamageHp<1)afterDamageHp=1;
+        try{healingBlocked=hasHealing&&healingAmount>0&&typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&AD5ConditionEngine.has(t.token,'no_healing');}catch(ignoreNoHeal){}
+        if(healingBlocked)report.push('<b>Лечение не действует</b> — цель не может восстанавливать хиты.');
+        var nextHp=afterDamageHp;if(hasHealing&&!healingBlocked&&saveMultiplier!==0&&!(transformDamagePlan&&transformDamagePlan.breaks))nextHp=Math.min(Number(plan.max),afterDamageHp+healingAmount);
         // 4.3.144: death and dying (Condition Engine) — Death Ward adjusts before HP is written.
         var hpDamageTaken=Math.max(0,damageAmount-absorbed),deathEngine=(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.adjustHp==='function')?AD5ConditionEngine:null;
         if(deathEngine&&!transformDamagePlan){try{var hpAdj=deathEngine.adjustHp(t.token,{before:plan.value,next:nextHp,damage:hpDamageTaken,max:Number(plan.max)});if(hpAdj&&Number.isFinite(Number(hpAdj.next)))nextHp=Number(hpAdj.next);}catch(adjErr){record('Death Ward: '+adjErr.message);}}
@@ -5656,6 +5670,20 @@ var AD5 = (function () {
         }
         if(damageAmount>0&&!p.reactionExec&&typeof AD5Reactions!=='undefined'&&AD5Reactions&&typeof AD5Reactions.afterDamage==='function'){
             try{AD5Reactions.afterDamage({playerId:msg.playerid||'',actorId:String(p.actor||c.id||''),sourceTokenId:String(p.conditionSourceToken||p.sourceToken||''),targetTokenId:String(t.token.id),actionName:String(p.name||attackName(f)||'Урон'),damageAmount:Number(damageAmount)||0,historyKey:String(key),attack:p.событиеАтаки||null},function(){});}catch(afterDamageReactionError){record('Реакция после урона: '+(afterDamageReactionError.message||afterDamageReactionError));}
+        }
+        // 4.3.145: «СНИЖ МАКС» lowers the HP maximum by the HP damage taken (Harm).
+        var maxReduction=hpRules.floorOne?Math.max(0,plan.value-afterDamageHp):hpDamageTaken;
+        if(hpRules.reduceMax&&maxReduction>0&&!entry.undone&&typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.reduceMaxHp==='function'){
+            try{var totalReduction=AD5ConditionEngine.reduceMaxHp(t.token,maxReduction);report.push('Максимум хитов снижен на '+maxReduction+' (всего −'+totalReduction+').');}catch(reduceErr){record('СНИЖ МАКС: '+(reduceErr.message||reduceErr));}
+        }
+        // 4.3.145: «ВАМП» — the source regains part of the damage dealt (Vampiric Touch).
+        if(hpRules.vampire&&damageAmount>0&&!p.reactionExec&&!entry.undone){
+            var vampSource=String(p.conditionSourceToken||p.sourceToken||''),vampHeal=Math.floor(damageAmount*hpRules.vampire/100);
+            if(vampSource&&vampSource!==String(t.token.id)&&getObj('graphic',vampSource)&&vampHeal>0){
+                var vampActor=String(p.actor||c.id||'');
+                setTimeout(function(){try{reactionDamage(vampSource,vampHeal,'лечение','Вампиризм',{actorId:vampActor,sourceTokenId:vampSource,playerId:msg.playerid,healing:true});}catch(e){gm('Вампиризм: '+esc(e.message||e));}},0);
+                report.push('Источник восстанавливает '+vampHeal+' хитов.');
+            }
         }
         // 4.3.144: Warding Bond — the bond's caster takes the same (typeless) damage.
         if(damageAmount>0&&!p.wardingShare&&!entry.undone){
@@ -8229,7 +8257,7 @@ var AD5 = (function () {
         var pid=String(context.playerId||'');if(!pid||!getObj('player',pid)){
             var players=findObjs({_type:'player'}),gmPlayer=null;players.some(function(pl){if(playerIsGM(pl.id)){gmPlayer=pl;return true;}return false;});if(!gmPlayer)throw new Error('Не найден GM для урона реакции.');pid=gmPlayer.id;
         }
-        var t=target(String(targetId||''),pid),type=effectType(damageType||'колющий');if(!type||['лечение','временное хп','атака'].indexOf(type)>=0)throw new Error('Некорректный тип урона реакции.');
+        var t=target(String(targetId||''),pid),type=effectType(damageType||'колющий');if(!type||(['лечение','временное хп','атака'].indexOf(type)>=0&&!(context.healing&&type==='лечение')))throw new Error('Некорректный тип урона реакции.');
         var actionName=String(label||'Реакция'),actorName=String(actorSheet.get('name')||(sourceToken&&sourceToken.get('name'))||'Реакция');if(amount<=0)return {amount:0,type:type,targetId:t.token.id,label:actionName};
         var f=Object.create(null);f.rname=actionName;f.charname=actorName;f.ad5source=actorId;f.ad5target=t.token.id;if(sourceToken)f.ad5sourcetoken=sourceToken.id;f.description='';f.desc='';f.dmg1flag='1';f.dmg1=String(amount);f.dmg1type=type;
         var msg={type:'general',playerid:pid,who:actorName,rolltemplate:'dmg',content:'',inlinerolls:[]};

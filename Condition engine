@@ -3,7 +3,8 @@ if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine) {
     log('AD5ConditionEngine: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Condition Engine 1.2.13
+ * AD5 Condition Engine 1.2.14
+ * 1.2.14: HP maximum = base (halved at exhaustion 4+) + «макс хиты» buffs − Harm reduction; reduceMaxHp/clearMaxHpReduction/maxHpChanged. Fixes double halving of NPC max HP at exhaustion 4+.
  * 1.2.13: death and dying for player characters — 0 HP → unconscious + prone + death saves
  *         (button at turn start, !ad5cond deathsave), damage at 0 HP = failure (crit = 2), damage
  *         ≥ max HP = instant death, healing wakes, 3 successes = stable; sheet checkboxes synced;
@@ -45,7 +46,7 @@ if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine) {
  */
 var AD5ConditionEngine=(function(){
     'use strict';
-    var VERSION='1.2.13',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
+    var VERSION='1.2.14',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
     var MARKERS={
         blinded:'bleeding-eye',charmed:'chained-heart',deafened:'half-haze',frightened:'screaming',
         grappled:'grab',incapacitated:'broken-shield',no_reactions:'interdiction',invisible:'ninja-mask',paralyzed:'padlock',
@@ -68,6 +69,7 @@ var AD5ConditionEngine=(function(){
         var r=state.AD5ConditionEngine;r.version=VERSION;
         r.tokenExhaustion=r.tokenExhaustion&&typeof r.tokenExhaustion==='object'?r.tokenExhaustion:{};
         r.npcBaseHpMax=r.npcBaseHpMax&&typeof r.npcBaseHpMax==='object'?r.npcBaseHpMax:{};
+        r.maxHpReduction=r.maxHpReduction&&typeof r.maxHpReduction==='object'?r.maxHpReduction:{};
         r.deathByExhaustion=r.deathByExhaustion&&typeof r.deathByExhaustion==='object'?r.deathByExhaustion:{};
         r.contests=r.contests&&typeof r.contests==='object'?r.contests:{};
         r.contestSequence=Number(r.contestSequence)||0;
@@ -193,19 +195,60 @@ var AD5ConditionEngine=(function(){
         if(grappleBurden){current=current/2;half=true;reasons.push('Перемещение с захваченной целью');}
         return {effective:Math.max(0,current),reasons:reasons,half:half,zero:false,grappleCarry:grappleBurden,grappledTargets:held.length};
     }
-    function effectiveHpMax(token,baseMax){var b=Number(baseMax);if(!Number.isFinite(b)||b<0)return baseMax;return exhaustionLevel(token)>=4?Math.floor(b/2):b;}
+    // 1.2.14: hit point maximum = base (halved at exhaustion 4+) + Effect Turns «макс хиты ±N»
+    // (Aid) − reduction from damage (Harm, «СНИЖ МАКС»). NPC bars keep the effective maximum
+    // with the base stored aside; PC sheets keep the base and only the token bar shows it.
+    function maxHpReductionOf(token){return isToken(token)?Math.max(0,Number(root().maxHpReduction[token.id])||0):0;}
+    function maxHpDelta(token){
+        var bonus=0;try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.maxHpBonusForToken==='function')bonus=Number(AD5EffectTurns.maxHpBonusForToken(token.id))||0;}catch(ignoreBonus){}
+        return bonus-maxHpReductionOf(token);
+    }
+    function computedHpMax(token,base,level){var b=level>=4?Math.floor(base/2):base;return Math.max(1,b+maxHpDelta(token));}
+    function effectiveHpMax(token,baseMax){
+        var b=Number(baseMax);if(!Number.isFinite(b)||b<0)return baseMax;
+        // NPC bar already shows the effective maximum while a base is stored.
+        if(isToken(token)&&npcToken(token)&&root().npcBaseHpMax[token.id]!==undefined)return b;
+        return computedHpMax(token,b,exhaustionLevel(token));
+    }
     function writePcHpCurrent(cid,value){var hp=attr(cid,'hp');if(!hp)return false;hp.set('current',Math.max(0,Number(value)||0));return true;}
     function syncHpLimit(token,level){
-        if(!isToken(token))return;var r=root(),rid=representedId(token),npc=npcToken(token),base=null,effective=null,current=num(token.get('bar1_value'));
+        if(!isToken(token))return;var r=root(),rid=representedId(token),npc=npcToken(token),base=null,effective=null,current=num(token.get('bar1_value')),delta=maxHpDelta(token),clamp=level>=4||delta<0;
         if(npc){
-            var shownMax=num(token.get('bar1_max'));if(level>=4){if(r.npcBaseHpMax[token.id]===undefined&&shownMax!==null)r.npcBaseHpMax[token.id]=shownMax;base=num(r.npcBaseHpMax[token.id]);if(base!==null){effective=Math.floor(base/2);token.set('bar1_max',effective);if(current!==null&&current>effective)token.set('bar1_value',effective);}}
+            var shownMax=num(token.get('bar1_max'));
+            if(level>=4||delta){if(r.npcBaseHpMax[token.id]===undefined&&shownMax!==null)r.npcBaseHpMax[token.id]=shownMax;base=num(r.npcBaseHpMax[token.id]);if(base!==null){effective=computedHpMax(token,base,level);if(shownMax!==effective)token.set('bar1_max',effective);if(clamp&&current!==null&&current>effective)token.set('bar1_value',effective);}}
             else if(r.npcBaseHpMax[token.id]!==undefined){base=num(r.npcBaseHpMax[token.id]);if(base!==null)token.set('bar1_max',base);delete r.npcBaseHpMax[token.id];}
             return;
         }
-        var hp=rid&&attr(rid,'hp'),sheetMax=hp&&num(hp.get('max'));if(sheetMax===null)return;effective=level>=4?Math.floor(sheetMax/2):sheetMax;
+        var hp=rid&&attr(rid,'hp'),sheetMax=hp&&num(hp.get('max'));if(sheetMax===null)return;effective=computedHpMax(token,sheetMax,level);
         if(num(token.get('bar1_max'))!==effective)token.set('bar1_max',effective);
-        var sheetCurrent=hp&&num(hp.get('current'));if(level>=4&&sheetCurrent!==null&&sheetCurrent>effective){hp.set('current',effective);(findObjs({_type:'graphic',_subtype:'token',represents:rid})||[]).filter(isToken).forEach(function(t){t.set({bar1_value:effective,bar1_max:effective});});}
+        var sheetCurrent=hp&&num(hp.get('current'));if(clamp&&sheetCurrent!==null&&sheetCurrent>effective){hp.set('current',effective);(findObjs({_type:'graphic',_subtype:'token',represents:rid})||[]).filter(isToken).forEach(function(t){t.set({bar1_value:effective,bar1_max:effective});});}
     }
+    function currentHp(token){
+        if(npcToken(token))return num(token.get('bar1_value'));
+        var rid=representedId(token),hp=rid&&attr(rid,'hp');return hp?num(hp.get('current')):num(token.get('bar1_value'));
+    }
+    function writeHp(token,value){
+        value=Math.max(0,Math.floor(Number(value)||0));
+        if(npcToken(token)){token.set('bar1_value',value);return;}
+        var rid=representedId(token),hp=rid&&attr(rid,'hp');if(hp)hp.set('current',value);
+        (findObjs({_type:'graphic',_subtype:'token',represents:rid})||[]).filter(isToken).forEach(function(t){t.set('bar1_value',value);});
+    }
+    function effectiveMaxNow(token){var m=num(token.get('bar1_max'));return m;}
+    // Called by Effect Turns after «макс хиты ±N» appears/expires (diff = new − old).
+    function maxHpChanged(token,diff){
+        if(!isToken(token)||!representedId(token))return;diff=Number(diff)||0;syncToken(token);
+        var cur=currentHp(token),max=effectiveMaxNow(token);if(cur===null)return;
+        if(diff>0&&cur>0)writeHp(token,max!==null?Math.min(max,cur+diff):cur+diff);
+        else if(max!==null&&cur>max)writeHp(token,max);
+        try{if(typeof AD5HealthView!=='undefined'&&AD5HealthView&&AD5HealthView.update)AD5HealthView.update(token);}catch(ignoreView){}
+    }
+    function reduceMaxHp(token,amount){
+        amount=Math.max(0,Math.floor(Number(amount)||0));if(!isToken(token)||!amount)return 0;
+        var r=root();r.maxHpReduction[token.id]=maxHpReductionOf(token)+amount;syncToken(token);
+        var cur=currentHp(token),max=effectiveMaxNow(token);if(cur!==null&&max!==null&&cur>max)writeHp(token,max);
+        return r.maxHpReduction[token.id];
+    }
+    function clearMaxHpReduction(token){if(!isToken(token)||!root().maxHpReduction[token.id])return false;delete root().maxHpReduction[token.id];syncToken(token);return true;}
     function syncDeath(token,level){
         var r=root();if(level>=6){r.deathByExhaustion[token.id]=true;setStatusMarker(token,MARKERS.death,true);if(npcToken(token))token.set('bar1_value',0);else{var cid=representedId(token),hp=cid&&attr(cid,'hp');if(hp)hp.set('current',0);token.set('bar1_value',0);}return;}
         // Exhaustion 6 is death, not an ordinary timed marker. Lowering the sheet
@@ -661,11 +704,11 @@ var AD5ConditionEngine=(function(){
         if(moved||structural||status)scheduleRelationshipCleanup();
     });
     on('change:graphic:represents',function(t){if(isToken(t))setTimeout(function(){syncToken(t);scheduleRelationshipCleanup();},0);});
-    on('destroy:graphic',function(t){var r=root();delete r.tokenExhaustion[t.id];delete r.npcBaseHpMax[t.id];delete r.deathByExhaustion[t.id];setTimeout(scheduleRelationshipCleanup,0);});
+    on('destroy:graphic',function(t){var r=root();delete r.tokenExhaustion[t.id];delete r.npcBaseHpMax[t.id];delete r.maxHpReduction[t.id];delete r.deathByExhaustion[t.id];setTimeout(scheduleRelationshipCleanup,0);});
     on('change:attribute',function(a){var name=String(a&&a.get&&a.get('name')||'').toLowerCase(),cid=String(a&&a.get&&a.get('_characterid')||'');if(name==='exhaustion_level'||name==='hp')setTimeout(function(){syncCharacter(cid);scheduleRelationshipCleanup();},0);});
     on('ready',function(){root();cleanupContests();ensureContestMacros();registerMovementHook();setTimeout(function(){registerMovementHook();var startupTokens=allTokens();startupTokens.forEach(syncToken);normalizeExistingGrapples();var seenEscape={},neededEscape={};startupTokens.forEach(function(t){var cid=representedId(t);if(!cid)return;seenEscape[cid]=true;if(grapplesOf(t).length>0)neededEscape[cid]=true;});Object.keys(seenEscape).forEach(function(cid){syncEscapeActionForCharacter(cid,!!neededEscape[cid]);});setTimeout(cleanupRelationships,75);},500);sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' '+VERSION+'</b> запущен. Схвачен/Сбит с ног — условные состояния без таймера; «Встать» снимает Prone, «Освободиться» запускает повторное соревнование. Схваченная цель следует за хватающим и удерживается на расстоянии 5 фт, сохраняя сторону относительно хватающего; её перенос не расходует собственную скорость и не вызывает АОО. Для проверок характеристик nat 1/20 не являются авто-провалом/успехом. Временный эффект «Реакции 0» блокирует только реакции; отдельного запрета действий/движения не добавлено.',null,{noarchive:true});});
 
-    return {dyingState:dyingState,adjustHp:adjustHp,afterHp:afterHp,stabilize:stabilizeToken,revive:reviveToken,kill:killToken,deathSave:deathSave,version:VERSION,has:has,entry:conditionEntry,source:sourceToken,rangeFeet:rangeFeet,exhaustionLevel:exhaustionLevel,setExhaustion:setExhaustion,attackRule:attackRule,saveRule:saveRule,abilityCheckRule:abilityCheckRule,damageDefense:damageDefense,movementRule:movementRule,canAct:canAct,canReact:canReact,effectiveHpMax:effectiveHpMax,syncToken:syncToken,syncCharacter:syncCharacter,startContest:startContest,contestRoll:contestRoll,grapplesOf:grapplesOf,grappledTargetsOf:grappledTargetsOf,releaseGrapple:releaseGrapple,standUp:standUp,cleanupRelationships:cleanupRelationships,registerMovementHook:registerMovementHook,skillBonus:skillBonus,normalizeGrapplePosition:normalizeGrapplePosition,
+    return {maxHpChanged:maxHpChanged,reduceMaxHp:reduceMaxHp,clearMaxHpReduction:clearMaxHpReduction,maxHpReduction:maxHpReductionOf,dyingState:dyingState,adjustHp:adjustHp,afterHp:afterHp,stabilize:stabilizeToken,revive:reviveToken,kill:killToken,deathSave:deathSave,version:VERSION,has:has,entry:conditionEntry,source:sourceToken,rangeFeet:rangeFeet,exhaustionLevel:exhaustionLevel,setExhaustion:setExhaustion,attackRule:attackRule,saveRule:saveRule,abilityCheckRule:abilityCheckRule,damageDefense:damageDefense,movementRule:movementRule,canAct:canAct,canReact:canReact,effectiveHpMax:effectiveHpMax,syncToken:syncToken,syncCharacter:syncCharacter,startContest:startContest,contestRoll:contestRoll,grapplesOf:grapplesOf,grappledTargetsOf:grappledTargetsOf,releaseGrapple:releaseGrapple,standUp:standUp,cleanupRelationships:cleanupRelationships,registerMovementHook:registerMovementHook,skillBonus:skillBonus,normalizeGrapplePosition:normalizeGrapplePosition,
         _test:{clampLevel:clampLevel,markers:MARKERS,labels:LABELS,sizeRankFromText:sizeRankFromText,contestType:contestType,rollAbilityCheck:rollAbilityCheck,skillBonus:skillBonus,effectCheckModifier:effectCheckModifier,grappleContactPosition:grappleContactPosition,normalizeGrapplePosition:normalizeGrapplePosition}};
 }());
 }

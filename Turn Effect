@@ -3,7 +3,8 @@ if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
     log('AD5EffectTurns: duplicate module skipped; keep one installed copy.');
 } else {
 /*
-AD5 Effect Turns 1.6.4
+AD5 Effect Turns 1.6.5
+1.6.5: «макс хиты ±N» modifier (Aid) changes the HP maximum and, on gain, current HP; «без лечения» condition; «снимает снижение максимума» (Greater Restoration). AutoDamage HP directives are ignored by save sections.
 1.6.4: damage defenses on one token — «сопр ТИП[/ТИП] [N%] ходы», «сопр все», «имм ТИП» (strongest wins, no stacking with zones/auras); «охранная связь» (Warding Bond: the effect's source takes the same typeless damage); cleansing items «снимает СОСТОЯНИЕ[/…]», «снимает проклятие», «снимает истощение N», «рассеивает N» (Dispel Magic: spell effects ≤N end, higher need a check vs 10+level; dispelled concentration spells end). Effect sources now record spell and spellLevel. «стабилизирует», «возвращает к жизни N» and the «защита от смерти» condition for death and dying.
 1.6.3: standard actions «Уклонение» (marker all-for-one) and «Отход» (marker flying-flag) as positive 1-turn conditions.
 Companion module for AD5 4.3.9+. Adds scoped ПАСС modifiers and concentration-aura owner filtering for Areas 2.17.2+.
@@ -51,7 +52,7 @@ var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5
 // silently shadow every newer fix.
 var AD5EffectTurns = (function () {
     'use strict';
-    var VERSION='1.6.4', SCRIPT='AD5 Effect Turns';
+    var VERSION='1.6.5', SCRIPT='AD5 Effect Turns';
     var runtimeLastGroup=Object.create(null);
     var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
     var markerCacheRaw=null, markerCacheByName=Object.create(null);
@@ -117,7 +118,8 @@ var AD5EffectTurns = (function () {
         // 1.6.4: Warding Bond — the effect's source token takes the same damage as its bearer.
         warding_bond:{marker:'three-leaves',label:'Охранная связь',aliases:['охранная связь','warding bond','связь урона']},
         // Death Ward: first drop to 0 HP from damage leaves 1 HP instead (Condition Engine).
-        death_ward:{marker:'trophy',label:'Защита от смерти',aliases:['защита от смерти','death ward']}
+        death_ward:{marker:'trophy',label:'Защита от смерти',aliases:['защита от смерти','death ward']},
+        no_healing:{marker:'broken-heart',label:'Без лечения',aliases:['без лечения','запрет лечения','не может восстанавливать хиты','no healing']}
     };
     var ALIAS={};
 
@@ -179,7 +181,9 @@ var AD5EffectTurns = (function () {
             .replace(/<br\s*\/?>/gi,' ')
             .replace(/<[^>]*>/g,' ')
             .replace(/&nbsp;|&#160;/gi,' ')
-            .replace(/\r?\n/g,' ');
+            .replace(/\r?\n/g,' ')
+            // AutoDamage hit-point directives are not effects.
+            .replace(/(^|[\s,;])(?:НЕ\s+НИЖЕ\s+1|СНИЖ(?:ЕНИЕ)?\s+МАКС(?:ИМУМА)?|ВАМП(?:ИРИЗМ)?(?:\s+\d{1,3}\s*%)?)(?=$|[\s,;.!?])/g,'$1');
         var re=/(?:^|[\s,;])(?:ПРВ|УСП)\s*[:：—–-]?\s*/ig,m,marks=[];
         while((m=re.exec(text))){
             var raw=m[0],type=/ПРВ/i.test(raw)?'failure':'success';
@@ -307,6 +311,9 @@ var AD5EffectTurns = (function () {
         var text=norm(label),m,ability,metric,spec;
         if(!text)return null;
         var defense=defenseCore(text);if(defense)return defense;
+        // 1.6.5: hit point maximum («макс хиты +5» — Aid); current HP follows on gain.
+        m=/^(?:макс(?:имум)?\.?\s*(?:хитов|хиты|хп|hp)|max\s*hp)\s*([+-])?\s*(\d{1,4})$/i.exec(text)||/^([+-])?\s*(\d{1,4})\s+(?:макс(?:имум)?\.?\s*(?:хитов|хиты|хп|hp)|max\s*hp)$/i.exec(text);
+        if(m){var hpv=(m[1]==='-'?-1:1)*Number(m[2]);if(hpv)return {type:'maxhp',value:hpv,positive:hpv>0,label:'Макс. хиты '+(hpv>0?'+':'')+hpv};}
         m=/^(прем|преим|преимущество|adv|advantage)\s+([a-zа-я]+)$/i.exec(text);
         if(m&&(ability=modifierAbility(m[2])))return {type:'saveMode',ability:ability,mode:'adv',positive:true,label:'ПРЕМ '+RECOVERY_ABILITIES[ability].short};
         m=/^(пом|помеха|dis|disadv|disadvantage)\s+([a-zа-я]+)$/i.exec(text);
@@ -586,6 +593,7 @@ var AD5EffectTurns = (function () {
         if(!(m=/^снимает\s+(.+)$/.exec(text)))return null;
         var body=m[1];
         if(/^проклятие$/.test(body))return {mode:'curse',label:'Снятие проклятия'};
+        if(/^снижение максимума(?: хитов)?$/.test(body))return {mode:'maxhp',label:'Максимум хитов восстановлен'};
         if((m=/^истощение(?:\s+(\d))?$/.exec(body)))return {mode:'exhaustion',amount:m[1]?Number(m[1]):1,label:'Истощение -'+(m[1]||1)};
         var keys=[],parts=String(item).replace(/^\s*снимает\s+/i,'').split(/\s*\/\s*|\s+и\s+/);
         for(var i=0;i<parts.length;i++){var k=conditionKey(parts[i]);if(!k)return null;if(keys.indexOf(k)<0)keys.push(k);}
@@ -614,6 +622,7 @@ var AD5EffectTurns = (function () {
             }
         });
         if(spec.mode==='exhaustion')side.exhaustion=spec.amount;
+        if(spec.mode==='maxhp'){side.maxHp=true;return {text:spec.label,side:side};}
         if(spec.mode==='stabilize'||spec.mode==='revive'){side.life={mode:spec.mode,amount:spec.amount||1};return {text:spec.label,side:side};}
         var text=spec.label+': '+(removed.length?removed.join(', '):(spec.mode==='exhaustion'?'применено':'нечего снимать'))+(kept.length?'; не рассеяно: '+kept.join(', '):'');
         return {text:text,side:side};
@@ -622,6 +631,7 @@ var AD5EffectTurns = (function () {
         tx.cleanse=tx.cleanse||{exhaustion:0,endConcentration:[]};
         tx.cleanse.exhaustion+=side.exhaustion||0;
         if(side.life)tx.cleanse.life=side.life;
+        if(side.maxHp)tx.cleanse.maxHp=true;
         (side.endConcentration||[]).forEach(function(c){if(tx.cleanse.endConcentration.indexOf(c)<0)tx.cleanse.endConcentration.push(c);});
     }
     function parseEffect(item){
@@ -759,7 +769,7 @@ var AD5EffectTurns = (function () {
             applied.push(after.effects[e.key]);
         });
         if(conditionalProfile&&!applied.length)добавитьУсловныйЯкорь(token,after,sourceContext,conditionalProfile,applied);
-        var cleanseEffects=cleanseSide&&cleanseSide.cleanse&&(cleanseSide.cleanse.exhaustion||cleanseSide.cleanse.endConcentration.length||cleanseSide.cleanse.life);
+        var cleanseEffects=cleanseSide&&cleanseSide.cleanse&&(cleanseSide.cleanse.exhaustion||cleanseSide.cleanse.endConcentration.length||cleanseSide.cleanse.life||cleanseSide.cleanse.maxHp);
         var changed=!equals(before,after)||!!cleanseEffects;
         return {before:before,after:after,changed:changed,applied:applied,instant:instant,blocked:blocked,present:true,damage:sec.damage,outcome:outcome,cleanse:cleanseSide&&cleanseSide.cleanse||null};
     }
@@ -1296,7 +1306,7 @@ var AD5EffectTurns = (function () {
             if(mergeEffectIntoPlan(token,after,e,conditionImmunities,sourceContext,applied,blocked))consumed.push(item);
         });
         if(conditionalProfile&&!applied.length){добавитьУсловныйЯкорь(token,after,sourceContext,conditionalProfile,applied);consumed=consumed.concat(conditionalProfile.сырой||[]);}
-        var cleanseEffects=cleanseSide&&cleanseSide.cleanse&&(cleanseSide.cleanse.exhaustion||cleanseSide.cleanse.endConcentration.length||cleanseSide.cleanse.life);
+        var cleanseEffects=cleanseSide&&cleanseSide.cleanse&&(cleanseSide.cleanse.exhaustion||cleanseSide.cleanse.endConcentration.length||cleanseSide.cleanse.life||cleanseSide.cleanse.maxHp);
         var changed=!equals(before,after)||!!cleanseEffects;
         return {before:before,after:after,changed:changed,applied:applied,instant:instant,blocked:blocked,present:consumed.length>0||!!conditionalProfile,damage:'full',outcome:'direct',consumed:consumed,cleanse:cleanseSide&&cleanseSide.cleanse||null};
     }
@@ -1459,6 +1469,8 @@ var AD5EffectTurns = (function () {
         // fall when a flight-breaking condition is actually applied (and not
         // when it was blocked by condition immunity). Height schedules the fall
         // after the current AD5 transaction to avoid re-entrant HP writes.
+        var maxHpDiff=maxHpBonusOf(newRec)-maxHpBonusOf(old);
+        if(maxHpDiff&&typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.maxHpChanged==='function'){try{AD5ConditionEngine.maxHpChanged(token,maxHpDiff);}catch(maxHpError){sendChat(SCRIPT,'/w gm Максимум хитов: '+esc(maxHpError.message||maxHpError),null,{noarchive:true});}}
         try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.effectsChanged==='function')AD5Height.effectsChanged(token,old,newRec);}catch(heightEffectError){sendChat(SCRIPT,'/w gm Высота/падение: '+esc(heightEffectError.message||heightEffectError),null,{noarchive:true});}
         refreshTooltip(token);
         function hasRestraint(rec){return !!(rec&&Object.keys(rec.effects||{}).some(function(k){return rec.effects[k].condition==='restrained';}));}
@@ -1478,6 +1490,7 @@ var AD5EffectTurns = (function () {
         if(c.life&&typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine){
             try{if(c.life.mode==='stabilize')AD5ConditionEngine.stabilize(token,'заклинание');else AD5ConditionEngine.revive(token,c.life.amount,'заклинание');}catch(lifeErr){sendChat(SCRIPT,'/w gm '+esc(lifeErr.message||lifeErr));}
         }
+        if(c.maxHp&&typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.clearMaxHpReduction==='function'){try{AD5ConditionEngine.clearMaxHpReduction(token);}catch(mhErr){sendChat(SCRIPT,'/w gm '+esc(mhErr.message||mhErr));}}
         (c.endConcentration||[]).forEach(function(id){try{if(typeof AD5Concentration!=='undefined'&&AD5Concentration&&typeof AD5Concentration.end==='function')AD5Concentration.end(id,'рассеяно');}catch(ignoreEnd){}});
     }
     function restore(token,snap,suppressLifecycle){writeRecord(token,snap,suppressLifecycle);}
@@ -1592,6 +1605,12 @@ var AD5EffectTurns = (function () {
         return {total:total,rolled:rolled};
     }
     // Strongest active resistance percent / immunity per damage type on this token.
+    function maxHpBonusOf(rec){
+        if(!rec||!rec.effects)return 0;var total=0;
+        activeModifierEntries(rec).forEach(function(row){if(row.modifier&&row.modifier.type==='maxhp')total+=Number(row.modifier.value)||0;});
+        return total;
+    }
+    function maxHpBonusForToken(tokenId){return maxHpBonusOf(snapshot(tokenId));}
     function defenseForToken(tokenId){
         var out={resistances:{},immunities:{},sources:[]},rec=snapshot(tokenId);if(!rec||!rec.effects)return out;
         activeModifierEntries(rec).forEach(function(row){
@@ -2379,7 +2398,7 @@ var AD5EffectTurns = (function () {
         conditionImmunitiesForToken:sheetConditionImmunities,
         damageMultiplierForToken:damageMultiplierForToken,
         modifiersForToken:modifiersForToken,
-        defenseForToken:defenseForToken,
+        defenseForToken:defenseForToken,maxHpBonusForToken:maxHpBonusForToken,
         modifierTooltipParts:modifierTooltipParts,
         saveModifierForToken:saveModifierForToken,
         checkModifierForToken:checkModifierForToken,
