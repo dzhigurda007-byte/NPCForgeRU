@@ -1,0 +1,4719 @@
+[
+ {
+  "id": "phb-aura-of-vitality",
+  "name": "Аура живучести",
+  "aliases": [
+   "Aura of Vitality",
+   "Аура живучести"
+  ],
+  "level": 3,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "аура 30 фт",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "concentration": true,
+  "healing": "2d6",
+  "description": "ЗАКЛ\nПримечание: бонусным действием лечите 2d6 одно существо в ауре — повторное нажатие.",
+  "automation": "full",
+  "classes": "Паладин",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-revivify",
+  "name": "Возрождение",
+  "aliases": [
+   "Revivify",
+   "Возрождение"
+  ],
+  "level": 3,
+  "school": "Некромантия",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "существо, умершее не более 1 минуты назад",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true,
+   "material": "алмазы на 300 зм, расходуются"
+  },
+  "description": "ЗАКЛ\nвозвращает к жизни 1",
+  "automation": "full",
+  "classes": "Жрец, Паладин",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-gaseous-form",
+  "name": "Газообразная форма",
+  "aliases": [
+   "Gaseous Form",
+   "Газообразная форма"
+  ],
+  "level": 3,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "1 согласное существо",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: сопротивление только немагическому урону; скорость полёта 10 фт; не может атаковать и колдовать.\nсопр все 600, полёт 600",
+  "automation": "partial",
+  "classes": "Чародей, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-hypnotic-pattern",
+  "name": "Гипнотический узор",
+  "aliases": [
+   "Hypnotic Pattern",
+   "Гипнотический узор"
+  ],
+  "level": 3,
+  "school": "Иллюзия",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "30 фт куб",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": false,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "WIS",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: эффект также снимает встряска действием союзника — вручную.\nПРВ: очарован 10, недееспособен 10\nСНЯТЬ: ЦЕЛЬ ПОЛУЧИЛА УРОН",
+  "automation": "partial",
+  "classes": "Бард, Чародей, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-hunger-of-hadar",
+  "name": "Голод Хадара",
+  "aliases": [
+   "Hunger of Hadar",
+   "Голод Хадара"
+  ],
+  "level": 3,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "150 фт",
+  "target": "20 фт круг, обл, ЗАСХАЙ",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "DEX",
+  "saveSuccess": "Нет урона",
+  "damage": "2d6",
+  "damageType": "холод",
+  "damage2": "2d6",
+  "damageType2": "кислота",
+  "description": "ЗАКЛ\nПримечание: внутри всё сильно заслонено (ослепление); на каждый круг выше 3-го урон холодом и кислотой +1d6.\nОБЛН: Урон1. ОБЛК: ПРВ: Урон2, полный урон; УСП: нет урона\nПАСС: труднопроходимая местность",
+  "automation": "full",
+  "classes": "Колдун",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-conjure-barrage",
+  "name": "Град снарядов",
+  "aliases": [
+   "Conjure Barrage",
+   "Град снарядов"
+  ],
+  "level": 3,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "60 фт конус",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "save": "DEX",
+  "saveSuccess": "Половина урона",
+  "damage": "3d8",
+  "damageType": "колющий",
+  "description": "ЗАКЛ\nПримечание: тип урона — как у брошенного оружия или боеприпаса.\nПРВ: полный урон; УСП: половина урона",
+  "automation": "full",
+  "classes": "Следопыт",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-daylight",
+  "name": "Дневной свет",
+  "aliases": [
+   "Daylight",
+   "Дневной свет"
+  ],
+  "level": 3,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "60 фт сфера",
+  "duration": "1 час",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: яркий свет 60 фт; рассеивает магическую тьму 3 круга и ниже.",
+  "automation": "partial",
+  "classes": "Друид, Паладин, Следопыт, Чародей",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-slow",
+  "name": "Замедление",
+  "aliases": [
+   "Slow",
+   "Замедление"
+  ],
+  "level": 3,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "до 6 существ в 40 фт кубе",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "WIS",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПРВ: замедлен МДР{DC} 10, кд -2 10, спас ЛОВ -2 10, нет реакций 10; УСП: нет эффекта",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-protection-from-energy",
+  "name": "Защита от энергии",
+  "aliases": [
+   "Protection from Energy",
+   "Защита от энергии"
+  ],
+  "level": 3,
+  "school": "Ограждение",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "1 согласное существо",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: выберите тип: кислота, холод, огонь, электричество или звук — замените «огонь».\nсопр огонь 600",
+  "automation": "full",
+  "classes": "Жрец, Друид, Следопыт, Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-stinking-cloud",
+  "name": "Зловонное облако",
+  "aliases": [
+   "Stinking Cloud",
+   "Зловонное облако"
+  ],
+  "level": 3,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "90 фт",
+  "target": "20 фт круг, обл, ЗАСХАЙ",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "CON",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: по правилам при провале существо теряет действие в этот ход; иммунные к яду не затронуты.\nОБЛН: ПРВ: недееспособен 1; УСП: нет эффекта",
+  "automation": "partial",
+  "classes": "Бард, Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-counterspell",
+  "name": "Контрзаклинание",
+  "aliases": [
+   "Counterspell",
+   "Контрзаклинание"
+  ],
+  "level": 3,
+  "school": "Ограждение",
+  "castingTime": "1 реакция",
+  "range": "Реакция 60 фт",
+  "target": "1 заклинающее существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": false,
+   "s": true,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: реакция AD5: выберите ячейку 3–9; заклинания до её круга отменяются, выше — проверка.",
+  "automation": "full",
+  "classes": "Чародей, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-leomund-s-tiny-hut",
+  "name": "Крошечная хижина Леомунда",
+  "aliases": [
+   "Leomund's Tiny Hut",
+   "Крошечная хижина Леомунда"
+  ],
+  "level": 3,
+  "school": "Воплощение",
+  "castingTime": "1 минута",
+  "range": "На себя",
+  "target": "10 фт купол",
+  "duration": "8 часов",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "ritual": true,
+  "description": "ЗАКЛ\nПримечание: непроницаемый купол на 9 существ.",
+  "automation": "partial",
+  "classes": "Бард, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-magic-circle",
+  "name": "Магический круг",
+  "aliases": [
+   "Magic Circle",
+   "Магический круг"
+  ],
+  "level": 3,
+  "school": "Ограждение",
+  "castingTime": "1 минута",
+  "range": "10 фт",
+  "target": "10 фт цилиндр",
+  "duration": "1 час",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: против выбранных типов существ: не входят, помеха на атаки внутрь, защита от очарования и испуга — вручную.",
+  "automation": "partial",
+  "classes": "Жрец, Паладин, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-crusader-s-mantle",
+  "name": "Мантия крестоносца",
+  "aliases": [
+   "Crusader's Mantle",
+   "Мантия крестоносца"
+  ],
+  "level": 3,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "аура 30 фт",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: дополнительный урон излучением союзников в ауре при попадании оружием.\nПАСС: урон +1д4",
+  "automation": "partial",
+  "classes": "Паладин",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-beacon-of-hope",
+  "name": "Маяк надежды",
+  "aliases": [
+   "Beacon of Hope",
+   "Маяк надежды"
+  ],
+  "level": 3,
+  "school": "Ограждение",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "любое число существ",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: преимущество на спасброски Мудрости и от смерти; лечение по максимуму — вручную.\nпрем МДР 10, Маяк надежды 10",
+  "automation": "partial",
+  "classes": "Жрец",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-blink",
+  "name": "Мерцание",
+  "aliases": [
+   "Blink",
+   "Мерцание"
+  ],
+  "level": 3,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "1 минута",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "description": "ЗАКЛ\nмерцание 10",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-sleet-storm",
+  "name": "Метель",
+  "aliases": [
+   "Sleet Storm",
+   "Метель"
+  ],
+  "level": 3,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "150 фт",
+  "target": "40 фт цилиндр, обл, ЗАСХАЙ",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "DEX",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: концентрирующиеся внутри делают спасбросок Телосложения или теряют концентрацию — вручную.\nВХОД: ПРВ: сбит с ног; УСП: нет эффекта. ОБЛН: ПРВ: сбит с ног; УСП: нет эффекта\nПАСС: труднопроходимая местность",
+  "automation": "partial",
+  "classes": "Друид, Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-mass-healing-word",
+  "name": "Множественное лечащее слово",
+  "aliases": [
+   "Mass Healing Word",
+   "Множественное лечащее слово"
+  ],
+  "level": 3,
+  "school": "Воплощение",
+  "castingTime": "1 бонусное действие",
+  "range": "60 фт",
+  "target": "до 6 существ",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "healing": "1d4",
+  "addAbilityMod": true,
+  "higherDieCount": "1",
+  "higherDieType": "d4",
+  "higherText": "За каждый круг ячейки выше 3-го лечение увеличивается на 1d4.",
+  "description": "ЗАКЛ\nПримечание: по правилу Арвенора Лечащее слово только стабилизирует — согласуйте с Мастером.",
+  "automation": "partial",
+  "classes": "Жрец, Бард",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-lightning-arrow",
+  "name": "Молниевая стрела",
+  "aliases": [
+   "Lightning Arrow",
+   "Молниевая стрела"
+  ],
+  "level": 3,
+  "school": "Преобразование",
+  "castingTime": "1 бонусное действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: по правилам урон заменяет урон оружия и при промахе наносится половина — вручную.\nПОПАД: разовый\nПОПАДУСЛ: дальнобойное оружие\nПОПАДУРОН: 4d8 электричество\nПОПАДОБЛ: 10 фт круг\nПОПАДОБЛУРОН: 2d8 электричество\nПОПАДОБЛСПАС: ЛОВ {DC}\nПОПАДОБЛУСП: половина урона\nПОПАДОБЛИСКЛ: основную",
+  "automation": "partial",
+  "classes": "Следопыт",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-nondetection",
+  "name": "Необнаружимость",
+  "aliases": [
+   "Nondetection",
+   "Необнаружимость"
+  ],
+  "level": 3,
+  "school": "Ограждение",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "1 существо, место или предмет",
+  "duration": "8 часов",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: защита от магии прорицания.",
+  "automation": "partial",
+  "classes": "Бард, Следопыт, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-major-image",
+  "name": "Образ",
+  "aliases": [
+   "Major Image",
+   "Образ"
+  ],
+  "level": 3,
+  "school": "Иллюзия",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "20 фт куб",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: иллюзия со звуком, запахом и температурой.",
+  "automation": "partial",
+  "classes": "Бард, Чародей, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-animate-dead",
+  "name": "Оживление мёртвых",
+  "aliases": [
+   "Animate Dead",
+   "Оживление мёртвых"
+  ],
+  "level": 3,
+  "school": "Некромантия",
+  "castingTime": "1 минута",
+  "range": "10 фт",
+  "target": "труп или кости",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: создание нежити — токены ведутся штатно.",
+  "automation": "partial",
+  "classes": "Жрец, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-blinding-smite",
+  "name": "Ослепляющая кара",
+  "aliases": [
+   "Blinding Smite",
+   "Ослепляющая кара"
+  ],
+  "level": 3,
+  "school": "Воплощение",
+  "castingTime": "1 бонусное действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПОПАД: разовый\nПОПАДУСЛ: рукопашное оружие\nПОПАДУРОН: 3d8 излучение\nПОПАДСПАС: ТЕЛ {DC}\nПОПАДПРВ: ослеплён ТЕЛ{DC} 10",
+  "automation": "full",
+  "classes": "Паладин",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-glyph-of-warding",
+  "name": "Охранные руны",
+  "aliases": [
+   "Glyph of Warding",
+   "Охранные руны"
+  ],
+  "level": 3,
+  "school": "Ограждение",
+  "castingTime": "1 час",
+  "range": "Касание",
+  "target": "поверхность или предмет",
+  "duration": "До рассеивания",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: ловушка-руна: взрыв (5d8, спасбросок Ловкости) или заклинание — вручную.",
+  "automation": "partial",
+  "classes": "Бард, Жрец, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-water-breathing",
+  "name": "Подводное дыхание",
+  "aliases": [
+   "Water Breathing",
+   "Подводное дыхание"
+  ],
+  "level": 3,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "до 10 существ",
+  "duration": "24 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "ritual": true,
+  "description": "ЗАКЛ\nПримечание: цели дышат под водой.",
+  "automation": "partial",
+  "classes": "Друид, Следопыт, Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-fly",
+  "name": "Полёт",
+  "aliases": [
+   "Fly",
+   "Полёт"
+  ],
+  "level": 3,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "1 согласное существо",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: скорость полёта 60 фт; на каждый круг выше 3-го — ещё одна цель.\nполёт 100",
+  "automation": "partial",
+  "classes": "Чародей, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-sending",
+  "name": "Послание",
+  "aliases": [
+   "Sending",
+   "Послание"
+  ],
+  "level": 3,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "Неограниченная",
+  "target": "1 существо",
+  "duration": "1 раунд",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: послание до 25 слов и короткий ответ.",
+  "automation": "partial",
+  "classes": "Бард, Жрец, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-phantom-steed",
+  "name": "Призрачный скакун",
+  "aliases": [
+   "Phantom Steed",
+   "Призрачный скакун"
+  ],
+  "level": 3,
+  "school": "Иллюзия",
+  "castingTime": "1 минута",
+  "range": "30 фт",
+  "target": "скакун",
+  "duration": "1 час",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "ritual": true,
+  "description": "ЗАКЛ\nПримечание: призрачный скакун со скоростью 100 фт.",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-conjure-animals",
+  "name": "Призыв животных",
+  "aliases": [
+   "Conjure Animals",
+   "Призыв животных"
+  ],
+  "level": 3,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "звери",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: призыв — токены ведутся штатно.",
+  "automation": "partial",
+  "classes": "Друид, Следопыт",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-feign-death",
+  "name": "Притворная смерть",
+  "aliases": [
+   "Feign Death",
+   "Притворная смерть"
+  ],
+  "level": 3,
+  "school": "Некромантия",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "1 согласное существо",
+  "duration": "1 час",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "ritual": true,
+  "description": "ЗАКЛ\nПримечание: цель выглядит мёртвой; сопротивление всему урону, кроме психического — при необходимости добавьте «сопр все».",
+  "automation": "partial",
+  "classes": "Бард, Жрец, Друид, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-bestow-curse",
+  "name": "Проклятие",
+  "aliases": [
+   "Bestow Curse",
+   "Проклятие"
+  ],
+  "level": 3,
+  "school": "Некромантия",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "1 существо",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "save": "WIS",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: выберите вариант: помеха на проверки и спасброски характеристики, помеха атакам по вам, спасбросок Мудрости или потеря действия, либо +1d8 некротического урона ваших атак. Записано упрощённо.\nПРВ: проклят 10, проверка СИЛ -1д4 10; УСП: нет эффекта",
+  "automation": "partial",
+  "classes": "Бард, Жрец, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-speak-with-dead",
+  "name": "Разговор с мёртвыми",
+  "aliases": [
+   "Speak with Dead",
+   "Разговор с мёртвыми"
+  ],
+  "level": 3,
+  "school": "Некромантия",
+  "castingTime": "1 действие",
+  "range": "10 фт",
+  "target": "труп",
+  "duration": "10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: труп отвечает на 5 вопросов.",
+  "automation": "partial",
+  "classes": "Бард, Жрец",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-speak-with-plants",
+  "name": "Разговор с растениями",
+  "aliases": [
+   "Speak with Plants",
+   "Разговор с растениями"
+  ],
+  "level": 3,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "30 фт вокруг",
+  "duration": "10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: общение с растениями.",
+  "automation": "partial",
+  "classes": "Бард, Друид, Следопыт",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-dispel-magic",
+  "name": "Рассеивание магии",
+  "aliases": [
+   "Dispel Magic",
+   "Рассеивание магии"
+  ],
+  "level": 3,
+  "school": "Ограждение",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "1 существо или эффект",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: на каждый круг выше 3-го — автоматически рассеиваются эффекты до этого круга; поправьте число.\nрассеивает 3",
+  "automation": "full",
+  "classes": "Бард, Жрец, Друид, Паладин, Чародей, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-plant-growth",
+  "name": "Рост растений",
+  "aliases": [
+   "Plant Growth",
+   "Рост растений"
+  ],
+  "level": 3,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "150 фт",
+  "target": "100 фт круг, обл",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: по правилам каждый фут стоит 4 фута; вариант на 8 часов — урожай.\nПАСС: труднопроходимая местность",
+  "automation": "partial",
+  "classes": "Бард, Друид, Следопыт",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-meld-into-stone",
+  "name": "Слияние с камнем",
+  "aliases": [
+   "Meld into Stone",
+   "Слияние с камнем"
+  ],
+  "level": 3,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "на себя",
+  "duration": "8 часов",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "ritual": true,
+  "description": "ЗАКЛ\nПримечание: вы сливаетесь с камнем.",
+  "automation": "partial",
+  "classes": "Жрец",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-remove-curse",
+  "name": "Снятие проклятия",
+  "aliases": [
+   "Remove Curse",
+   "Снятие проклятия"
+  ],
+  "level": 3,
+  "school": "Ограждение",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "1 существо или предмет",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "description": "ЗАКЛ\nснимает проклятие",
+  "automation": "full",
+  "classes": "Жрец, Паладин, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-create-food-and-water",
+  "name": "Сотворение пищи и воды",
+  "aliases": [
+   "Create Food and Water",
+   "Сотворение пищи и воды"
+  ],
+  "level": 3,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "еда и вода",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: еда и вода на 15 гуманоидов на день.",
+  "automation": "partial",
+  "classes": "Жрец, Паладин",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-wind-wall",
+  "name": "Стена ветра",
+  "aliases": [
+   "Wind Wall",
+   "Стена ветра"
+  ],
+  "level": 3,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "линия 1/50/15 фт, обл",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "STR",
+  "saveSuccess": "Половина урона",
+  "damage": "3d8",
+  "damageType": "дробящий",
+  "description": "ЗАКЛ\nПримечание: стена отклоняет обычные стрелы и снаряды, удерживает газы — вручную.\nКАСТ: ПРВ: Урон1, полный урон; УСП: Урон1, половина урона",
+  "automation": "partial",
+  "classes": "Друид, Следопыт",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-elemental-weapon",
+  "name": "Стихийное оружие",
+  "aliases": [
+   "Elemental Weapon",
+   "Стихийное оружие"
+  ],
+  "level": 3,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "немагическое оружие",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: дополнительный урон выбранной стихии; бонус выдаётся токену владельца.\nатака 1 600, урон 1д4 600",
+  "automation": "partial",
+  "classes": "Паладин",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-fear",
+  "name": "Ужас",
+  "aliases": [
+   "Fear",
+   "Ужас"
+  ],
+  "level": 3,
+  "school": "Иллюзия",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "30 фт конус",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "WIS",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: испуганная цель бросает предмет и бежит Рывком; спасбросок — только когда заклинатель вне поля зрения (здесь — каждый ход).\nПРВ: испуган МДР{DC} 10; УСП: нет эффекта",
+  "automation": "partial",
+  "classes": "Бард, Чародей, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-haste",
+  "name": "Ускорение",
+  "aliases": [
+   "Haste",
+   "Ускорение"
+  ],
+  "level": 3,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "1 согласное существо",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: скорость удваивается, +1 действие; после окончания — вялость на ход.\nускорен 10, кд 2 10, прем ЛОВ 10",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-water-walk",
+  "name": "Хождение по воде",
+  "aliases": [
+   "Water Walk",
+   "Хождение по воде"
+  ],
+  "level": 3,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "до 10 существ",
+  "duration": "1 час",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "ritual": true,
+  "description": "ЗАКЛ\nПримечание: цели ходят по жидкостям.",
+  "automation": "partial",
+  "classes": "Жрец, Друид, Следопыт, Чародей",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-tongues",
+  "name": "Языки",
+  "aliases": [
+   "Tongues",
+   "Языки"
+  ],
+  "level": 3,
+  "school": "Прорицание",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "1 существо",
+  "duration": "1 час",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: цель понимает любой язык и её понимают все.",
+  "automation": "partial",
+  "classes": "Бард, Жрец, Чародей, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-clairvoyance",
+  "name": "Ясновидение",
+  "aliases": [
+   "Clairvoyance",
+   "Ясновидение"
+  ],
+  "level": 3,
+  "school": "Прорицание",
+  "castingTime": "10 минут",
+  "range": "1 миля",
+  "target": "невидимый сенсор",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: сенсор зрения или слуха в знакомом месте.",
+  "automation": "partial",
+  "classes": "Бард, Жрец, Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-aura-of-life",
+  "name": "Аура жизни",
+  "aliases": [
+   "Aura of Life",
+   "Аура жизни"
+  ],
+  "level": 4,
+  "school": "Ограждение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "аура 30 фт, обл",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: максимум хитов союзников не уменьшается; существо с 0 хитов в начале хода получает 1 хит — вручную.\nСОПР: некротическая энергия",
+  "automation": "partial",
+  "classes": "Паладин",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-aura-of-purity",
+  "name": "Аура чистоты",
+  "aliases": [
+   "Aura of Purity",
+   "Аура чистоты"
+  ],
+  "level": 4,
+  "school": "Ограждение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "аура 30 фт, обл",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: защита от болезней и преимущество на спасброски от ослепления, очарования, глухоты, испуга, паралича, отравления и ошеломления — вручную.\nСОПР: яд",
+  "automation": "partial",
+  "classes": "Паладин",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-mordenkainen-s-faithful-hound",
+  "name": "Верный пёс Морденкайнена",
+  "aliases": [
+   "Mordenkainen's Faithful Hound",
+   "Верный пёс Морденкайнена"
+  ],
+  "level": 4,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "пёс",
+  "duration": "8 часов",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: невидимый сторожевой пёс (атака 4d8 колющего) — токен ведётся штатно.",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-greater-invisibility",
+  "name": "Высшая невидимость",
+  "aliases": [
+   "Greater Invisibility",
+   "Высшая невидимость"
+  ],
+  "level": 4,
+  "school": "Иллюзия",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "1 существо",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nневидим 10",
+  "automation": "full",
+  "classes": "Бард, Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-giant-insect",
+  "name": "Гигантское насекомое",
+  "aliases": [
+   "Giant Insect",
+   "Гигантское насекомое"
+  ],
+  "level": 4,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "насекомые",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: превращение насекомых в гигантских — токены ведутся штатно.",
+  "automation": "partial",
+  "classes": "Друид",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-death-ward",
+  "name": "Защита от смерти",
+  "aliases": [
+   "Death Ward",
+   "Защита от смерти"
+  ],
+  "level": 4,
+  "school": "Ограждение",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "1 существо",
+  "duration": "8 часов",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "description": "ЗАКЛ\nзащита от смерти",
+  "automation": "full",
+  "classes": "Жрец, Паладин",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-banishment",
+  "name": "Изгнание",
+  "aliases": [
+   "Banishment",
+   "Изгнание"
+  ],
+  "level": 4,
+  "school": "Ограждение",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "1 существо",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "CHA",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: существо из другого плана, изгнанное на всю минуту, не возвращается; на каждый круг выше 4-го — ещё одна цель.\nПРВ: изгнан; УСП: нет эффекта",
+  "automation": "full",
+  "classes": "Жрец, Паладин, Чародей, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-fabricate",
+  "name": "Изготовление",
+  "aliases": [
+   "Fabricate",
+   "Изготовление"
+  ],
+  "level": 4,
+  "school": "Преобразование",
+  "castingTime": "10 минут",
+  "range": "120 фт",
+  "target": "сырьё",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: изготовление предмета из сырья.",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-stone-shape",
+  "name": "Изменение формы камня",
+  "aliases": [
+   "Stone Shape",
+   "Изменение формы камня"
+  ],
+  "level": 4,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "камень",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: придаёт камню любую форму.",
+  "automation": "partial",
+  "classes": "Жрец, Друид, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-stoneskin",
+  "name": "Каменная кожа",
+  "aliases": [
+   "Stoneskin",
+   "Каменная кожа"
+  ],
+  "level": 4,
+  "school": "Ограждение",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "1 согласное существо",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true,
+   "material": "алмазная пыль на 100 зм, расходуется"
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: только против немагического оружия.\nсопр дробящий/колющий/рубящий 600",
+  "automation": "partial",
+  "classes": "Друид, Следопыт, Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-control-water",
+  "name": "Контроль над водами",
+  "aliases": [
+   "Control Water",
+   "Контроль над водами"
+  ],
+  "level": 4,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "300 фт",
+  "target": "100 фт куб воды",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: наводнение, раздел вод, течение или водоворот — вручную.",
+  "automation": "partial",
+  "classes": "Жрец, Друид, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-mordenkainen-s-private-sanctum",
+  "name": "Личное святилище Морденкайнена",
+  "aliases": [
+   "Mordenkainen's Private Sanctum",
+   "Личное святилище Морденкайнена"
+  ],
+  "level": 4,
+  "school": "Ограждение",
+  "castingTime": "10 минут",
+  "range": "120 фт",
+  "target": "область",
+  "duration": "24 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: защита области от проникновения и наблюдения.",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-arcane-eye",
+  "name": "Магический глаз",
+  "aliases": [
+   "Arcane Eye",
+   "Магический глаз"
+  ],
+  "level": 4,
+  "school": "Прорицание",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "невидимый глаз",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: невидимый летающий глаз-разведчик.",
+  "automation": "partial",
+  "classes": "Жрец, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-hallucinatory-terrain",
+  "name": "Мираж",
+  "aliases": [
+   "Hallucinatory Terrain",
+   "Мираж"
+  ],
+  "level": 4,
+  "school": "Иллюзия",
+  "castingTime": "10 минут",
+  "range": "300 фт",
+  "target": "150 фт куб",
+  "duration": "24 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: местность выглядит иначе.",
+  "automation": "partial",
+  "classes": "Бард, Друид, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-staggering-smite",
+  "name": "Оглушающая кара",
+  "aliases": [
+   "Staggering Smite",
+   "Оглушающая кара"
+  ],
+  "level": 4,
+  "school": "Очарование",
+  "castingTime": "1 бонусное действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: при провале помеха на атаки и проверки, без реакций до конца следующего хода цели — частично вручную.\nПОПАД: разовый\nПОПАДУСЛ: рукопашное оружие\nПОПАДУРОН: 4d6 психический\nПОПАДСПАС: МДР {DC}\nПОПАДПРВ: Оглушающая кара 1",
+  "automation": "partial",
+  "classes": "Паладин",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-fire-shield",
+  "name": "Огненный щит",
+  "aliases": [
+   "Fire Shield",
+   "Огненный щит"
+  ],
+  "level": 4,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: тёплый щит — сопротивление холоду, холодный — огню (замените). Атакующий в 5 фт получает 2d8 огнём/холодом — вручную.\nсопр холод 100",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-dimension-door",
+  "name": "Переносящая дверь",
+  "aliases": [
+   "Dimension Door",
+   "Переносящая дверь"
+  ],
+  "level": 4,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "500 фт",
+  "target": "на себя и 1 согласное существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: переместите токен (и спутника вручную) до 500 фт.\nтелепорт 500 фт",
+  "automation": "full",
+  "classes": "Бард, Чародей, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-dominate-beast",
+  "name": "Подчинение зверя",
+  "aliases": [
+   "Dominate Beast",
+   "Подчинение зверя"
+  ],
+  "level": 4,
+  "school": "Очарование",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "1 зверь",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "save": "WIS",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: преимущество на спасбросок, если вы сражаетесь с целью; на 5–7 круге 10 минут, на 8 — 1 час.\nПРВ: подчинён МДР{DC}, очарован 10; УСП: нет эффекта",
+  "automation": "full",
+  "classes": "Друид, Чародей",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-locate-creature",
+  "name": "Поиск существа",
+  "aliases": [
+   "Locate Creature",
+   "Поиск существа"
+  ],
+  "level": 4,
+  "school": "Прорицание",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: направление к существу в пределах 1000 фт.",
+  "automation": "partial",
+  "classes": "Бард, Жрец, Друид, Паладин, Следопыт, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-divination",
+  "name": "Предсказание",
+  "aliases": [
+   "Divination",
+   "Предсказание"
+  ],
+  "level": 4,
+  "school": "Прорицание",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "ritual": true,
+  "description": "ЗАКЛ\nПримечание: ответ на вопрос о событии в ближайшие 7 дней.",
+  "automation": "partial",
+  "classes": "Жрец",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-phantasmal-killer",
+  "name": "Призрачный убийца",
+  "aliases": [
+   "Phantasmal Killer",
+   "Призрачный убийца"
+  ],
+  "level": 4,
+  "school": "Иллюзия",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "1 существо",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "save": "WIS",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: на каждый круг выше 4-го урон +1d10.\nПРВ: нет урона; УСП: нет эффекта\nAD5ЭФФ: {\"kind\":\"periodic\",\"order\":\"save-damage-end\",\"formula\":\"4d10\",\"type\":\"психический\",\"dcAttribute\":\"spell_save_dc\",\"ability\":\"wisdom\",\"timing\":\"end\",\"condition\":\"испуган\",\"duration\":10}",
+  "automation": "full",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-conjure-woodland-beings",
+  "name": "Призыв лесных существ",
+  "aliases": [
+   "Conjure Woodland Beings",
+   "Призыв лесных существ"
+  ],
+  "level": 4,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "феи",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: призыв — токены ведутся штатно.",
+  "automation": "partial",
+  "classes": "Друид, Следопыт",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-conjure-minor-elementals",
+  "name": "Призыв малых элементалей",
+  "aliases": [
+   "Conjure Minor Elementals",
+   "Призыв малых элементалей"
+  ],
+  "level": 4,
+  "school": "Вызов",
+  "castingTime": "1 минута",
+  "range": "90 фт",
+  "target": "элементали",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: призыв — токены ведутся штатно.",
+  "automation": "partial",
+  "classes": "Друид, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-compulsion",
+  "name": "Принуждение",
+  "aliases": [
+   "Compulsion",
+   "Принуждение"
+  ],
+  "level": 4,
+  "school": "Очарование",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "существа в 30 фт",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "save": "WIS",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: бонусным действием задаёте направление — цель тратит движение туда (вручную).\nПРВ: Принуждение МДР{DC} 10; УСП: нет эффекта",
+  "automation": "partial",
+  "classes": "Бард",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-freedom-of-movement",
+  "name": "Свобода перемещения",
+  "aliases": [
+   "Freedom of Movement",
+   "Свобода перемещения"
+  ],
+  "level": 4,
+  "school": "Ограждение",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "1 согласное существо",
+  "duration": "1 час",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: трудная местность и магия не замедляют; 5 фт движения освобождают от немагических пут.\nснимает опутан/парализован, Свобода перемещения 600",
+  "automation": "partial",
+  "classes": "Бард, Друид, Следопыт, Жрец",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-confusion",
+  "name": "Смятение",
+  "aliases": [
+   "Confusion",
+   "Смятение"
+  ],
+  "level": 4,
+  "school": "Очарование",
+  "castingTime": "1 действие",
+  "range": "90 фт",
+  "target": "10 фт круг",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "WIS",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: на каждый круг выше 4-го радиус +5 фт.\nПРВ: замешательство МДР{DC} 10; УСП: нет эффекта",
+  "automation": "full",
+  "classes": "Бард, Друид, Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-guardian-of-faith",
+  "name": "Страж веры",
+  "aliases": [
+   "Guardian of Faith",
+   "Страж веры"
+  ],
+  "level": 4,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "страж",
+  "duration": "8 часов",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: страж: враги, входящие в 10 фт или начинающие там ход, делают спасбросок Ловкости, 20 излучением (половина при успехе), всего до 60 урона — токен и урон вручную.",
+  "automation": "partial",
+  "classes": "Жрец",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-leomund-s-secret-chest",
+  "name": "Тайный сундук Леомунда",
+  "aliases": [
+   "Leomund's Secret Chest",
+   "Тайный сундук Леомунда"
+  ],
+  "level": 4,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "сундук",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: сундук прячется на Эфирном плане.",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-otiluke-s-resilient-sphere",
+  "name": "Упругая сфера Отилюка",
+  "aliases": [
+   "Otiluke's Resilient Sphere",
+   "Упругая сфера Отилюка"
+  ],
+  "level": 4,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "1 существо",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "DEX",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: ничто не проходит сквозь сферу ни внутрь, ни наружу — атаки изнутри наружу запрещены вручную.\nПРВ: Упругая сфера 10, имм все 10; УСП: нет эффекта",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-grasping-vine",
+  "name": "Хватающая лоза",
+  "aliases": [
+   "Grasping Vine",
+   "Хватающая лоза"
+  ],
+  "level": 4,
+  "school": "Вызов",
+  "castingTime": "1 бонусное действие",
+  "range": "30 фт",
+  "target": "1 существо",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "save": "DEX",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: лоза — отдельный объект; повторяйте бонусным действием.\nПРВ: ТЯГ 20; УСП: нет эффекта",
+  "automation": "partial",
+  "classes": "Друид, Следопыт",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-evard-s-black-tentacles",
+  "name": "Чёрные щупальца Эварда",
+  "aliases": [
+   "Evard's Black Tentacles",
+   "Чёрные щупальца Эварда"
+  ],
+  "level": 4,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "90 фт",
+  "target": "20 фт квадрат, обл",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "DEX",
+  "saveSuccess": "Нет эффекта",
+  "damage": "3d6",
+  "damageType": "дробящий",
+  "description": "ЗАКЛ\nПримечание: опутанное существо получает урон в начале хода и без спасброска — упрощено; вырваться можно и проверкой Ловкости.\nВХОД: ПРВ: Урон1, опутан; УСП: нет эффекта. ОБЛН: ПРВ: Урон1, опутан; УСП: нет эффекта. ПАСС: труднопроходимая местность. ОСВОБ: опутан, ПРОВЕРКА СИЛ{DC}, ПРВ: нет эффекта",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-swift-quiver",
+  "name": "Быстрый колчан",
+  "aliases": [
+   "Swift Quiver",
+   "Быстрый колчан"
+  ],
+  "level": 5,
+  "school": "Преобразование",
+  "castingTime": "1 бонусное действие",
+  "range": "Касание",
+  "target": "колчан",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: две атаки дальнобойным оружием бонусным действием каждый ход — используйте атаки оружия.",
+  "automation": "partial",
+  "classes": "Следопыт",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-raise-dead",
+  "name": "Воскрешение",
+  "aliases": [
+   "Raise Dead",
+   "Воскрешение"
+  ],
+  "level": 5,
+  "school": "Некромантия",
+  "castingTime": "1 час",
+  "range": "Касание",
+  "target": "мёртвое существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true,
+   "material": "алмаз на 500 зм, расходуется"
+  },
+  "description": "ЗАКЛ\nПримечание: погибший не более 10 дней назад; штраф −4 к броскам, уменьшается после каждого продолжительного отдыха.\nвозвращает к жизни 1",
+  "automation": "full",
+  "classes": "Бард, Жрец, Паладин",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-greater-restoration",
+  "name": "Высшее восстановление",
+  "aliases": [
+   "Greater Restoration",
+   "Высшее восстановление"
+  ],
+  "level": 5,
+  "school": "Ограждение",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "1 существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true,
+   "material": "алмазная пыль на 100 зм, расходуется"
+  },
+  "description": "ЗАКЛ\nПримечание: снимает один эффект — оставьте нужный.\nснимает очарован/окаменел/проклятие, снимает истощение 1, снимает снижение максимума",
+  "automation": "full",
+  "classes": "Бард, Жрец, Друид",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-tree-stride",
+  "name": "Древесный путь",
+  "aliases": [
+   "Tree Stride",
+   "Древесный путь"
+  ],
+  "level": 5,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: перемещение между деревьями до 500 фт.",
+  "automation": "partial",
+  "classes": "Друид, Следопыт",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-conjure-volley",
+  "name": "Залп",
+  "aliases": [
+   "Conjure Volley",
+   "Залп"
+  ],
+  "level": 5,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "150 фт",
+  "target": "40 фт цилиндр",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "save": "DEX",
+  "saveSuccess": "Половина урона",
+  "damage": "8d8",
+  "damageType": "колющий",
+  "description": "ЗАКЛ\nПримечание: тип урона — как у брошенного оружия или боеприпаса.\nПРВ: полный урон; УСП: половина урона",
+  "automation": "full",
+  "classes": "Следопыт",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-contagion",
+  "name": "Заражение",
+  "aliases": [
+   "Contagion",
+   "Заражение"
+  ],
+  "level": 5,
+  "school": "Некромантия",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "1 существо",
+  "duration": "7 дней",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "attack": "Melee",
+  "description": "ЗАКЛ\nПримечание: после трёх провалов выберите болезнь и её эффекты (например, «ослеплён»).\nотравлен ТЕЛ{DC} СЧЁТ 3 → Болезнь 999",
+  "automation": "partial",
+  "classes": "Друид, Жрец",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-legend-lore",
+  "name": "Знание легенд",
+  "aliases": [
+   "Legend Lore",
+   "Знание легенд"
+  ],
+  "level": 5,
+  "school": "Прорицание",
+  "castingTime": "10 минут",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: сведения о легендарном предмете, месте или существе.",
+  "automation": "partial",
+  "classes": "Бард, Жрец, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-banishing-smite",
+  "name": "Изгоняющая кара",
+  "aliases": [
+   "Banishing Smite",
+   "Изгоняющая кара"
+  ],
+  "level": 5,
+  "school": "Ограждение",
+  "castingTime": "1 бонусное действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: если после удара у цели 50 хитов или меньше, она изгнана (добавьте ей «изгнан»).\nПОПАД: разовый\nПОПАДУСЛ: оружие\nПОПАДУРОН: 5d10 силовое поле",
+  "automation": "partial",
+  "classes": "Паладин",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-modify-memory",
+  "name": "Изменение памяти",
+  "aliases": [
+   "Modify Memory",
+   "Изменение памяти"
+  ],
+  "level": 5,
+  "school": "Очарование",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "1 существо",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: спасбросок Мудрости; изменение воспоминаний.",
+  "automation": "partial",
+  "classes": "Бард, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-wall-of-stone",
+  "name": "Каменная стена",
+  "aliases": [
+   "Wall of Stone",
+   "Каменная стена"
+  ],
+  "level": 5,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "линия 6/100/10 фт, обл, СОЛИД",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: 10 панелей 10×10 фт; существо в месте появления — спасбросок Ловкости, чтобы отойти. Стена постоянна, если концентрация продлится 10 минут.",
+  "automation": "partial",
+  "classes": "Друид, Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-circle-of-power",
+  "name": "Круг силы",
+  "aliases": [
+   "Circle of Power",
+   "Круг силы"
+  ],
+  "level": 5,
+  "school": "Ограждение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "аура 30 фт, обл",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: преимущество против заклинаний и магии; при успешном спасброске на половину урона урона нет — вручную.\nПАСС: прем ВСЕ",
+  "automation": "partial",
+  "classes": "Паладин",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-teleportation-circle",
+  "name": "Круг телепортации",
+  "aliases": [
+   "Teleportation Circle",
+   "Круг телепортации"
+  ],
+  "level": 5,
+  "school": "Вызов",
+  "castingTime": "1 минута",
+  "range": "10 фт",
+  "target": "круг",
+  "duration": "1 раунд",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: портал к постоянному кругу.",
+  "automation": "partial",
+  "classes": "Бард, Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-mass-cure-wounds",
+  "name": "Множественное лечение ран",
+  "aliases": [
+   "Mass Cure Wounds",
+   "Множественное лечение ран"
+  ],
+  "level": 5,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "до 6 существ в 30 фт круге",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "healing": "3d8",
+  "addAbilityMod": true,
+  "higherDieCount": "1",
+  "higherDieType": "d8",
+  "higherText": "За каждый круг ячейки выше 5-го лечение увеличивается на 1d8.",
+  "description": "ЗАКЛ",
+  "automation": "full",
+  "classes": "Бард, Жрец, Друид",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-scrying",
+  "name": "Наблюдение",
+  "aliases": [
+   "Scrying",
+   "Наблюдение"
+  ],
+  "level": 5,
+  "school": "Прорицание",
+  "castingTime": "10 минут",
+  "range": "На себя",
+  "target": "1 существо",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: спасбросок Мудрости; невидимый сенсор рядом с целью.",
+  "automation": "partial",
+  "classes": "Бард, Жрец, Друид, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-insect-plague",
+  "name": "Нашествие насекомых",
+  "aliases": [
+   "Insect Plague",
+   "Нашествие насекомых"
+  ],
+  "level": 5,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "300 фт",
+  "target": "20 фт круг, обл, ЗАСЛОУ",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "CON",
+  "saveSuccess": "Половина урона",
+  "damage": "4d10",
+  "damageType": "колющий",
+  "higherDieCount": "1",
+  "higherDieType": "d10",
+  "higherText": "За каждый круг ячейки выше 5-го урон увеличивается на 1d10.",
+  "description": "ЗАКЛ\nКАСТ: ПРВ: Урон1, полный урон; УСП: Урон1, половина урона. ВХОД: ПРВ: Урон1, полный урон; УСП: Урон1, половина урона. ОБЛН: ПРВ: Урон1, полный урон; УСП: Урон1, половина урона. ПАСС: труднопроходимая местность",
+  "automation": "full",
+  "classes": "Жрец, Друид, Чародей",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-geas",
+  "name": "Обет",
+  "aliases": [
+   "Geas",
+   "Обет"
+  ],
+  "level": 5,
+  "school": "Очарование",
+  "castingTime": "1 минута",
+  "range": "60 фт",
+  "target": "1 существо",
+  "duration": "30 дней",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: приказ; нарушение — 5d10 психического урона раз в день.",
+  "automation": "partial",
+  "classes": "Бард, Жрец, Друид, Паладин, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-commune",
+  "name": "Общение",
+  "aliases": [
+   "Commune",
+   "Общение"
+  ],
+  "level": 5,
+  "school": "Прорицание",
+  "castingTime": "1 минута",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "1 минута",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "ritual": true,
+  "description": "ЗАКЛ\nПримечание: три вопроса божеству.",
+  "automation": "partial",
+  "classes": "Жрец",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-commune-with-nature",
+  "name": "Общение с природой",
+  "aliases": [
+   "Commune with Nature",
+   "Общение с природой"
+  ],
+  "level": 5,
+  "school": "Прорицание",
+  "castingTime": "1 минута",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "ritual": true,
+  "description": "ЗАКЛ\nПримечание: знание о местности вокруг.",
+  "automation": "partial",
+  "classes": "Друид, Следопыт",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-animate-objects",
+  "name": "Оживление предметов",
+  "aliases": [
+   "Animate Objects",
+   "Оживление предметов"
+  ],
+  "level": 5,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "до 10 предметов",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: оживлённые предметы — токены ведутся штатно.",
+  "automation": "partial",
+  "classes": "Бард, Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-dominate-person",
+  "name": "Подчинение личности",
+  "aliases": [
+   "Dominate Person",
+   "Подчинение личности"
+  ],
+  "level": 5,
+  "school": "Очарование",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "1 гуманоид",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "save": "WIS",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: преимущество на спасбросок, если вы сражаетесь с целью; дольше на высоких кругах.\nПРВ: подчинён МДР{DC}, очарован 10; УСП: нет эффекта",
+  "automation": "full",
+  "classes": "Бард, Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-seeming",
+  "name": "Подчинение облика",
+  "aliases": [
+   "Seeming",
+   "Подчинение облика"
+  ],
+  "level": 5,
+  "school": "Иллюзия",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "любые существа",
+  "duration": "8 часов",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: иллюзорный облик для целей.",
+  "automation": "partial",
+  "classes": "Бард, Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-antilife-shell",
+  "name": "Преграда жизни",
+  "aliases": [
+   "Antilife Shell",
+   "Преграда жизни"
+  ],
+  "level": 5,
+  "school": "Ограждение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "10 фт купол",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: живые существа (кроме нежити и конструктов) не могут пройти внутрь — вручную.",
+  "automation": "partial",
+  "classes": "Друид",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-conjure-elemental",
+  "name": "Призыв элементаля",
+  "aliases": [
+   "Conjure Elemental",
+   "Призыв элементаля"
+  ],
+  "level": 5,
+  "school": "Вызов",
+  "castingTime": "1 минута",
+  "range": "90 фт",
+  "target": "элементаль",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: призыв — токен ведётся штатно.",
+  "automation": "partial",
+  "classes": "Друид, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-awaken",
+  "name": "Пробуждение разума",
+  "aliases": [
+   "Awaken",
+   "Пробуждение разума"
+  ],
+  "level": 5,
+  "school": "Преобразование",
+  "castingTime": "8 часов",
+  "range": "Касание",
+  "target": "зверь или растение",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: зверь или растение обретает разум.",
+  "automation": "partial",
+  "classes": "Бард, Друид",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-dispel-evil-and-good",
+  "name": "Развеивание добра и зла",
+  "aliases": [
+   "Dispel Evil and Good",
+   "Развеивание добра и зла"
+  ],
+  "level": 5,
+  "school": "Ограждение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: помеха на атаки небожителей, элементалей, фей, исчадий и нежити по вам; снятие очарования/испуга/одержимости касанием и изгнание — вручную.\nРазвеивание добра и зла 10",
+  "automation": "partial",
+  "classes": "Жрец, Паладин",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-destructive-wave",
+  "name": "Разрушительная волна",
+  "aliases": [
+   "Destructive Wave",
+   "Разрушительная волна"
+  ],
+  "level": 5,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "30 фт вокруг заклинателя",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "save": "CON",
+  "saveSuccess": "Половина урона",
+  "damage": "5d6",
+  "damageType": "звук",
+  "damage2": "5d6",
+  "damageType2": "излучение",
+  "description": "ЗАКЛ\nПримечание: второй урон — излучение или некротическая энергия по выбору; существа по выбору не затрагиваются (исключите вручную).\nВКР круг 30 фт\nПРВ: полный урон, сбит с ног; УСП: половина урона",
+  "automation": "partial",
+  "classes": "Паладин",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-reincarnate",
+  "name": "Реинкарнация",
+  "aliases": [
+   "Reincarnate",
+   "Реинкарнация"
+  ],
+  "level": 5,
+  "school": "Преобразование",
+  "castingTime": "1 час",
+  "range": "Касание",
+  "target": "мёртвый гуманоид",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: возвращение к жизни в новом теле.",
+  "automation": "partial",
+  "classes": "Друид",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-bigby-s-hand",
+  "name": "Рука Бигби",
+  "aliases": [
+   "Bigby's Hand",
+   "Рука Бигби"
+  ],
+  "level": 5,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "рука",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: рука — отдельный токен; удар 4d8 силовым полем, толчок, захват, щит — вручную.",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-planar-binding",
+  "name": "Связывание с планом",
+  "aliases": [
+   "Planar Binding",
+   "Связывание с планом"
+  ],
+  "level": 5,
+  "school": "Ограждение",
+  "castingTime": "1 час",
+  "range": "60 фт",
+  "target": "1 существо",
+  "duration": "24 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: существо служит вам.",
+  "automation": "partial",
+  "classes": "Бард, Жрец, Друид, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-contact-other-plane",
+  "name": "Связь с иными мирами",
+  "aliases": [
+   "Contact Other Plane",
+   "Связь с иными мирами"
+  ],
+  "level": 5,
+  "school": "Прорицание",
+  "castingTime": "1 минута",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "1 минута",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "ritual": true,
+  "description": "ЗАКЛ\nПримечание: пять вопросов; спасбросок Интеллекта СЛ 15, при провале 6d6 психического урона и безумие.",
+  "automation": "partial",
+  "classes": "Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-hallow",
+  "name": "Святилище",
+  "aliases": [
+   "Hallow",
+   "Святилище"
+  ],
+  "level": 5,
+  "school": "Воплощение",
+  "castingTime": "24 часа",
+  "range": "Касание",
+  "target": "область до 60 фт",
+  "duration": "До рассеивания",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: освящение области и дополнительный эффект — вручную.",
+  "automation": "partial",
+  "classes": "Жрец",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-wall-of-force",
+  "name": "Силовая стена",
+  "aliases": [
+   "Wall of Force",
+   "Силовая стена"
+  ],
+  "level": 5,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "линия 1/100/10 фт, обл, СОЛИД",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: невидимая непроницаемая стена; купол или панели (10 по 10×10 фт) — разместите вручную.",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-dream",
+  "name": "Сновидение",
+  "aliases": [
+   "Dream",
+   "Сновидение"
+  ],
+  "level": 5,
+  "school": "Иллюзия",
+  "castingTime": "1 минута",
+  "range": "Особая",
+  "target": "1 существо",
+  "duration": "8 часов",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: послание во сне; кошмар — 3d6 психического урона (спасбросок Мудрости).",
+  "automation": "partial",
+  "classes": "Бард, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-passwall",
+  "name": "Создание прохода",
+  "aliases": [
+   "Passwall",
+   "Создание прохода"
+  ],
+  "level": 5,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "проход в стене",
+  "duration": "1 час",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: проход до 20 фт глубиной.",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-creation",
+  "name": "Сотворение",
+  "aliases": [
+   "Creation",
+   "Сотворение"
+  ],
+  "level": 5,
+  "school": "Иллюзия",
+  "castingTime": "1 минута",
+  "range": "30 фт",
+  "target": "предмет",
+  "duration": "Особая",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: создание немагического предмета из тени.",
+  "automation": "partial",
+  "classes": "Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-telekinesis",
+  "name": "Телекинез",
+  "aliases": [
+   "Telekinesis",
+   "Телекинез"
+  ],
+  "level": 5,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "существо или предмет",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: перемещение существа (состязание) или предмета до 1000 фунтов — ТОЛЧ/ТЯГ вручную.",
+  "automation": "partial",
+  "classes": "Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-rary-s-telepathic-bond",
+  "name": "Телепатическая связь Рэри",
+  "aliases": [
+   "Rary's Telepathic Bond",
+   "Телепатическая связь Рэри"
+  ],
+  "level": 5,
+  "school": "Прорицание",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "до 8 согласных существ",
+  "duration": "1 час",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "ritual": true,
+  "description": "ЗАКЛ\nПримечание: телепатическая связь между целями.",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-hold-monster",
+  "name": "Удержание чудовища",
+  "aliases": [
+   "Hold Monster",
+   "Удержание чудовища"
+  ],
+  "level": 5,
+  "school": "Очарование",
+  "castingTime": "1 действие",
+  "range": "90 фт",
+  "target": "1 существо",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "WIS",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: не действует на нежить; на каждый круг выше 5-го — ещё одна цель.\nПРВ: парализован МДР{DC} 10; УСП: нет эффекта",
+  "automation": "full",
+  "classes": "Бард, Чародей, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-mislead",
+  "name": "Фальшивый двойник",
+  "aliases": [
+   "Mislead",
+   "Фальшивый двойник"
+  ],
+  "level": 5,
+  "school": "Иллюзия",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": false,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: иллюзорный двойник — отдельный токен; невидимость кончается при атаке или заклинании.\nневидим 600",
+  "automation": "partial",
+  "classes": "Бард, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-magic-jar",
+  "name": "Волшебный сосуд",
+  "aliases": [
+   "Magic Jar",
+   "Волшебный сосуд"
+  ],
+  "level": 6,
+  "school": "Некромантия",
+  "castingTime": "1 минута",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "До рассеивания",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: вселение в тела — вручную.",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-harm",
+  "name": "Вред",
+  "aliases": [
+   "Harm",
+   "Вред"
+  ],
+  "level": 6,
+  "school": "Некромантия",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "1 существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "save": "CON",
+  "saveSuccess": "Половина урона",
+  "damage": "14d6",
+  "damageType": "некротическая энергия",
+  "description": "ЗАКЛ\nПримечание: снижение максимума длится 1 час.\nПРВ: полный урон; УСП: половина урона\nНЕ НИЖЕ 1\nСНИЖ МАКС",
+  "automation": "full",
+  "classes": "Жрец",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-forbiddance",
+  "name": "Запрет",
+  "aliases": [
+   "Forbiddance",
+   "Запрет"
+  ],
+  "level": 6,
+  "school": "Ограждение",
+  "castingTime": "10 минут",
+  "range": "Касание",
+  "target": "область",
+  "duration": "1 день",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "ritual": true,
+  "description": "ЗАКЛ\nПримечание: запрет телепортации в область и урон 5d10 выбранным типам существ — вручную.",
+  "automation": "partial",
+  "classes": "Жрец",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-true-seeing",
+  "name": "Истинное зрение",
+  "aliases": [
+   "True Seeing",
+   "Истинное зрение"
+  ],
+  "level": 6,
+  "school": "Прорицание",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "1 согласное существо",
+  "duration": "1 час",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: истинное зрение 120 фт.",
+  "automation": "partial",
+  "classes": "Бард, Жрец, Чародей, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-blade-barrier",
+  "name": "Клинковый барьер",
+  "aliases": [
+   "Blade Barrier",
+   "Клинковый барьер"
+  ],
+  "level": 6,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "90 фт",
+  "target": "линия 5/100/20 фт, обл",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "save": "DEX",
+  "saveSuccess": "Нет урона",
+  "damage": "6d10",
+  "damageType": "рубящий",
+  "description": "ЗАКЛ\nПримечание: вариант-кольцо: цель «30 фт круг, обл» и строка «КОЛЬЦО: 5». Стена даёт укрытие ¾.\nВХОД: ПРВ: Урон1, полный урон; УСП: нет урона. ОБЛН: ПРВ: Урон1, полный урон; УСП: нет урона. ПАСС: труднопроходимая местность",
+  "automation": "full",
+  "classes": "Жрец",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-circle-of-death",
+  "name": "Круг смерти",
+  "aliases": [
+   "Circle of Death",
+   "Круг смерти"
+  ],
+  "level": 6,
+  "school": "Некромантия",
+  "castingTime": "1 действие",
+  "range": "150 фт",
+  "target": "60 фт круг",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true,
+   "material": "порошок чёрной жемчужины на 500 зм"
+  },
+  "save": "CON",
+  "saveSuccess": "Половина урона",
+  "damage": "8d6",
+  "damageType": "некротическая энергия",
+  "higherDieCount": "2",
+  "higherDieType": "d6",
+  "higherText": "За каждый круг ячейки выше 6-го урон увеличивается на 2d6.",
+  "description": "ЗАКЛ\nПРВ: полный урон; УСП: половина урона",
+  "automation": "full",
+  "classes": "Чародей, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-otiluke-s-freezing-sphere",
+  "name": "Леденящая сфера Отилюка",
+  "aliases": [
+   "Otiluke's Freezing Sphere",
+   "Леденящая сфера Отилюка"
+  ],
+  "level": 6,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "300 фт",
+  "target": "60 фт круг",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "save": "CON",
+  "saveSuccess": "Половина урона",
+  "damage": "10d6",
+  "damageType": "холод",
+  "higherDieCount": "1",
+  "higherDieType": "d6",
+  "higherText": "За каждый круг ячейки выше 6-го урон увеличивается на 1d6.",
+  "description": "ЗАКЛ\nПримечание: сферу можно сохранить и бросить позже; замораживает воду.\nПРВ: полный урон; УСП: половина урона",
+  "automation": "full",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-wall-of-ice",
+  "name": "Ледяная стена",
+  "aliases": [
+   "Wall of Ice",
+   "Ледяная стена"
+  ],
+  "level": 6,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "линия 1/100/10 фт, обл, СОЛИД",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "DEX",
+  "saveSuccess": "Половина урона",
+  "damage": "10d6",
+  "damageType": "холод",
+  "damage2": "5d6",
+  "damageType2": "холод",
+  "higherDieCount": "2",
+  "higherDieType": "d6",
+  "higherText": "Урон при появлении +2d6, при проходе +1d6 за каждый круг выше 6-го.",
+  "description": "ЗАКЛ\nПримечание: проход сквозь пролом — спасбросок Телосложения, 5d6 холодом (вручную).\nКАСТ: ПРВ: Урон1, полный урон; УСП: Урон1, половина урона",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-arcane-gate",
+  "name": "Магические врата",
+  "aliases": [
+   "Arcane Gate",
+   "Магические врата"
+  ],
+  "level": 6,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "500 фт",
+  "target": "два портала",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: два связанных портала.",
+  "automation": "partial",
+  "classes": "Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-drawmij-s-instant-summons",
+  "name": "Мгновенный вызов Драумиджа",
+  "aliases": [
+   "Drawmij's Instant Summons",
+   "Мгновенный вызов Драумиджа"
+  ],
+  "level": 6,
+  "school": "Вызов",
+  "castingTime": "1 минута",
+  "range": "Касание",
+  "target": "предмет",
+  "duration": "До рассеивания",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "ritual": true,
+  "description": "ЗАКЛ\nПримечание: предмет возвращается в руку по команде.",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-mass-suggestion",
+  "name": "Множественное внушение",
+  "aliases": [
+   "Mass Suggestion",
+   "Множественное внушение"
+  ],
+  "level": 6,
+  "school": "Очарование",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "до 12 существ",
+  "duration": "24 часа",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": true
+  },
+  "save": "WIS",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: цели следуют разумному совету — отыгрыш.\nПРВ: Внушение 999; УСП: нет эффекта",
+  "automation": "partial",
+  "classes": "Бард, Чародей, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-contingency",
+  "name": "Непредвиденное обстоятельство",
+  "aliases": [
+   "Contingency",
+   "Непредвиденное обстоятельство"
+  ],
+  "level": 6,
+  "school": "Воплощение",
+  "castingTime": "10 минут",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "10 дней",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: отложенное заклинание по условию — вручную.",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-otto-s-irresistible-dance",
+  "name": "Неудержимая пляска Отто",
+  "aliases": [
+   "Otto's Irresistible Dance",
+   "Неудержимая пляска Отто"
+  ],
+  "level": 6,
+  "school": "Очарование",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "1 существо",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: без спасброска; цель тратит движение на танец, помеха на спасброски Ловкости; спасбросок Мудрости действием — здесь в конце хода.\nНеудержимая пляска МДР{DC} 10\nУСЛЭФ: ПРЕМ АТАКАМ ПО ЦЕЛИ\nУСЛЭФ: ПОМ АТАКАМ ЦЕЛИ",
+  "automation": "partial",
+  "classes": "Бард, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-move-earth",
+  "name": "Перемещение почвы",
+  "aliases": [
+   "Move Earth",
+   "Перемещение почвы"
+  ],
+  "level": 6,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "40 фт квадрат земли",
+  "duration": "Концентрация, до 2 часов",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: изменение рельефа.",
+  "automation": "partial",
+  "classes": "Друид, Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-heroes-feast",
+  "name": "Пир героев",
+  "aliases": [
+   "Heroes' Feast",
+   "Пир героев"
+  ],
+  "level": 6,
+  "school": "Вызов",
+  "castingTime": "10 минут",
+  "range": "30 фт",
+  "target": "до 12 существ",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: после пира: иммунитет к яду и испугу, преимущество на спасброски Мудрости, +2d10 к максимуму хитов на 24 часа — «макс хиты» и «имм яд» вручную.",
+  "automation": "partial",
+  "classes": "Жрец, Друид",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-flesh-to-stone",
+  "name": "Плоть в камень",
+  "aliases": [
+   "Flesh to Stone",
+   "Плоть в камень"
+  ],
+  "level": 6,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "1 существо",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "CON",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: при концентрации на всю минуту окаменение постоянно.\nПРВ: опутан ТЕЛ{DC} СЧЁТ 3 → окаменел; УСП: нет эффекта",
+  "automation": "full",
+  "classes": "Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-find-the-path",
+  "name": "Поиск пути",
+  "aliases": [
+   "Find the Path",
+   "Поиск пути"
+  ],
+  "level": 6,
+  "school": "Прорицание",
+  "castingTime": "1 минута",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 1 дня",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: кратчайший путь к месту.",
+  "automation": "partial",
+  "classes": "Бард, Жрец, Друид",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-heal",
+  "name": "Полное исцеление",
+  "aliases": [
+   "Heal",
+   "Полное исцеление"
+  ],
+  "level": 6,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "1 существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "healing": "70",
+  "higherBonus": "10",
+  "higherText": "Лечение +10 за каждый круг выше 6-го.",
+  "description": "ЗАКЛ\nПримечание: лечение снимает также болезни; не действует на нежить и конструктов.\nснимает ослеплён/оглохший",
+  "automation": "full",
+  "classes": "Друид, Жрец",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-eyebite",
+  "name": "Порченый взгляд",
+  "aliases": [
+   "Eyebite",
+   "Порченый взгляд"
+  ],
+  "level": 6,
+  "school": "Некромантия",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "1 существо в 60 фт",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "save": "WIS",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: вариант «сон»; для паники замените на «испуган 10», для болезни — «Порченый взгляд 10» с помехой на атаки и проверки. Каждый ход — новое нажатие на новую цель.\nПРВ: без сознания 10\nСНЯТЬ: ЦЕЛЬ ПОЛУЧИЛА УРОН",
+  "automation": "partial",
+  "classes": "Бард, Чародей, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-conjure-fey",
+  "name": "Призыв феи",
+  "aliases": [
+   "Conjure Fey",
+   "Призыв феи"
+  ],
+  "level": 6,
+  "school": "Вызов",
+  "castingTime": "1 минута",
+  "range": "90 фт",
+  "target": "фея",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: призыв — токен ведётся штатно.",
+  "automation": "partial",
+  "classes": "Друид, Колдун",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-programmed-illusion",
+  "name": "Программируемая иллюзия",
+  "aliases": [
+   "Programmed Illusion",
+   "Программируемая иллюзия"
+  ],
+  "level": 6,
+  "school": "Иллюзия",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "30 фт куб",
+  "duration": "До рассеивания",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: иллюзия, срабатывающая по условию.",
+  "automation": "partial",
+  "classes": "Бард, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-transport-via-plants",
+  "name": "Путь через растения",
+  "aliases": [
+   "Transport via Plants",
+   "Путь через растения"
+  ],
+  "level": 6,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "10 фт",
+  "target": "растение",
+  "duration": "1 раунд",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: проход между растениями на любое расстояние.",
+  "automation": "partial",
+  "classes": "Друид",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-word-of-recall",
+  "name": "Слово возврата",
+  "aliases": [
+   "Word of Recall",
+   "Слово возврата"
+  ],
+  "level": 6,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "5 фт",
+  "target": "до 5 существ",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: телепортация в святилище.",
+  "automation": "partial",
+  "classes": "Жрец",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-create-undead",
+  "name": "Сотворение нежити",
+  "aliases": [
+   "Create Undead",
+   "Сотворение нежити"
+  ],
+  "level": 6,
+  "school": "Некромантия",
+  "castingTime": "1 минута",
+  "range": "10 фт",
+  "target": "трупы",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: создание нежити — токены ведутся штатно.",
+  "automation": "partial",
+  "classes": "Жрец, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-planar-ally",
+  "name": "Союзник с другого плана",
+  "aliases": [
+   "Planar Ally",
+   "Союзник с другого плана"
+  ],
+  "level": 6,
+  "school": "Вызов",
+  "castingTime": "10 минут",
+  "range": "60 фт",
+  "target": "существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: призыв союзника — токен ведётся штатно.",
+  "automation": "partial",
+  "classes": "Жрец",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-wall-of-thorns",
+  "name": "Стена шипов",
+  "aliases": [
+   "Wall of Thorns",
+   "Стена шипов"
+  ],
+  "level": 6,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "линия 5/60/10 фт, обл",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "DEX",
+  "saveSuccess": "Половина урона",
+  "damage": "7d8",
+  "damageType": "колющий",
+  "damage2": "7d8",
+  "damageType2": "рубящий",
+  "higherDieCount": "1",
+  "higherDieType": "d8",
+  "higherText": "За каждый круг ячейки выше 6-го урон увеличивается на 1d8.",
+  "description": "ЗАКЛ\nПримечание: урон при движении по правилам за каждые 4 фута и со спасбросками — упрощено до 5 фт.\nКАСТ: ПРВ: Урон1, полный урон; УСП: Урон1, половина урона. МУВ: 7д8 рубящий\nПАСС: труднопроходимая местность",
+  "automation": "partial",
+  "classes": "Друид",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-guards-and-wards",
+  "name": "Стражи и опоры",
+  "aliases": [
+   "Guards and Wards",
+   "Стражи и опоры"
+  ],
+  "level": 6,
+  "school": "Ограждение",
+  "castingTime": "10 минут",
+  "range": "Касание",
+  "target": "до 2500 кв. фт",
+  "duration": "24 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: защита здания туманом, паутиной, замками и иллюзиями.",
+  "automation": "partial",
+  "classes": "Бард, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-wind-walk",
+  "name": "Хождение по ветру",
+  "aliases": [
+   "Wind Walk",
+   "Хождение по ветру"
+  ],
+  "level": 6,
+  "school": "Преобразование",
+  "castingTime": "1 минута",
+  "range": "30 фт",
+  "target": "до 10 существ",
+  "duration": "8 часов",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: облачная форма, полёт 300 фт.",
+  "automation": "partial",
+  "classes": "Друид",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-divine-word",
+  "name": "Божественное слово",
+  "aliases": [
+   "Divine Word",
+   "Божественное слово"
+  ],
+  "level": 7,
+  "school": "Воплощение",
+  "castingTime": "1 бонусное действие",
+  "range": "30 фт",
+  "target": "существа в 30 фт",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "save": "CHA",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: небожители, элементали, феи и исчадия при провале изгоняются (вручную).\nХИТЫ<=50: оглохший 10\nХИТЫ<=40: оглохший 100, ослеплён 100\nХИТЫ<=30: ослеплён 600, оглохший 600, ошеломлён 600\nХИТЫ<=20: смерть",
+  "automation": "partial",
+  "classes": "Жрец",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-mirage-arcane",
+  "name": "Великий мираж",
+  "aliases": [
+   "Mirage Arcane",
+   "Великий мираж"
+  ],
+  "level": 7,
+  "school": "Иллюзия",
+  "castingTime": "10 минут",
+  "range": "Взгляд",
+  "target": "квадрат до 1 мили",
+  "duration": "10 дней",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: изменение вида и ощущения местности.",
+  "automation": "partial",
+  "classes": "Бард, Друид, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-mordenkainen-s-magnificent-mansion",
+  "name": "Великолепный особняк Морденкайнена",
+  "aliases": [
+   "Mordenkainen's Magnificent Mansion",
+   "Великолепный особняк Морденкайнена"
+  ],
+  "level": 7,
+  "school": "Вызов",
+  "castingTime": "1 минута",
+  "range": "300 фт",
+  "target": "вход в особняк",
+  "duration": "24 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: особняк в межпространстве.",
+  "automation": "partial",
+  "classes": "Бард, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-resurrection",
+  "name": "Воскрешение — полное",
+  "aliases": [
+   "Resurrection",
+   "Воскрешение — полное",
+   "Воскрешение (7 круг)"
+  ],
+  "level": 7,
+  "school": "Некромантия",
+  "castingTime": "1 час",
+  "range": "Касание",
+  "target": "мёртвое существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true,
+   "material": "алмаз на 1000 зм, расходуется"
+  },
+  "description": "ЗАКЛ\nПримечание: погибший не более 100 лет назад; возвращается со всеми хитами. Штраф −4 к броскам уменьшается после отдыхов.\nвозвращает к жизни 999",
+  "automation": "full",
+  "classes": "Бард, Жрец",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-sequester",
+  "name": "Изоляция",
+  "aliases": [
+   "Sequester",
+   "Изоляция"
+  ],
+  "level": 7,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "существо или предмет",
+  "duration": "До рассеивания",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: цель скрыта от обнаружения; существо в стазисе.",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-mordenkainen-s-sword",
+  "name": "Меч Морденкайнена",
+  "aliases": [
+   "Mordenkainen's Sword",
+   "Меч Морденкайнена"
+  ],
+  "level": 7,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "меч",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: меч — отдельный токен; атака заклинанием 3d10 силовым полем бонусным действием.",
+  "automation": "partial",
+  "classes": "Бард, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-reverse-gravity",
+  "name": "Обратная гравитация",
+  "aliases": [
+   "Reverse Gravity",
+   "Обратная гравитация"
+  ],
+  "level": 7,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "100 фт",
+  "target": "50 фт цилиндр",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "DEX",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: существа падают вверх (урон от падения о потолок) — вручную; успех — ухватиться за опору.\nПРВ: полёт 10; УСП: нет эффекта",
+  "automation": "partial",
+  "classes": "Друид, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-delayed-blast-fireball",
+  "name": "Отсроченный огненный шар",
+  "aliases": [
+   "Delayed Blast Fireball",
+   "Отсроченный огненный шар"
+  ],
+  "level": 7,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "150 фт",
+  "target": "20 фт круг, обл",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "DEX",
+  "saveSuccess": "Половина урона",
+  "damage": "12d6",
+  "damageType": "огонь",
+  "higherDieCount": "1",
+  "higherDieType": "d6",
+  "higherText": "За каждый круг ячейки выше 7-го урон увеличивается на 1d6.",
+  "description": "ЗАКЛ\nПримечание: взрыв — при окончании концентрации (завершите её, чтобы взорвать раньше). Бусину можно бросить или коснуться — вручную.\nОКОН: ПРВ: Урон1, полный урон, РОСТ 1д6; УСП: Урон1, половина урона, РОСТ 1д6",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-simulacrum",
+  "name": "Подобие",
+  "aliases": [
+   "Simulacrum",
+   "Подобие"
+  ],
+  "level": 7,
+  "school": "Иллюзия",
+  "castingTime": "12 часов",
+  "range": "Касание",
+  "target": "копия",
+  "duration": "До рассеивания",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: копия существа — токен ведётся штатно.",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-conjure-celestial",
+  "name": "Призыв небожителя",
+  "aliases": [
+   "Conjure Celestial",
+   "Призыв небожителя"
+  ],
+  "level": 7,
+  "school": "Вызов",
+  "castingTime": "1 минута",
+  "range": "90 фт",
+  "target": "небожитель",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: призыв — токен ведётся штатно.",
+  "automation": "partial",
+  "classes": "Жрец",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-project-image",
+  "name": "Проекция",
+  "aliases": [
+   "Project Image",
+   "Проекция"
+  ],
+  "level": 7,
+  "school": "Иллюзия",
+  "castingTime": "1 действие",
+  "range": "500 миль",
+  "target": "иллюзорная копия",
+  "duration": "Концентрация, до 1 дня",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: ваша иллюзорная копия.",
+  "automation": "partial",
+  "classes": "Бард, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-prismatic-spray",
+  "name": "Радужные брызги",
+  "aliases": [
+   "Prismatic Spray",
+   "Радужные брызги"
+  ],
+  "level": 7,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "60 фт конус",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "save": "DEX",
+  "saveSuccess": "Половина урона",
+  "damage": "10d6",
+  "damageType": "огонь",
+  "description": "ЗАКЛ\nПримечание: фиолетовый: при провале следующего спасброска Мудрости цель переносится на другой план (вручную).\nПРВ: полный урон; УСП: половина урона\nСЛУЧАЙНО d8: 1 = тип огонь; 2 = тип кислота; 3 = тип электричество; 4 = тип яд; 5 = тип холод; 6 = нет урона, опутан ТЕЛ{DC} СЧЁТ 3 → окаменел; 7 = нет урона, ослеплён МДР{DC} 1; 8 = повтор 2",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-regenerate",
+  "name": "Регенерация",
+  "aliases": [
+   "Regenerate",
+   "Регенерация"
+  ],
+  "level": 7,
+  "school": "Преобразование",
+  "castingTime": "1 минута",
+  "range": "Касание",
+  "target": "1 существо",
+  "duration": "1 час",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "healing": "4d8+15",
+  "description": "ЗАКЛ\nПримечание: затем 1 хит в начале каждого хода цели (вручную); отросшие конечности.",
+  "automation": "partial",
+  "classes": "Бард, Жрец, Друид",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-forcecage",
+  "name": "Силовая клетка",
+  "aliases": [
+   "Forcecage",
+   "Силовая клетка"
+  ],
+  "level": 7,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "100 фт",
+  "target": "20 фт куб, обл, СОЛИД",
+  "duration": "1 час",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true,
+   "material": "рубиновая пыль на 1500 зм, расходуется"
+  },
+  "description": "ЗАКЛ\nПримечание: клетка-решётка или ящик; существо внутри не выходит, телепорт — спасбросок Харизмы.",
+  "automation": "partial",
+  "classes": "Бард, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-symbol",
+  "name": "Символ",
+  "aliases": [
+   "Symbol",
+   "Символ"
+  ],
+  "level": 7,
+  "school": "Ограждение",
+  "castingTime": "1 минута",
+  "range": "Касание",
+  "target": "поверхность",
+  "duration": "До рассеивания или срабатывания",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: руна-ловушка: смерть 10d10, раздор, страх, безнадёжность, безумие, боль, сон, ошеломление — вручную.",
+  "automation": "partial",
+  "classes": "Бард, Жрец, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-teleport",
+  "name": "Телепортация",
+  "aliases": [
+   "Teleport",
+   "Телепортация"
+  ],
+  "level": 7,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "10 фт",
+  "target": "до 8 существ",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: перемещение в любое место плана; бросок точности по знакомству.",
+  "automation": "partial",
+  "classes": "Бард, Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-plane-shift",
+  "name": "Уход в иной мир",
+  "aliases": [
+   "Plane Shift",
+   "Уход в иной мир"
+  ],
+  "level": 7,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "1 существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "attack": "Melee",
+  "description": "ЗАКЛ\nПримечание: против несогласного — рукопашная атака заклинанием, затем спасбросок Харизмы (вручную); перемещение группы — отыгрыш.\nизгнан",
+  "automation": "partial",
+  "classes": "Жрец, Друид, Чародей, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-etherealness",
+  "name": "Эфирность",
+  "aliases": [
+   "Etherealness",
+   "Эфирность"
+  ],
+  "level": 7,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "До 8 часов",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: на каждый круг выше 7-го — ещё до 3 согласных существ.\nэфирный план",
+  "automation": "full",
+  "classes": "Бард, Жрец, Чародей, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-antimagic-field",
+  "name": "Антимагическое поле",
+  "aliases": [
+   "Antimagic Field",
+   "Антимагическое поле"
+  ],
+  "level": 8,
+  "school": "Ограждение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "аура 10 фт, обл",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: уже действующие эффекты внутри не подавляются автоматически.\nАНТИМАГИЯ: ВСЕ",
+  "automation": "full",
+  "classes": "Жрец, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-antipathy-sympathy",
+  "name": "Антипатия/симпатия",
+  "aliases": [
+   "Antipathy/Sympathy",
+   "Антипатия/симпатия"
+  ],
+  "level": 8,
+  "school": "Очарование",
+  "castingTime": "1 час",
+  "range": "60 фт",
+  "target": "существо или предмет",
+  "duration": "10 дней",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: отталкивание или притяжение выбранных существ (спасбросок Мудрости).",
+  "automation": "partial",
+  "classes": "Друид, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-glibness",
+  "name": "Болтливость",
+  "aliases": [
+   "Glibness",
+   "Болтливость"
+  ],
+  "level": 8,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "1 час",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: проверки Харизмы — минимум 15; ложь не распознаётся магией.",
+  "automation": "partial",
+  "classes": "Бард, Колдун",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-demiplane",
+  "name": "Демиплан",
+  "aliases": [
+   "Demiplane",
+   "Демиплан"
+  ],
+  "level": 8,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "дверь",
+  "duration": "1 час",
+  "components": {
+   "v": false,
+   "s": true,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: дверь в демиплан.",
+  "automation": "partial",
+  "classes": "Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-earthquake",
+  "name": "Землетрясение",
+  "aliases": [
+   "Earthquake",
+   "Землетрясение"
+  ],
+  "level": 8,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "500 фт",
+  "target": "100 фт круг, обл",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "DEX",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: трещины, разрушение зданий (5d6) и потеря концентрации — вручную.\nКАСТ: ПРВ: сбит с ног; УСП: нет эффекта. ОБЛН: ПРВ: сбит с ног; УСП: нет эффекта. ПАСС: труднопроходимая местность",
+  "automation": "partial",
+  "classes": "Жрец, Друид, Чародей",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-incendiary-cloud",
+  "name": "Испепеляющее облако",
+  "aliases": [
+   "Incendiary Cloud",
+   "Испепеляющее облако"
+  ],
+  "level": 8,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "150 фт",
+  "target": "20 фт круг, обл, ЗАСХАЙ",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "save": "DEX",
+  "saveSuccess": "Половина урона",
+  "damage": "10d8",
+  "damageType": "огонь",
+  "description": "ЗАКЛ\nКАСТ: ПРВ: Урон1, полный урон; УСП: Урон1, половина урона. ВХОД: ПРВ: Урон1, полный урон; УСП: Урон1, половина урона. ОБЛК: ПРВ: Урон1, полный урон; УСП: Урон1, половина урона\nДРЕЙФ: 10",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-clone",
+  "name": "Клон",
+  "aliases": [
+   "Clone",
+   "Клон"
+  ],
+  "level": 8,
+  "school": "Некромантия",
+  "castingTime": "1 час",
+  "range": "Касание",
+  "target": "копия",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: запасное тело на случай смерти.",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-control-weather",
+  "name": "Контроль погоды",
+  "aliases": [
+   "Control Weather",
+   "Контроль погоды"
+  ],
+  "level": 8,
+  "school": "Преобразование",
+  "castingTime": "10 минут",
+  "range": "На себя",
+  "target": "5 миль",
+  "duration": "Концентрация, до 8 часов",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: изменение погоды.",
+  "automation": "partial",
+  "classes": "Жрец, Друид, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-maze",
+  "name": "Лабиринт",
+  "aliases": [
+   "Maze",
+   "Лабиринт"
+  ],
+  "level": 8,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "1 существо",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: проверка Интеллекта СЛ 20 в начале хода цели; минотавры и демоны проходят сразу.\nв лабиринте ПРОВЕРКА ИНТ20",
+  "automation": "full",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-animal-shapes",
+  "name": "Облик зверя",
+  "aliases": [
+   "Animal Shapes",
+   "Облик зверя"
+  ],
+  "level": 8,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "согласные существа",
+  "duration": "Концентрация, до 24 часов",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: превращение в зверей — используйте превращение вручную.",
+  "automation": "partial",
+  "classes": "Друид",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-dominate-monster",
+  "name": "Подчинение чудовища",
+  "aliases": [
+   "Dominate Monster",
+   "Подчинение чудовища"
+  ],
+  "level": 8,
+  "school": "Очарование",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "1 существо",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "save": "WIS",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: преимущество на спасбросок, если вы сражаетесь с целью.\nПРВ: подчинён МДР{DC}, очарован 600; УСП: нет эффекта",
+  "automation": "full",
+  "classes": "Бард, Чародей, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-holy-aura",
+  "name": "Священная аура",
+  "aliases": [
+   "Holy Aura",
+   "Священная аура"
+  ],
+  "level": 8,
+  "school": "Ограждение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "аура 30 фт, обл",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: помеха на атаки по союзникам в ауре и ослепление атакующих исчадий/нежити — выдайте им «УСЛЭФ: ПОМ АТАКАМ ПО ЦЕЛИ» вручную.\nПАСС: прем ВСЕ",
+  "automation": "partial",
+  "classes": "Жрец",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-feeblemind",
+  "name": "Слабоумие",
+  "aliases": [
+   "Feeblemind",
+   "Слабоумие"
+  ],
+  "level": 8,
+  "school": "Очарование",
+  "castingTime": "1 действие",
+  "range": "150 фт",
+  "target": "1 существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "save": "INT",
+  "saveSuccess": "Половина урона",
+  "damage": "4d6",
+  "damageType": "психический",
+  "description": "ЗАКЛ\nПримечание: Интеллект и Харизма становятся 1, без заклинаний; повтор спасбросков каждые 30 дней.\nПРВ: полный урон, Слабоумие; УСП: нет урона",
+  "automation": "partial",
+  "classes": "Бард, Друид, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-power-word-stun",
+  "name": "Слово силы: оглушение",
+  "aliases": [
+   "Power Word Stun",
+   "Слово силы: оглушение"
+  ],
+  "level": 8,
+  "school": "Очарование",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "1 существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "description": "ЗАКЛ\nХИТЫ<=150: ошеломлён ТЕЛ{DC}",
+  "automation": "full",
+  "classes": "Бард, Чародей, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-mind-blank",
+  "name": "Сокрытие разума",
+  "aliases": [
+   "Mind Blank",
+   "Сокрытие разума"
+  ],
+  "level": 8,
+  "school": "Ограждение",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "1 согласное существо",
+  "duration": "24 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: иммунитет к очарованию и прорицаниям — вручную.\nимм психический 999, Сокрытие разума 999",
+  "automation": "partial",
+  "classes": "Бард, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-telepathy",
+  "name": "Телепатия",
+  "aliases": [
+   "Telepathy",
+   "Телепатия"
+  ],
+  "level": 8,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "Неограниченная",
+  "target": "1 согласное существо",
+  "duration": "24 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: телепатическая связь.",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-tsunami",
+  "name": "Цунами",
+  "aliases": [
+   "Tsunami",
+   "Цунами"
+  ],
+  "level": 8,
+  "school": "Вызов",
+  "castingTime": "1 минута",
+  "range": "Взгляд",
+  "target": "линия 50/300/300 фт, обл",
+  "duration": "Концентрация, до 6 раундов",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "save": "STR",
+  "saveSuccess": "Половина урона",
+  "damage": "6d10",
+  "damageType": "дробящий",
+  "description": "ЗАКЛ\nПримечание: волна движется и слабеет каждый ход — сдвигайте шаблон и уменьшайте урон вручную.\nКАСТ: ПРВ: Урон1, полный урон; УСП: Урон1, половина урона",
+  "automation": "partial",
+  "classes": "Друид",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-storm-of-vengeance",
+  "name": "Буря возмездия",
+  "aliases": [
+   "Storm of Vengeance",
+   "Буря возмездия"
+  ],
+  "level": 9,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "Взгляд",
+  "target": "360 фт круг, обл",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "save": "CON",
+  "saveSuccess": "Нет эффекта",
+  "damage": "2d6",
+  "damageType": "звук",
+  "description": "ЗАКЛ\nПримечание: эффекты следующих раундов (кислотный дождь, молнии, град, ветер) — вручную.\nКАСТ: ПРВ: Урон1, оглохший 50; УСП: нет эффекта",
+  "automation": "partial",
+  "classes": "Друид",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-gate",
+  "name": "Врата",
+  "aliases": [
+   "Gate",
+   "Врата"
+  ],
+  "level": 9,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "портал",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: портал на другой план; можно призвать существо по имени.",
+  "automation": "partial",
+  "classes": "Жрец, Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-imprisonment",
+  "name": "Заточение",
+  "aliases": [
+   "Imprisonment",
+   "Заточение"
+  ],
+  "level": 9,
+  "school": "Ограждение",
+  "castingTime": "1 минута",
+  "range": "30 фт",
+  "target": "1 существо",
+  "duration": "До рассеивания",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "save": "WIS",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: вид заточения и условие освобождения — отыгрыш.\nПРВ: изгнан; УСП: нет эффекта",
+  "automation": "partial",
+  "classes": "Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-shapechange",
+  "name": "Изменение формы",
+  "aliases": [
+   "Shapechange",
+   "Изменение формы"
+  ],
+  "level": 9,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: превращение в существа — используйте превращение вручную.",
+  "automation": "partial",
+  "classes": "Друид, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-wish",
+  "name": "Исполнение желаний",
+  "aliases": [
+   "Wish",
+   "Исполнение желаний"
+  ],
+  "level": 9,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: повторяет любое заклинание до 8 круга или творит иной эффект — по решению Мастера.",
+  "automation": "partial",
+  "classes": "Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-true-resurrection",
+  "name": "Истинное воскрешение",
+  "aliases": [
+   "True Resurrection",
+   "Истинное воскрешение"
+  ],
+  "level": 9,
+  "school": "Некромантия",
+  "castingTime": "1 час",
+  "range": "Касание",
+  "target": "мёртвое существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true,
+   "material": "алмазы на 25 000 зм, расходуются"
+  },
+  "description": "ЗАКЛ\nПримечание: погибший не более 200 лет назад; новое тело при необходимости.\nвозвращает к жизни 999",
+  "automation": "full",
+  "classes": "Жрец, Друид",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-true-polymorph",
+  "name": "Истинный полиморф",
+  "aliases": [
+   "True Polymorph",
+   "Истинный полиморф"
+  ],
+  "level": 9,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "существо или предмет",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: превращение — используйте Полиморф/превращение вручную.",
+  "automation": "partial",
+  "classes": "Бард, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-mass-heal",
+  "name": "Множественное полное исцеление",
+  "aliases": [
+   "Mass Heal",
+   "Множественное полное исцеление"
+  ],
+  "level": 9,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "любые существа",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "healing": "700",
+  "description": "ЗАКЛ\nПримечание: 700 хитов распределяются между целями — укажите сумму каждому вручную.\nснимает ослеплён/оглохший",
+  "automation": "partial",
+  "classes": "Жрец",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-time-stop",
+  "name": "Остановка времени",
+  "aliases": [
+   "Time Stop",
+   "Остановка времени"
+  ],
+  "level": 9,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "description": "ЗАКЛ\nостановка времени\nСНЯТЬ: ИСТОЧНИК АТАКОВАЛ ДРУГУЮ ЦЕЛЬ",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-foresight",
+  "name": "Предвидение",
+  "aliases": [
+   "Foresight",
+   "Предвидение"
+  ],
+  "level": 9,
+  "school": "Прорицание",
+  "castingTime": "1 минута",
+  "range": "Касание",
+  "target": "1 согласное существо",
+  "duration": "8 часов",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: преимущество на проверки — вручную.\nпрем ВСЕ 999, Предвидение 999\nУСЛЭФ: ПРЕМ АТАКАМ ЦЕЛИ\nУСЛЭФ: ПОМ АТАКАМ ПО ЦЕЛИ",
+  "automation": "full",
+  "classes": "Бард, Друид, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-astral-projection",
+  "name": "Проекция в Астрал",
+  "aliases": [
+   "Astral Projection",
+   "Проекция в Астрал"
+  ],
+  "level": 9,
+  "school": "Некромантия",
+  "castingTime": "1 час",
+  "range": "10 фт",
+  "target": "до 9 существ",
+  "duration": "Особая",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: путешествие по Астральному плану.",
+  "automation": "partial",
+  "classes": "Жрец, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-prismatic-wall",
+  "name": "Радужная стена",
+  "aliases": [
+   "Prismatic Wall",
+   "Радужная стена"
+  ],
+  "level": 9,
+  "school": "Ограждение",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "стена или сфера",
+  "duration": "10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: семь слоёв с разными эффектами — вручную.",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-power-word-heal",
+  "name": "Слово силы: исцеление",
+  "aliases": [
+   "Power Word Heal",
+   "Слово силы: исцеление"
+  ],
+  "level": 9,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "1 существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "healing": "999",
+  "description": "ЗАКЛ\nПримечание: цель может встать реакцией, если лежала.\nснимает очарован/испуган/парализован/ошеломлён",
+  "automation": "full",
+  "classes": "Бард",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-power-word-kill",
+  "name": "Слово силы: смерть",
+  "aliases": [
+   "Power Word Kill",
+   "Слово силы: смерть"
+  ],
+  "level": 9,
+  "school": "Очарование",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "1 существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "description": "ЗАКЛ\nХИТЫ<=100: смерть",
+  "automation": "full",
+  "classes": "Бард, Чародей, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-weird",
+  "name": "Ужасный облик",
+  "aliases": [
+   "Weird",
+   "Ужасный облик"
+  ],
+  "level": 9,
+  "school": "Иллюзия",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "30 фт круг",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "WIS",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПРВ: нет урона; УСП: нет эффекта\nAD5ЭФФ: {\"kind\":\"periodic\",\"order\":\"save-damage-end\",\"formula\":\"4d10\",\"type\":\"психический\",\"dcAttribute\":\"spell_save_dc\",\"ability\":\"wisdom\",\"timing\":\"end\",\"condition\":\"испуган\",\"duration\":10}",
+  "automation": "full",
+  "classes": "Волшебник",
+  "source": "PHB"
+ }
+]
