@@ -3,7 +3,8 @@ if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
     log('AD5EffectTurns: duplicate module skipped; keep one installed copy.');
 } else {
 /*
-AD5 Effect Turns 1.6.10
+AD5 Effect Turns 1.6.11
+1.6.11: «ОДИН РАЗ» (Areas multi-area directive) is not an effect.
 1.6.10: Control: «приказ: ниц/стой/беги/брось/ко мне» (Command, acted out at the creature's next turn start), «подчинён МДР15» (Dominate: caster's players control the token, save on each damage), «вялость» after Haste ends, Haste doubles speed and announces the extra action, Slow restrictions announced, «нет реакций» for the whole duration; a successful recovery save ends every effect of the same cast on that creature. Speed: «скорость ±N» (Longstrider), «телепорт N фт» (Misty Step, Dimension Door).
 1.6.9: Absence: «изгнан» (Banishment, Maze) and «эфирный план» move the token to the GM layer and back; «мерцание» (Blink) rolls d20 at the end of the bearer's turn and returns it at the start of the next; «остановка времени» (Time Stop) rolls 1d4+1 turns, GM button !ad5fx timestop advances them; «зеркальные образы» (3 images); recovery «… ПРОВЕРКА ИНТ20» is an ability check (Maze).
 1.6.8: «замешательство» condition (Confusion): d10 behaviour announced at the start of the creature's turn. New markers: drink-me (замешательство), death-zone (без лечения).
@@ -57,7 +58,7 @@ var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5
 // silently shadow every newer fix.
 var AD5EffectTurns = (function () {
     'use strict';
-    var VERSION='1.6.10', SCRIPT='AD5 Effect Turns';
+    var VERSION='1.6.11', SCRIPT='AD5 Effect Turns';
     var runtimeLastGroup=Object.create(null);
     var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
     var markerCacheRaw=null, markerCacheByName=Object.create(null);
@@ -199,6 +200,7 @@ var AD5EffectTurns = (function () {
             .replace(/&nbsp;|&#160;/gi,' ')
             .replace(/\r?\n/g,' ')
             // AutoDamage hit-point directives are not effects.
+            .replace(/(^|[\s,;])ОДИН\s+РАЗ(?=$|[\s,;.])/g,'$1')
             .replace(/(^|[\s,;])(?:НЕ\s+НИЖЕ\s+1|СНИЖ(?:ЕНИЕ)?\s+МАКС(?:ИМУМА)?|ВАМП(?:ИРИЗМ)?(?:\s+\d{1,3}\s*%)?)(?=$|[\s,;.!?])/g,'$1');
         var re=/(?:^|[\s,;])(?:ПРВ|УСП)\s*[:：—–-]?\s*/ig,m,marks=[];
         while((m=re.exec(text))){

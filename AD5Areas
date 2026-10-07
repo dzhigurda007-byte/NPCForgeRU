@@ -1,6 +1,12 @@
 /* Disable old Areas before installing this guarded module. */
 if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skipped.');}else{
-/* AD5 Areas 2.24.11 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
+/* AD5 Areas 2.25.0 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
+ * 2.25.0: директивы описания — «ДРЕЙФ: 10» (область уходит от заклинателя в начале его хода:
+ *          Смертельное облако, Испепеляющее облако), «КОЛЬЦО: 5» (круг действует только полосой
+ *          шириной 5 фт у края: Клинковый барьер), «СТОРОНА: 10» (у линии/стены появляется полоса
+ *          10 фт со стороны, противоположной заклинателю, с фазами КНЦТ/ОБЛК: Огненная стена),
+ *          «ОДИН РАЗ» (несколько областей одного каста — «4×» — задевают существо один раз:
+ *          Огненная буря, Метеоритный дождь).
  * Обычная область: способность → шаблон → размещение → «Применить».
  * Аура: Дистанция «аура N фт» → выбор токена-носителя → штатная Token Aura
  * Roll20 движется вместе с токеном; механика использует тот же фазовый синтаксис.
@@ -39,7 +45,7 @@ if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skip
  */
 var AD5Areas=(function(){
     'use strict';
-    var VERSION='2.24.11';
+    var VERSION='2.25.0';
     var resolutionSequence=0;
     function nextResolutionId(prefix){return String(prefix||'area')+':'+Date.now().toString(36)+':'+(++resolutionSequence);}
     function root(){
@@ -648,6 +654,7 @@ var AD5Areas=(function(){
             isSpell:areaDraftIsSpell(q),spellSource:String(q.spellSource||''),
             spellMeta:q.spellMeta?JSON.parse(JSON.stringify(q.spellMeta)):null,
             concentrationId:q.concentrationId||null};
+        var ringFeet=areaGeometryDirective(q.description,'кольцо');if(ringFeet>0&&shape==='circle')db()[path.id].ringPx=ringFeet*factor;
         if(typeof toBack==='function')toBack(path);
         return path;
     }
@@ -699,7 +706,7 @@ var AD5Areas=(function(){
     function containsGeometry(a,path,left,top,centerLeft,centerTop,rotation){
         var dx=Number(left)-Number(centerLeft),dy=Number(top)-Number(centerTop);
         var r=Number(rotation||0)*Math.PI/180,x=dx*Math.cos(r)+dy*Math.sin(r),y=-dx*Math.sin(r)+dy*Math.cos(r),e=1e-7,shape=geometryShape(a,path);
-        if(shape==='circle')return x*x+y*y<=(a.w/2)*(a.w/2)+e;
+        if(shape==='circle'){var rr=a.w/2,d2=x*x+y*y;if(d2>rr*rr+e)return false;if(Number(a.ringPx)>0){var inner=Math.max(0,rr-Number(a.ringPx));return d2>=inner*inner-e;}return true;}
         if(shape==='cone'){var depth=a.h/2-y;return depth>=-e&&depth<=a.h+e&&Math.abs(x)<=depth*a.w/(2*a.h)+e;}
         if(shape==='polygon'&&Array.isArray(a.coveragePolygon))return pointInPolygonLocal({x:x,y:y},a.coveragePolygon);
         return Math.abs(x)<=a.w/2+e&&Math.abs(y)<=a.h/2+e;
@@ -787,6 +794,7 @@ var AD5Areas=(function(){
     }
     function defenseDirectiveKind(label){
         var n=normalizeUserText(label||'').replace(/\./g,'').trim();
+        if(/^(?:дрейф|кольцо|сторона)$/.test(n))return 'geometry';
         if(/^(?:сопр|сопротивление|resist|resistance)$/.test(n))return 'resistance';
         if(/^(?:имм|иммунитет|immune|immunity)$/.test(n))return 'immunity';
         return 'other';
@@ -798,7 +806,7 @@ var AD5Areas=(function(){
             .replace(/<[^>]*>/g,' ')
             .replace(/&nbsp;|&#160;/gi,' ')
             .replace(/&quot;/gi,'"').replace(/&amp;/gi,'&');
-        var names='КАСТ|НАЧК|НАЧИ|НАЧТ|КНЦИ|КНЦТ|КОНИ|КОНТ|ОКОН|ОСВОБ|ВХОД|ВЫХОД|ОБЛН|ОБЛК|ПАСС|При\\s+входе|Каждый\\s+ход|МУВ|СОПР(?:ОТИВЛЕНИЕ)?|СОПРОТИВЛЕНИЕ|RESIST(?:ANCE)?|ИММ(?:УНИТЕТ)?|ИММУНИТЕТ|IMMUN(?:E|ITY)';
+        var names='КАСТ|НАЧК|НАЧИ|НАЧТ|КНЦИ|КНЦТ|КОНИ|КОНТ|ОКОН|ОСВОБ|ВХОД|ВЫХОД|ОБЛН|ОБЛК|ПАСС|При\\s+входе|Каждый\\s+ход|МУВ|СОПР(?:ОТИВЛЕНИЕ)?|СОПРОТИВЛЕНИЕ|RESIST(?:ANCE)?|ИММ(?:УНИТЕТ)?|ИММУНИТЕТ|IMMUN(?:E|ITY)|ДРЕЙФ|КОЛЬЦО|СТОРОНА';
         var re=new RegExp('(^|[\\n;.])\\s*('+names+')\\s*[:：—–-]\\s*','ig'),m,marks=[];
         while((m=re.exec(text))){
             marks.push({
@@ -843,7 +851,7 @@ var AD5Areas=(function(){
     function parseAreaDamageDefense(value){
         var scan=defenseDirectiveMarks(value),out={resistances:{},immunities:{},source:''},found=false;
         scan.marks.forEach(function(mark,i){
-            if(mark.kind==='other')return;
+            if(mark.kind==='other'||mark.kind==='geometry')return;
             var end=i+1<scan.marks.length?scan.marks[i+1].start:scan.text.length;
             var body=String(scan.text.slice(mark.bodyStart,end)||'').replace(/^[\s,]+|[\s,]+$/g,'').trim();
             if(!body)return;
@@ -867,6 +875,18 @@ var AD5Areas=(function(){
         var d=parseAreaDamageDefense(value);
         return !!(Object.keys(d.resistances).length||Object.keys(d.immunities).length);
     }
+    // 2.25.0: numeric geometry directives («ДРЕЙФ: 10», «КОЛЬЦО: 5», «СТОРОНА: 10»).
+    function areaGeometryDirective(value,name){
+        var scan=defenseDirectiveMarks(value),out=null;
+        scan.marks.forEach(function(mark,i){
+            if(normalizeUserText(mark.label).replace(/\./g,'').trim()!==name)return;
+            var body=scan.text.slice(mark.bodyStart,i+1<scan.marks.length?scan.marks[i+1].start:scan.text.length),m=/^\s*(\d+(?:[.,]\d+)?)/.exec(body);
+            if(m)out=Number(m[1].replace(',','.'));
+        });
+        return out;
+    }
+    function onceDirective(value){return /(?:^|[\s;.,])ОДИН\s+РАЗ(?=$|[\s;.,])/i.test(descriptionText(value));}
+    function feetToPx(pageId,feet){var page=getObj('page',pageId),unit=Number(page&&page.get('scale_number'))||5;return Number(feet)*70/unit;}
     function stripAreaDamageDefenseDirectives(value){
         var scan=defenseDirectiveMarks(value),ranges=[];
         scan.marks.forEach(function(mark,i){
@@ -1525,8 +1545,11 @@ var AD5Areas=(function(){
             terrain:difficultTerrain(q),damageDefense:damageDefense,duration:duration,remaining:duration,moveProgress:{},affected:{},occupancy:{},boundarySeen:{}
         };
         if(rec.snapshot)rec.snapshot.targetMode=rec.targetMode;
+        if(Number(a.ringPx)>0)rec.ringPx=Number(a.ringPx);
+        var driftFeet=areaGeometryDirective(q.description,'дрейф');if(driftFeet>0)rec.driftFeet=driftFeet;
         persistentDb()[a.id]=rec;
         stylePersistentPath(path);
+        var sideFeet=areaGeometryDirective(q.description,'сторона');if(sideFeet>0)try{createSideStrip(rec,path,sideFeet);}catch(sideErr){tell(pid,'СТОРОНА: '+escape(sideErr.message||sideErr));}
         syncEnvironmentArea(rec,path);
         var passiveCount=seedMembership(rec,path);
         delete db()[a.id];
@@ -1547,6 +1570,39 @@ var AD5Areas=(function(){
             (rules.entry?'<br>Уже находящиеся внутри токены не получают «ВХОД» до выхода и повторного входа.':'')+
             '<br>Шаблон оставлен синим и перенесён под токены.');
         return rec;
+    }
+    // Wall of Fire: the damaging side is a separate persistent strip on the side away from
+    // the caster. It keeps only the end-of-turn phases (КНЦТ/ОБЛК) of the wall.
+    function createSideStrip(rec,path,feet){
+        if(rec.shape!=='line'&&rec.shape!=='square')throw new Error('нужна линия или прямоугольник.');
+        if(!rec.rules||!(rec.rules.targetEnd||rec.rules.areaEnd))throw new Error('у стены нет фазы КНЦТ или ОБЛК.');
+        var px=feetToPx(rec.page,feet),rot=pathRotation(path)*Math.PI/180,cx=pathLeft(path),cy=pathTop(path);
+        // The sides are across the thin axis: local x when the wall is tall, local y when it is wide.
+        var acrossX=rec.w<=rec.h,ux=acrossX?Math.cos(rot):-Math.sin(rot),uy=acrossX?Math.sin(rot):Math.cos(rot);
+        var src=getObj('graphic',String(rec.source||(rec.snapshot&&rec.snapshot.sourceToken)||'')),sign=1;
+        if(src){var sx=Number(src.get('left'))-cx,sy=Number(src.get('top'))-cy;if(sx*ux+sy*uy>0)sign=-1;}
+        var off=(acrossX?rec.w:rec.h)/2+px/2,left=cx+sign*ux*off,top=cy+sign*uy*off,sw=acrossX?px:rec.w,sh=acrossX?rec.h:px;
+        var strip=createAreaPath(rec.page,'square',sw,sh,left,top,pathRotation(path),'','#ff3300',2);if(!strip)throw new Error('не удалось создать полосу.');
+        var r2=JSON.parse(JSON.stringify(rec));
+        r2.id=strip.id;r2.pathType=pathObjectType(strip);r2.shape='square';r2.w=sw;r2.h=sh;r2.name=(rec.name||'Стена')+' — опасная сторона';
+        r2.rules={phased:true,persistent:true,targetEnd:rec.rules.targetEnd||null,areaEnd:rec.rules.areaEnd||null,source:''};
+        r2.moveProgress={};r2.affected={};r2.occupancy={};r2.boundarySeen={};r2.sideOf=rec.id;delete r2.driftFeet;delete r2.ringPx;
+        persistentDb()[strip.id]=r2;stylePersistentPath(strip);strip.set({stroke:'#ff3300'});seedMembership(r2,strip);rec.sideStrip=strip.id;
+        return r2;
+    }
+    // Cloudkill/Incendiary Cloud: at the start of the caster's turn the area moves N ft away.
+    function driftAreas(page,turnToken){
+        persistentAreas(page).slice().forEach(function(rec){
+            if(!(rec.driftFeet>0)||rec.kind==='aura'||!casterTurnMatches(rec,turnToken))return;
+            var path=getAreaPath(rec.id,rec);if(!path)return;
+            var cx=pathLeft(path),cy=pathTop(path),dx=cx-Number(turnToken.get('left')),dy=cy-Number(turnToken.get('top')),len=Math.sqrt(dx*dx+dy*dy);
+            if(len<1)return;
+            var px=feetToPx(rec.page,rec.driftFeet),nx=cx+dx/len*px,ny=cy+dy/len*px;
+            if(pathObjectType(path)==='pathv2')path.set({x:nx,y:ny});else path.set({left:nx,top:ny});
+            syncEnvironmentArea(rec,path);
+            findObjs({_type:'graphic',_subtype:'token',_pageid:rec.page,layer:'objects'}).filter(function(t){return combatToken(t,rec.page);}).forEach(function(t){try{setMembership(rec,t,contains(rec,path,t),true);}catch(ignoreDrift){}});
+            tell(rec.owner,'<b>'+escape(rec.name||'Область')+'</b> смещается на '+escape(rec.driftFeet)+' фт от заклинателя.');
+        });
     }
     function activateAura(q,pid,targetId){
         if(!q||!q.areaSpec||!q.areaSpec.aura)throw new Error('Способность не содержит ауру.');
@@ -2032,6 +2088,7 @@ var AD5Areas=(function(){
             }
             if(previous&&token&&typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns.groupKey(previous)===AD5EffectTurns.groupKey(token))return;
             dispatch(previous,'targetEnd','sourceEnd','КНЦТ','КНЦИ');
+            if(token)try{driftAreas(page,token);}catch(driftErr){gmPrompt('<b>ДРЕЙФ:</b> '+escape(driftErr.message||driftErr));}
             dispatch(token,'turn','sourceStart','НАЧТ','НАЧК');
             if(token)tickCasterDurations(page,token);
         },50);
@@ -2070,7 +2127,9 @@ var AD5Areas=(function(){
         if(remaining<=1)return null;
         var apiObj=api();
         if(typeof apiObj.cloneArea!=='function')throw new Error('Для нескольких областей нужен AD5 4.3.71 или новее.');
-        return apiObj.cloneArea(a.draft,pid,remaining-1);
+        var next=apiObj.cloneArea(a.draft,pid,remaining-1),batches=root().batches=root().batches||{};
+        if(next)batches[next]=batches[a.draft]||a.draft;
+        return next;
     }
     function launchNextAreaDraft(nextDraft,pid){
         if(!nextDraft)return;
@@ -2168,6 +2227,16 @@ var AD5Areas=(function(){
         if(persistentRules.phased&&persistentRules.persistent)throw new Error('Для ВХОД/ВЫХОД/ОБЛН/ОБЛК/ПАСС и других постоянных фаз укажите в Дистанции «обл» / «обл N» либо используйте концентрацию «кон N».');
         if(persistentRules.move)throw new Error('МУВ работает только у постоянной области. Добавьте к дистанции «обл» или «обл N», например «20 фт круг, обл 3».');
         var collected=collectDetailed(a,path,pid),ids=collected.ids;
+        // 2.25.0: «ОДИН РАЗ» — areas of one cast affect each creature only once.
+        if(onceDirective(q.description)&&Number(q.areaSpec&&q.areaSpec.count)>=1){
+            var batches=root().batches=root().batches||{},seenAll=root().batchSeen=root().batchSeen||{},bkey=batches[a.draft]||a.draft;
+            var oldKeys=Object.keys(seenAll);if(oldKeys.length>40)oldKeys.slice(0,oldKeys.length-40).forEach(function(k){delete seenAll[k];});
+            var oldBatch=Object.keys(batches);if(oldBatch.length>200)oldBatch.slice(0,oldBatch.length-200).forEach(function(k){delete batches[k];});
+            var seen=seenAll[bkey]=seenAll[bkey]||[];
+            var skipped=ids.filter(function(tid){return seen.indexOf(tid)>=0;});ids=ids.filter(function(tid){return seen.indexOf(tid)<0;});
+            ids.forEach(function(tid){seen.push(tid);});
+            if(skipped.length)tell(pid,'Уже задеты этим заклинанием: <b>'+skipped.length+'</b> — пропущены.');
+        }
         // A phased KAST is an area-membership event and therefore affects every
         // combat token physically inside the template.  Keep the normal target
         // limit only for legacy/non-phased one-shot area actions.
