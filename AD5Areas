@@ -1,12 +1,19 @@
 /* Disable old Areas before installing this guarded module. */
 if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skipped.');}else{
-/* AD5 Areas 2.26.0 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
+/* AD5 Areas 2.27.0 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
  * 2.25.0: директивы описания — «ДРЕЙФ: 10» (область уходит от заклинателя в начале его хода:
  *          Смертельное облако, Испепеляющее облако), «КОЛЬЦО: 5» (круг действует только полосой
  *          шириной 5 фт у края: Клинковый барьер), «СТОРОНА: 10» (у линии/стены появляется полоса
  *          10 фт со стороны, противоположной заклинателю, с фазами КНЦТ/ОБЛК: Огненная стена),
  *          «ОДИН РАЗ» (несколько областей одного каста — «4×» — задевают существо один раз:
  *          Огненная буря, Метеоритный дождь).
+ * 2.27.0: многослойные стены (Радужная стена). «СЛОЙ: Красный; тип огонь; ПРВ: …; УСП: …; блок снаряды;
+ *          разрушает: холод 25» — существо, проходящее стену, проходит все целые слои по порядку (свой
+ *          спасбросок и тип урона у каждого). Слой разрушается по порядку: ударом по токену стены (урон
+ *          типа ≥ N или названное заклинание) или кнопкой «Снять слой» (!ad5-area layer). «блок снаряды /
+ *          заклинания» — пока слой цел, дальние атаки оружием / заклинания с броском атаки сквозь стену
+ *          промахиваются. «ВОКРУГ: 20, СПАС ТЕЛ, ПРВ: …» — зона вокруг стены с ВХОД и ОБЛН. Заклинатель
+ *          не затрагивается. Пересечение стены атакой считается точно, без шага выборки.
  * 2.26.0: стены. «ПАНЕЛИ: 10» — до N отдельных панелей одного каста («Новая панель k/N», одно «Применить»),
  *          каждая — своя постоянная область. «ВЫТЕСНЕНИЕ: ЗАКЛИНАТЕЛЬ | ЛОВ» — существо в месте появления
  *          стены выталкивается на ближайшую свободную клетку выбранной стороны (кнопки заклинателю или
@@ -64,7 +71,7 @@ if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skip
  */
 var AD5Areas=(function(){
     'use strict';
-    var VERSION='2.26.0';
+    var VERSION='2.27.0';
     var resolutionSequence=0;
     function nextResolutionId(prefix){return String(prefix||'area')+':'+Date.now().toString(36)+':'+(++resolutionSequence);}
     function root(){
@@ -857,7 +864,7 @@ var AD5Areas=(function(){
     }
     function defenseDirectiveKind(label){
         var n=normalizeUserText(label||'').replace(/\./g,'').trim();
-        if(/^(?:дрейф|кольцо|сторона|антимагия|области|панели|вытеснение|прочность|при разрушении|защита от снарядов|цена движения)$/.test(n))return 'geometry';
+        if(/^(?:дрейф|кольцо|сторона|антимагия|области|панели|вытеснение|прочность|при разрушении|защита от снарядов|цена движения|слой|вокруг)$/.test(n))return 'geometry';
         if(/^(?:сопр|сопротивление|resist|resistance)$/.test(n))return 'resistance';
         if(/^(?:имм|иммунитет|immune|immunity)$/.test(n))return 'immunity';
         return 'other';
@@ -871,7 +878,7 @@ var AD5Areas=(function(){
             .replace(/&quot;/gi,'"').replace(/&amp;/gi,'&')
             // «ЗАЩИТА ОТ СНАРЯДОВ» is a flag line; give it a body so it scans like the other directives.
             .replace(/(^|[\n;.])([ \t]*ЗАЩИТА\s+ОТ\s+СНАРЯДОВ)[ \t]*(?=\n|$)/gi,'$1$2: да');
-        var names='КАСТ|НАЧК|НАЧИ|НАЧТ|КНЦИ|КНЦТ|КОНИ|КОНТ|ОКОН|ОСВОБ|ВХОД|ВЫХОД|ОБЛН|ОБЛК|ПАСС|При\\s+входе|Каждый\\s+ход|МУВ|СОПР(?:ОТИВЛЕНИЕ)?|СОПРОТИВЛЕНИЕ|RESIST(?:ANCE)?|ИММ(?:УНИТЕТ)?|ИММУНИТЕТ|IMMUN(?:E|ITY)|ДРЕЙФ|КОЛЬЦО|СТОРОНА|АНТИМАГИЯ|ОБЛАСТИ|ПАНЕЛИ|ВЫТЕСНЕНИЕ|ПРОЧНОСТЬ|ПРИ\\s+РАЗРУШЕНИИ|ЗАЩИТА\\s+ОТ\\s+СНАРЯДОВ|ЦЕНА\\s+ДВИЖЕНИЯ';
+        var names='КАСТ|НАЧК|НАЧИ|НАЧТ|КНЦИ|КНЦТ|КОНИ|КОНТ|ОКОН|ОСВОБ|ВХОД|ВЫХОД|ОБЛН|ОБЛК|ПАСС|При\\s+входе|Каждый\\s+ход|МУВ|СОПР(?:ОТИВЛЕНИЕ)?|СОПРОТИВЛЕНИЕ|RESIST(?:ANCE)?|ИММ(?:УНИТЕТ)?|ИММУНИТЕТ|IMMUN(?:E|ITY)|ДРЕЙФ|КОЛЬЦО|СТОРОНА|АНТИМАГИЯ|ОБЛАСТИ|ПАНЕЛИ|ВЫТЕСНЕНИЕ|ПРОЧНОСТЬ|ПРИ\\s+РАЗРУШЕНИИ|ЗАЩИТА\\s+ОТ\\s+СНАРЯДОВ|ЦЕНА\\s+ДВИЖЕНИЯ|СЛОЙ|ВОКРУГ';
         var re=new RegExp('(^|[\\n;.])\\s*('+names+')\\s*[:：—–-]\\s*','ig'),m,marks=[];
         while((m=re.exec(text))){
             marks.push({
@@ -1659,7 +1666,9 @@ var AD5Areas=(function(){
         if(environmentType(rec)==='solid'&&rec.shape==='circle'&&Number(rec.ringPx)>0){var ringSolid=ringSolidPolygon(rec,path);if(ringSolid)rec.solidRingPath=ringSolid.id;}
         syncEnvironmentArea(rec,path);
         var passiveCount=seedMembership(rec,path);
-        if(wall.durability){try{createBrick(rec,path,wall.durability);}catch(brickErr){tell(pid,'ПРОЧНОСТЬ: '+escape(brickErr.message||brickErr));}}
+        if(wall.layers.length){try{setupLayers(rec,path,wall.layers,pid);}catch(layerErr){tell(pid,'СЛОЙ: '+escape(layerErr.message||layerErr));}}
+        if(wall.halo){try{createHalo(rec,path,wall.halo);}catch(haloErr){tell(pid,'ВОКРУГ: '+escape(haloErr.message||haloErr));}}
+        if(wall.durability&&!wall.layers.length){try{createBrick(rec,path,wall.durability);}catch(brickErr){tell(pid,'ПРОЧНОСТЬ: '+escape(brickErr.message||brickErr));}}
         delete db()[a.id];
         if(!opts.keepDraft){try{api().cancel(a.draft,pid);}catch(ignore){}}
         var castIds=rules.cast?Object.keys(rec.occupancy).filter(function(id){return rec.occupancy[id];}):[];
@@ -1777,12 +1786,15 @@ var AD5Areas=(function(){
         out.projectile=directiveBody(value,'защита от снарядов')!==null;
         var mc=directiveBody(value,'цена движения');
         if(mc!==null){var mm=/(\d+(?:[.,]\d+)?)/.exec(mc);if(mm)out.moveCost=Math.max(1,Math.min(10,Number(mm[1].replace(',','.'))));}
-        out.any=!!(out.eject||out.durability||out.breach||out.projectile||out.moveCost>1);
+        out.layers=wallLayers(value);out.halo=wallHalo(value);
+        out.any=!!(out.eject||out.durability||out.breach||out.projectile||out.moveCost>1||out.layers.length||out.halo);
         return out;
     }
     function wallSummary(rec){
         var parts=[];
-        if(rec.brick){var b=getObj('graphic',rec.brick);if(b)parts.push('прочность: <b>'+escape(b.get('bar1_value'))+'</b> хитов (токен-кирпич в центре)');}
+        if(rec.layers)parts.push(layerStatus(rec)+' — проходящий сквозь стену проходит все слои; слой снимается ударом по токену стены или кнопкой'+layerButton(rec));
+        else if(rec.brick){var b=getObj('graphic',rec.brick);if(b)parts.push('прочность: <b>'+escape(b.get('bar1_value'))+'</b> хитов (токен-кирпич в центре)');}
+        if(rec.halo)parts.push('сияние вокруг стены');
         if(rec.solidRingPath)parts.push('сплошная стена по кольцу');
         if(rec.breach)parts.push('при разрушении остаётся зона');
         if(rec.projectileWall)parts.push('дальние атаки оружием сквозь стену — промах');
@@ -1821,6 +1833,7 @@ var AD5Areas=(function(){
     }
     function removeWallParts(rec){
         if(!rec)return;
+        if(rec.halo){var hid=rec.halo,hrec=persistentDb()[hid];rec.halo=null;if(hrec)endPersistent(hrec,getAreaPath(hid,hrec));}
         if(rec.brick){var bricks=wallRoot().bricks,bid=rec.brick;rec.brick=null;delete bricks[bid];var b=getObj('graphic',bid);if(b){try{b.remove();}catch(ignoreBrick){}}}
         if(rec.solidRingPath){var sp=getObj('path',rec.solidRingPath)||getObj('pathv2',rec.solidRingPath);rec.solidRingPath=null;if(sp){try{sp.remove();}catch(ignoreRing){}}}
     }
@@ -1878,6 +1891,7 @@ var AD5Areas=(function(){
         info=info||{};var bricks=wallRoot().bricks,b=bricks[String(info.tokenId||'')];if(!b)return false;
         var rec=persistentDb()[b.area],t=getObj('graphic',String(info.tokenId));
         if(!rec){delete bricks[String(info.tokenId)];if(t){try{t.remove();}catch(ignore){}}return true;}
+        if(rec.layers){layerHit(rec,t,info);return true;}
         var name=String(info.name||'').trim(),destroyer=/(?:^|[\s;.,])РАЗРУШАЕТ\s+СТЕН/i.test(String(info.description||''))||/^(?:распад|дезинтеграция|disintegrate)$/i.test(name);
         var hp=t?Number(t.get('bar1_value')):NaN;
         if(destroyer||(Number.isFinite(hp)&&hp<=0)){destroyWallPanel(rec,destroyer?'«'+(name||'Распад')+'»':'хиты 0');return true;}
@@ -1975,14 +1989,38 @@ var AD5Areas=(function(){
         sendChat('Области','<b>'+escape(t.get('name')||'Существо')+'</b> вытолкнут(а) из стены «'+escape(rec.name||'Стена')+'» '+escape(label)+'.',null,{noarchive:true});
     }
     // ---- projectiles ----
-    function projectileWallFor(sourceToken,targetToken){
-        if(!sourceToken||!targetToken)return null;var page=String(targetToken.get('_pageid')||''),hit=null;
+    // Exact segment test (a wall can be thinner than any sampling step).
+    function segmentCrossesWall(rec,path,x0,y0,x1,y1){
+        var cx=pathLeft(path),cy=pathTop(path);
+        if(rec.shape==='circle'){
+            var rr=rec.w/2,rin=Math.max(0,rr-(Number(rec.ringPx)||0)),d0=Math.hypot(x0-cx,y0-cy),d1=Math.hypot(x1-cx,y1-cy);
+            if(!(Number(rec.ringPx)>0))return (d0<=rr)!==(d1<=rr);
+            if(d0<rin&&d1<rin)return false;
+            if((d0<=rr)!==(d1<=rr))return true;
+            var dx=x1-x0,dy=y1-y0,l2=dx*dx+dy*dy,t=l2?Math.max(0,Math.min(1,((cx-x0)*dx+(cy-y0)*dy)/l2)):0;
+            return Math.hypot(x0+dx*t-cx,y0+dy*t-cy)<=rr;
+        }
+        if(rec.shape==='line'||rec.shape==='square'){
+            var r=pathRotation(path)*Math.PI/180,c=Math.cos(r),sn=Math.sin(r);
+            function loc(x,y){var ddx=x-cx,ddy=y-cy;return {x:ddx*c+ddy*sn,y:-ddx*sn+ddy*c};}
+            var a=loc(x0,y0),b=loc(x1,y1),ex=b.x-a.x,ey=b.y-a.y,t0=0,t1=1,hw=rec.w/2,hh=rec.h/2;
+            function slab(p,d,mn,mx){if(Math.abs(d)<1e-9)return p>=mn&&p<=mx;var u=(mn-p)/d,v=(mx-p)/d;if(u>v){var z=u;u=v;v=z;}if(u>t0)t0=u;if(v<t1)t1=v;return t0<=t1;}
+            return slab(a.x,ex,-hw,hw)&&slab(a.y,ey,-hh,hh);
+        }
+        var g=JSON.parse(JSON.stringify(rec));g.wallTouch=false;
+        var sx=x1-x0,sy=y1-y0,len=Math.sqrt(sx*sx+sy*sy),steps=Math.max(1,Math.ceil(len/2));
+        for(var i=1;i<steps;i++){var f=i/steps;if(containsGeometry(g,path,x0+sx*f,y0+sy*f,cx,cy,pathRotation(path)))return true;}
+        return false;
+    }
+    function projectileWallFor(sourceToken,targetToken,kind){
+        if(!sourceToken||!targetToken)return null;var page=String(targetToken.get('_pageid')||''),hit=null;kind=kind==='spell'?'spell':'weapon';
         var x0=Number(sourceToken.get('left')),y0=Number(sourceToken.get('top')),x1=Number(targetToken.get('left')),y1=Number(targetToken.get('top'));
         persistentAreas(page).forEach(function(rec){
-            if(hit||!rec.projectileWall)return;var path=getAreaPath(rec.id,rec);if(!path)return;
-            var g=JSON.parse(JSON.stringify(rec));g.wallTouch=false;
-            var dx=x1-x0,dy=y1-y0,len=Math.sqrt(dx*dx+dy*dy),steps=Math.max(1,Math.ceil(len/3));
-            for(var i=1;i<steps;i++){var f=i/steps;if(containsGeometry(g,path,x0+dx*f,y0+dy*f,pathLeft(path),pathTop(path),pathRotation(path))){hit={id:rec.id,name:rec.name||'Стена'};return;}}
+            if(hit||(rec.brick&&String(rec.brick)===String(targetToken.id)))return;
+            var blocks=kind==='weapon'&&rec.projectileWall,blockName=rec.name||'Стена';
+            (rec.layers||[]).forEach(function(L){if(!blocks&&L.intact&&L.blocks===kind){blocks=true;blockName=(rec.name||'Стена')+' · '+L.name;}});
+            if(!blocks)return;var path=getAreaPath(rec.id,rec);if(!path)return;
+            if(segmentCrossesWall(rec,path,x0,y0,x1,y1))hit={id:rec.id,name:blockName};
         });
         return hit;
     }
@@ -2004,6 +2042,121 @@ var AD5Areas=(function(){
         var res=null;try{if(typeof AD5Movement!=='undefined'&&AD5Movement&&typeof AD5Movement.addMovementCost==='function')res=AD5Movement.addMovementCost(movementContext.movementTxn,extra,Object.keys(names).join(', '));}catch(costErr){gmPrompt('ЦЕНА ДВИЖЕНИЯ: '+escape(costErr.message||costErr));}
         sendChat('Области','<b>'+escape(token.get('name')||'Существо')+'</b>: '+escape(Object.keys(names).join(', '))+' — движение внутри стоит ещё <b>'+extra+' фт</b> скорости'+(res&&res.remaining!==null&&res.remaining!==undefined?' (осталось '+res.remaining+' фт)':'')+'.',null,{noarchive:true});
         return {extra:extra,names:Object.keys(names)};
+    }
+    // ---- 2.27.0: layered walls (Prismatic Wall) ----
+    // «СЛОЙ: Красный; тип огонь; ПРВ: Урон1, полный урон; УСП: Урон1, половина урона; блок снаряды; разрушает: холод 25»
+    // A creature crossing the wall goes through every intact layer in order (one save each). Layers are destroyed
+    // in order: by a hit on the wall token (damage of a type ≥ N, or a named spell) or by the GM button.
+    // «ВОКРУГ: 20, СПАС ТЕЛ, ПРВ: ослеплён 10; УСП: нет эффекта» — a zone N ft around the wall (ВХОД + ОБЛН).
+    function directiveBodies(value,name){
+        var scan=defenseDirectiveMarks(value),out=[];
+        scan.marks.forEach(function(mark,i){
+            if(normalizeUserText(mark.label).replace(/\./g,'').trim()!==name)return;
+            out.push(String(scan.text.slice(mark.bodyStart,i+1<scan.marks.length?scan.marks[i+1].start:scan.text.length)).replace(/^[\s,;.]+|[\s,;.]+$/g,'').trim());
+        });
+        return out;
+    }
+    function wallLayers(value){
+        return directiveBodies(value,'слой').map(function(body){
+            var parts=body.split(/\s*;\s*/),L={name:String(parts.shift()||'Слой').trim(),type:'',blocks:'',destroy:null,body:'',intact:true},rest=[];
+            parts.forEach(function(part){
+                var n=normalizeUserText(part),m;
+                if((m=/^тип\s+(.+)$/.exec(n)))L.type=m[1].trim();
+                else if((m=/^блок\S*\s+(.+)$/.exec(n)))L.blocks=/заклин|магич/.test(m[1])?'spell':'weapon';
+                else if((m=/^разруша\S*\s*:?\s*(.+)$/.exec(n))){
+                    var dm=/^(.+?)\s+(\d{1,4})$/.exec(m[1].trim());
+                    L.destroy=dm?{type:dm[1].trim(),min:Number(dm[2])}:{spells:m[1].split(/\s*\/\s*/).map(function(x){return x.trim();}).filter(Boolean)};
+                }
+                else if(part.trim())rest.push(part.trim());
+            });
+            L.body=rest.join('; ');
+            return L;
+        }).filter(function(L){return L.body;});
+    }
+    function wallHalo(value){
+        var b=directiveBody(value,'вокруг');if(!b)return null;
+        var m=/^\s*(\d+(?:[.,]\d+)?)\s*(?:фт\.?|футов)?\s*[,;]?\s*/i.exec(b);if(!m)return null;
+        var body=b.slice(m[0].length),save=null,sm=/^\s*спас(?:бросок)?\s+(сил|лов|тел|инт|мдр|хар)[а-яё]*\s*[.;,:]?\s*/i.exec(body);
+        if(sm){save=BREACH_SAVE[sm[1].toLowerCase()];body=body.slice(sm[0].length);}
+        return body.trim()?{feet:Number(m[1].replace(',','.')),save:save,body:body.trim()}:null;
+    }
+    function setupLayers(rec,path,layers,pid){
+        rec.layers=layers.map(function(L){
+            var r=parsePersistentRules('ВХОД: '+L.body);if(!r||!r.entry)throw new Error('«'+L.name+'»: не распознан эффект «'+L.body+'».');
+            var snap=JSON.parse(JSON.stringify(rec.snapshot||{}));if(L.type&&snap.components)Object.keys(snap.components).forEach(function(k){snap.components[k].type=L.type;});
+            validatePersistentRules(snap,r);
+            return {name:L.name,type:L.type,blocks:L.blocks,destroy:L.destroy,phase:r.entry,intact:true};
+        });
+        rec.excludeSource=true;
+        rec.rules=JSON.parse(JSON.stringify(rec.rules||{}));rec.rules.entry=rec.layers[0].phase;rec.rules.persistent=true;rec.rules.phased=true;
+        createBrick(rec,path,{ac:10,hp:999,vuln:[],imm:[],indestructible:false});
+        // A wall placed through a creature's space makes the spell fail (PHB).
+        var caught=findObjs({_type:'graphic',_subtype:'token',_pageid:rec.page,layer:'objects'}).filter(function(t){return combatToken(t,rec.page)&&String(t.id)!==String(rec.source||'')&&overlapsWall(rec,path,Number(t.get('left')),Number(t.get('top')),tokenHalf(t));});
+        if(caught.length){var warn='<b>'+escape(rec.name||'Стена')+'</b> проходит через пространство: '+escape(caught.map(function(t){return t.get('name')||t.id;}).join(', '))+'. По правилам заклинание проваливается — удалите стену и разместите заново.';tell(pid,warn);gmPrompt(warn);}
+    }
+    function layerStatus(rec){
+        var left=(rec.layers||[]).filter(function(L){return L.intact;});
+        return left.length?'слоёв: <b>'+left.length+'</b> ('+escape(left.map(function(L){return L.name;}).join(', '))+')':'слоёв нет';
+    }
+    function layerButton(rec){var L=(rec.layers||[]).filter(function(x){return x.intact;})[0];return L?' [Снять слой: '+escape(L.name)+'](!ad5-area layer '+rec.id+')':'';}
+    function triggerLayers(rec,token,ctx){
+        if(String(token.id)===String(rec.source||''))return false;
+        var n=0;
+        rec.layers.forEach(function(L,i){
+            if(!L.intact||!L.phase)return;
+            var snap=JSON.parse(JSON.stringify(rec.snapshot||{}));snap.areaEffect=true;
+            if(L.type&&snap.components)Object.keys(snap.components).forEach(function(k){snap.components[k].type=L.type;});
+            var c=JSON.parse(JSON.stringify(ctx||{}));c.phaseScope=rec.id;c.areaResolutionId=nextResolutionId(rec.id+':layer'+i);
+            rec.affected=rec.affected||{};rec.affected[token.id]=true;
+            try{
+                if(typeof AD5Phases!=='undefined'&&AD5Phases.enqueueBoundary)AD5Phases.enqueueBoundary(snap,L.phase,token.id,'Слой: '+L.name,rec.id,rec.rules,c);
+                else areaApi().trigger(snap,L.phase,token.id,'Слой: '+L.name,c);
+                n++;
+            }catch(e){tell(rec.owner,'<b>'+escape(rec.name)+'</b> · '+escape(L.name)+': '+escape(e.message||e));}
+        });
+        return n>0;
+    }
+    function destroyLayer(rec,reason){
+        var L=(rec.layers||[]).filter(function(x){return x.intact;})[0];if(!L)return false;
+        L.intact=false;
+        var left=rec.layers.filter(function(x){return x.intact;});
+        if(left.length)rec.rules.entry=left[0].phase;
+        sendChat('Области','<b>'+escape(rec.name||'Стена')+'</b>: слой «'+escape(L.name)+'» разрушен'+(reason?' ('+escape(reason)+')':'')+'. '+(left.length?'Осталось '+layerStatus(rec)+'.':'Стена исчезла.'),null,{noarchive:true});
+        if(!left.length){endPersistent(rec,getAreaPath(rec.id,rec));return true;}
+        var b=rec.brick&&getObj('graphic',rec.brick);if(b)b.set({name:(rec.name||'Стена')+' · '+left[0].name});
+        var btn='<b>'+escape(rec.name||'Стена')+'</b>: следующий слой — «'+escape(left[0].name)+'».'+layerButton(rec);tell(rec.owner,btn);if(!playerIsGM(rec.owner))gmPrompt(btn);
+        return true;
+    }
+    function layerHit(rec,token,info){
+        if(token){var max=Number(token.get('bar1_max'))||999;token.set({bar1_value:max});}
+        var L=(rec.layers||[]).filter(function(x){return x.intact;})[0];if(!L||!L.destroy)return false;
+        var ok=false,why='',name=normalizeUserText(info.name||'');
+        if(L.destroy.type){
+            var want=normalizeUserText(L.destroy.type);
+            (info.rows||[]).forEach(function(r){if(!ok&&normalizeUserText(r.type)===want&&Number(r.amount)>=L.destroy.min){ok=true;why=r.amount+' '+r.type;}});
+        }else if(L.destroy.spells){
+            L.destroy.spells.forEach(function(sp){var n=normalizeUserText(sp);if(!ok&&n&&(name===n||name.indexOf(n)>=0)){ok=true;why=info.name;}});
+        }
+        if(ok)destroyLayer(rec,why);
+        return ok;
+    }
+    function layerCommand(recId,pid){
+        var rec=persistentDb()[String(recId||'')];if(!rec||!rec.layers)throw new Error('Многослойная стена не найдена.');
+        if(!playerIsGM(pid)&&pid!==rec.owner)throw new Error('Снять слой может ГМ или заклинатель.');
+        destroyLayer(rec,'вручную');
+    }
+    function createHalo(rec,path,spec){
+        var px=feetToPx(rec.page,spec.feet),circle=rec.shape==='circle',w=rec.w+2*px,h=circle?w:rec.h+2*px;
+        var strip=createAreaPath(rec.page,circle?'circle':'square',w,h,pathLeft(path),pathTop(path),circle?0:pathRotation(path),'','#ffcc00',2);if(!strip)throw new Error('не удалось создать зону.');
+        var rules=parsePersistentRules('ВХОД: '+spec.body+'\nОБЛН: '+spec.body),snap=JSON.parse(JSON.stringify(rec.snapshot||{}));
+        if(spec.save&&snap.save)snap.save.ability=spec.save;
+        try{validatePersistentRules(snap,rules);}catch(e){try{strip.remove();}catch(ignore){}throw e;}
+        var z=JSON.parse(JSON.stringify(rec));
+        ['ringPx','layers','brick','breach','projectileWall','moveCost','solidRingPath','wallTouch','panelGroup','panelIndex','panelTotal','ejectPending','halo','driftFeet','antimagic','sideStrip'].forEach(function(k){delete z[k];});
+        z.id=strip.id;z.pathType=pathObjectType(strip);z.shape=circle?'circle':'square';z.w=w;z.h=h;z.environmentType='';z.ignoreCover=true;z.coverageFrozen=true;
+        z.name=(rec.name||'Стена')+' — сияние';z.rules=rules;z.snapshot=snap;z.moveProgress={};z.affected={};z.occupancy={};z.boundarySeen={};z.haloOf=rec.id;z.excludeSource=true;z.fixedGeometry=true;
+        persistentDb()[strip.id]=z;stylePersistentPath(strip);strip.set({stroke:'#ffcc00',stroke_width:2});seedMembership(z,strip);rec.halo=strip.id;
+        return z;
     }
     // Cloudkill/Incendiary Cloud: at the start of the caster's turn the area moves N ft away.
     function driftAreas(page,turnToken){
@@ -2125,6 +2278,8 @@ var AD5Areas=(function(){
         if(!rec||!phase||!token)return false;
         if(rec.snapshot)rec.snapshot.areaEffect=true;
         if(rec.page!==playerPageId()||token.get('_pageid')!==rec.page||!combatToken(token,rec.page))return false;
+        if(rec.excludeSource&&String(token.id)===String(rec.source||''))return false;
+        if(rec.layers&&label==='ВХОД')return triggerLayers(rec,token,movementContext);
         movementContext=movementContext&&typeof movementContext==='object'?movementContext:{};
         // Direct KAST/turn/source-phase loops still iterate every physical area.
         // Resolve the non-stacking winner here so only the strongest overlapping
@@ -2834,6 +2989,7 @@ var AD5Areas=(function(){
             else if(sub==='add')addGroupArea(args[2],msg.playerid);
             else if(sub==='eject')ejectCommand(args[2],args[3],args[4],msg.playerid);
             else if(sub==='brick-image')brickImageCommand(msg);
+            else if(sub==='layer')layerCommand(args[2],msg.playerid);
             else if(sub==='cancel-reflection')cancelReflected(args[2],msg.playerid);
             else if(sub==='cancel'||sub==='remove')cancel(args[2],msg.playerid);
             else if(sub==='find')findLegacy(msg,args);
