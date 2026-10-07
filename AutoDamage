@@ -48,7 +48,7 @@ var AD5Background = (function(){
     return {put:put,isReady:function(){return ready;}};
 }());
 /*
-AutoDamage 4.3.156 / NPC Forge RU 2.7.4 — «шепот звезд».
+AutoDamage 4.3.157 / NPC Forge RU 2.7.4 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Обычная атака игрока -> Target AD5 на карте -> штатные запросы преимущества/помехи/доп. урона Roll20 -> бросок -> урон и крит. NPC/Transform сохраняют штатный Target Roll20. AutoFront заранее держит боевые токены на переднем плане. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -72,6 +72,7 @@ hp листа используется однократно как началь�
 Поле «Описание» способности является источником исходов спасброска. Элементы разделяются запятыми: ПРВ: ... для провала, УСП: ... для успеха. Таймеры и маркеры ведёт отдельный AD5 Effect Turns. Если УСП отсутствует, успешный спас автоматически означает 0 урона и 0 эффектов.
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
+4.3.157: A miss through a wall (Wind Wall, Prismatic Wall layer) is announced in chat with the reason («промах: … — снаряд отклонён: Стена ветра»), closes every pending/deferred target request, and a separate damage roll of the same card within a minute is ignored instead of asking for a target again.
 4.3.156: Prismatic Wall (AD5 Areas 2.27.0): damage reports to a wall token carry per-type amounts (a layer breaks on ≥N damage of its type); an attack-roll spell across an intact «блок заклинания» layer and a ranged weapon attack across a «блок снаряды» layer miss. СЛОЙ/ВОКРУГ mark a spell as mechanical.
 4.3.155: Walls (AD5 Areas 2.26.0): a ranged weapon attack across a «ЗАЩИТА ОТ СНАРЯДОВ» wall (Wind Wall) misses; after damage AD5 tells Areas, which removes a wall panel whose durability token reached 0 HP or was hit by «РАЗРУШАЕТ СТЕНУ» (Disintegrate). Wall directives (ПАНЕЛИ, ВЫТЕСНЕНИЕ, ПРОЧНОСТЬ, ПРИ РАЗРУШЕНИИ, ЗАЩИТА ОТ СНАРЯДОВ, ЦЕНА ДВИЖЕНИЯ) mark a spell as mechanical.
 4.3.154: Spell variants: «ВАРИАНТ: имя» blocks in a description add a «Вариант» query to the attack button (like the slot-level menu); the chosen block is used, with optional «ЦЕЛЬ:» (own target/area) and «ТИП:»/«ТИП2:» (damage types).
@@ -773,7 +774,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.156', diagnostics = [], debug = false;
+    var VERSION = '4.3.157', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -864,7 +865,7 @@ var AD5 = (function () {
         }catch(ошибкаСобытия){record('AD5 События · '+тип+': '+String(ошибкаСобытия&&ошибкаСобытия.message||ошибкаСобытия));}
         return данные;
     }
-    var armed = Object.create(null), pending = Object.create(null), deferred = Object.create(null), resumingTarget = Object.create(null);
+    var armed = Object.create(null), pending = Object.create(null), deferred = Object.create(null), resumingTarget = Object.create(null), wallMisses = Object.create(null);
     var history = Object.create(null), historyKeys = [], sequence = 0;
     function targetMode(){
         // Native Roll20 map targeting. @{target|...} is resolved in the player's
@@ -7574,6 +7575,14 @@ var AD5 = (function () {
                 delete pending[pid];
                 delete deferred[pid];
                 var isPostTargetResume = !!resumingTarget[pid];
+                // 4.3.157: a damage-only roll of an attack that just missed through a wall is ignored.
+                var lastWallMiss=wallMisses[pid];
+                if(lastWallMiss&&!hasAttack&&!context&&!isPostTargetResume&&Date.now()-lastWallMiss.time<60000&&lastWallMiss.name===String(attackName(f)||'')){
+                    delete wallMisses[pid];
+                    reply(pid,'«'+esc(lastWallMiss.name)+'»: урон не применяется — атака не прошла сквозь «'+esc(lastWallMiss.wall)+'».');
+                    return;
+                }
+                if(hasAttack)delete wallMisses[pid];
                 // In reliable prompt-menu mode a fresh single-target ability
                 // MUST stop before any target resolution. Old armed targets and
                 // stale ad5target fields are deliberately discarded. Only the
@@ -7900,10 +7909,13 @@ var AD5 = (function () {
                             var windWall=null;try{windWall=AD5Areas.projectileWallFor(sourceAttack.token,t.token,wallKind);}catch(ignoreWind){}
                             if(windWall){
                                 событиеAD5('ПРОМАХ',данныеСобытияАтаки({итогАтаки:r.total,натуральныйБросок:die,крит:false,концентрацияId:concentrationId||null}));
-                                sendChat('шепот звезд',(wallKind==='spell'?'заклинание не проходит — ':'снаряд отклонён — ')+windWall.name);
-                                if(context)multiResult(context.batch,context.tid,'снаряд отклонён');
+                                sendChat('шепот звезд','промах: '+esc(name)+' → '+esc(t.token.get('name')||'цель')+' — '+(wallKind==='spell'?'заклинание не проходит сквозь':'снаряд отклонён:')+' '+esc(windWall.name));
+                                if(context)multiResult(context.batch,context.tid,'промах — '+windWall.name);
+                                // The attack is finished: no target request stays open, and a separate damage roll of this
+                                // card is not applied (and does not ask for a target again).
+                                delete armed[pid];delete deferred[pid];delete pending[pid];
+                                wallMisses[pid]={name:String(name||''),wall:String(windWall.name||''),time:Date.now()};
                                 gm('<b>'+esc(name)+'</b> → '+esc(t.token.get('name')||t.token.id)+'<br><b>'+esc(windWall.name)+'</b>: '+(wallKind==='spell'?'заклинание':'дальняя атака оружием')+' сквозь стену — автоматический промах.');
-                                if(targetMode()==='selected'){delete armed[pid];delete deferred[pid];delete pending[pid];}
                                 return;
                             }
                         }
