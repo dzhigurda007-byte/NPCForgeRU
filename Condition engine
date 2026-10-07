@@ -3,7 +3,11 @@ if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine) {
     log('AD5ConditionEngine: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Condition Engine 1.2.12
+ * AD5 Condition Engine 1.2.13
+ * 1.2.13: death and dying for player characters — 0 HP → unconscious + prone + death saves
+ *         (button at turn start, !ad5cond deathsave), damage at 0 HP = failure (crit = 2), damage
+ *         ≥ max HP = instant death, healing wakes, 3 successes = stable; sheet checkboxes synced;
+ *         Death Ward («защита от смерти»), stabilize/revive (spells or !ad5cond stabilize|revive|kill).
  * 1.2.12: standard actions Dodge («Уклонение»: attacks against it at disadvantage, DEX saves at
  *         advantage, unless incapacitated or speed 0) and Disengage («Отход»); !ad5cond dodge|disengage
  *         and token actions; both end at the start of the creature's next turn.
@@ -41,7 +45,7 @@ if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine) {
  */
 var AD5ConditionEngine=(function(){
     'use strict';
-    var VERSION='1.2.12',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
+    var VERSION='1.2.13',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
     var MARKERS={
         blinded:'bleeding-eye',charmed:'chained-heart',deafened:'half-haze',frightened:'screaming',
         grappled:'grab',incapacitated:'broken-shield',no_reactions:'interdiction',invisible:'ninja-mask',paralyzed:'padlock',
@@ -514,6 +518,101 @@ var AD5ConditionEngine=(function(){
         var text=key==='dodging'?'уклоняется: атаки по нему с помехой, спасброски Ловкости с преимуществом до начала его следующего хода.':'отходит: его перемещение не провоцирует атак до начала его следующего хода.';
         sendChat(SCRIPT,'<b>'+esc(tokenName(token))+'</b> '+text);
     }
+    // ===== 1.2.13: Death and dying (PHB 2014) — player characters only =====
+    // NPCs keep the existing «0 HP = dead» behaviour. State per PC token:
+    // {succ,fail,stable,dead}. Sheet checkboxes deathsave_succ1..3/fail1..3 mirror it.
+    function dyingRoot(){var r=root();r.dying=r.dying&&typeof r.dying==='object'?r.dying:{};return r.dying;}
+    function pcToken(t){return isToken(t)&&!!representedId(t)&&!npcToken(t);}
+    function dyingState(t){return isToken(t)?(dyingRoot()[t.id]||null):null;}
+    function setAttrValue(cid,name,value){var a=attr(cid,name);if(a){if(String(a.get('current'))!==String(value))a.set('current',value);}else createObj('attribute',{characterid:cid,name:name,current:String(value)});}
+    function syncDeathSaves(t,s){
+        var cid=representedId(t);if(!cid)return;s=s||{succ:0,fail:0};
+        for(var i=1;i<=3;i++){setAttrValue(cid,'deathsave_succ'+i,s.succ>=i?'on':'0');setAttrValue(cid,'deathsave_fail'+i,s.fail>=i?'on':'0');}
+    }
+    function setPcHp(t,value){var cid=representedId(t),hp=cid&&attr(cid,'hp');if(hp)hp.set('current',value);t.set('bar1_value',value);if(typeof AD5HealthView!=='undefined'&&AD5HealthView.update)AD5HealthView.update(t);}
+    function effectTurnsApply(t,text,ctx){try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&AD5EffectTurns.applyCondition)AD5EffectTurns.applyCondition(t,text,ctx||{});}catch(e){gm('Умирание: '+esc(e.message||e));}}
+    function effectTurnsRemove(t,key){try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&AD5EffectTurns.removeCondition)AD5EffectTurns.removeCondition(t,key);}catch(ignore){}}
+    function deathLine(s){return 'успехи '+s.succ+'/3, провалы '+s.fail+'/3'+(s.stable?' · стабилизирован':'');}
+    function becomeDying(t,reason){
+        var s={succ:0,fail:0,stable:false,dead:false};dyingRoot()[t.id]=s;syncDeathSaves(t,s);
+        setStatusMarker(t,MARKERS.death,false);
+        effectTurnsApply(t,'без сознания, сбит с ног',{actionName:'Умирание'});
+        sendChat(SCRIPT,'<b>'+esc(tokenName(t))+'</b> падает без сознания'+(reason?' ('+esc(reason)+')':'')+'. Спасброски от смерти — в начале его хода.');
+        return s;
+    }
+    function killToken(t,reason){
+        var s=dyingRoot()[t.id]||{succ:0,fail:0};s.dead=true;s.stable=false;dyingRoot()[t.id]=s;
+        if(pcToken(t))syncDeathSaves(t,{succ:s.succ,fail:3});
+        setStatusMarker(t,MARKERS.death,true);
+        if(pcToken(t))setPcHp(t,0);else t.set('bar1_value',0);
+        sendChat(SCRIPT,'<b>'+esc(tokenName(t))+'</b> погибает'+(reason?' ('+esc(reason)+')':'')+'.');
+    }
+    function recoverFromDying(t,why){
+        var s=dyingRoot()[t.id];if(!s)return false;delete dyingRoot()[t.id];syncDeathSaves(t,{succ:0,fail:0});
+        setStatusMarker(t,MARKERS.death,false);effectTurnsRemove(t,'unconscious');
+        sendChat(SCRIPT,'<b>'+esc(tokenName(t))+'</b> приходит в себя'+(why?' ('+esc(why)+')':'')+'.');return true;
+    }
+    function stabilizeToken(t,why){
+        if(!pcToken(t))return 'не персонаж игрока';var s=dyingState(t);
+        if(!s||s.dead)return s&&s.dead?'уже мёртв':'не умирает';
+        s.stable=true;s.succ=0;s.fail=0;syncDeathSaves(t,s);
+        sendChat(SCRIPT,'<b>'+esc(tokenName(t))+'</b> стабилизирован'+(why?' ('+esc(why)+')':'')+': спасброски от смерти больше не нужны.');return 'стабилизирован';
+    }
+    function reviveToken(t,amount,why){
+        var s=dyingState(t);if(!(s&&s.dead)&&!hasMarker(t,MARKERS.death))return 'не мёртв';
+        delete dyingRoot()[t.id];delete root().deathByExhaustion[t.id];syncDeathSaves(t,{succ:0,fail:0});setStatusMarker(t,MARKERS.death,false);effectTurnsRemove(t,'unconscious');
+        var hp=Math.max(1,Number(amount)||1);if(pcToken(t))setPcHp(t,hp);else t.set('bar1_value',hp);
+        sendChat(SCRIPT,'<b>'+esc(tokenName(t))+'</b> возвращается к жизни с '+hp+' хит'+(hp===1?'ом':'ами')+(why?' ('+esc(why)+')':'')+'.');return 'возвращён к жизни';
+    }
+    // Called by AD5 before HP is written: Death Ward («защита от смерти»).
+    function adjustHp(t,ctx){
+        ctx=ctx||{};var next=Number(ctx.next),before=Number(ctx.before);
+        if(isToken(t)&&before>0&&next<=0&&Number(ctx.damage)>0&&has(t,'death_ward')){
+            effectTurnsRemove(t,'death_ward');
+            sendChat(SCRIPT,'<b>'+esc(tokenName(t))+'</b>: Защита от смерти — хиты опускаются до 1 вместо 0.');
+            return {next:1,warded:true};
+        }
+        return {next:next,warded:false};
+    }
+    // Called by AD5 after HP is written.
+    function afterHp(t,ctx){
+        if(!pcToken(t))return;ctx=ctx||{};
+        var before=Number(ctx.before),next=Number(ctx.next),damage=Math.max(0,Number(ctx.damage)||0),max=Math.max(1,Number(ctx.max)||1),s=dyingState(t);
+        if(next>0){if(s&&!s.dead)recoverFromDying(t,'восстановлены хиты');return;}
+        if(s&&s.dead)return;
+        if(before>0){
+            if(damage-before>=max){killToken(t,'урон после 0 хитов не меньше максимума хитов');return;}
+            becomeDying(t);return;
+        }
+        if(damage<=0)return;
+        if(!s)s=becomeDying(t);
+        if(damage>=max){killToken(t,'урон не меньше максимума хитов');return;}
+        s.stable=false;s.fail+=ctx.critical?2:1;syncDeathSaves(t,s);
+        if(s.fail>=3){killToken(t,'третий провал спасброска от смерти');return;}
+        sendChat(SCRIPT,'<b>'+esc(tokenName(t))+'</b> получает урон без сознания: '+(ctx.critical?'два провала':'провал')+' спасброска от смерти ('+deathLine(s)+').');
+    }
+    function deathSave(t,pid){
+        if(!pcToken(t))throw new Error('Спасброски от смерти — только у персонажей игроков.');
+        var s=dyingState(t);if(!s||s.dead)throw new Error(tokenName(t)+' не умирает.');if(s.stable)throw new Error(tokenName(t)+' уже стабилизирован.');
+        var d=randomInteger(20),txt;
+        if(d===20){setPcHp(t,1);recoverFromDying(t,'натуральная 20 на спасброске от смерти');return;}
+        if(d===1){s.fail+=2;txt='натуральная 1 — два провала';}
+        else if(d>=10){s.succ+=1;txt='успех';}else{s.fail+=1;txt='провал';}
+        syncDeathSaves(t,s);
+        sendChat(SCRIPT,'<b>'+esc(tokenName(t))+'</b>: спасбросок от смерти d20 = <b>'+d+'</b> — '+txt+' ('+deathLine(s)+').');
+        if(s.fail>=3){killToken(t,'три провала спасбросков от смерти');return;}
+        if(s.succ>=3){stabilizeToken(t,'три успеха');}
+    }
+    var lastDeathPrompt='';
+    function promptDeathSave(){
+        try{
+            var rows=JSON.parse(Campaign().get('turnorder')||'[]')||[],row=rows[0],t=row&&row.id&&row.id!=='-1'?getObj('graphic',row.id):null;if(!t)return;
+            var s=dyingState(t);if(!s||s.dead||s.stable||!pcToken(t))return;
+            var key=t.id+'|'+JSON.stringify(rows.map(function(r){return r.id;}));if(key===lastDeathPrompt)return;lastDeathPrompt=key;
+            var html='<b>'+esc(tokenName(t))+'</b> умирает ('+deathLine(s)+'). '+btn('Спасбросок от смерти','!ad5cond deathsave '+t.id);
+            if(!whisperControllers(t,html))gm(html);else gm(html);
+        }catch(ignore){}
+    }
     function selectedTokens(msg){return (msg.selected||[]).filter(function(x){return x._type==='graphic';}).map(function(x){return getObj('graphic',x._id);}).filter(isToken);}
     function statusLine(t){var ex=exhaustionLevel(t),a=attackRule(t,t),s=saveRule(t,'constitution'),m=movementRule(t,30),act=canAct(t),gs=grapplesOf(t),gtext=gs.length?gs.map(function(x){var g=getObj('graphic',String(x.source.sourceToken||''));return tokenName(g);}).join(', '):'нет';return '<b>'+esc(t.get('name')||t.id)+'</b>: истощение '+ex+'; действие '+(act.allowed?'можно':'НЕЛЬЗЯ ['+esc(act.reasons.join(', '))+']')+'; save '+esc(s.mode)+(s.autoFail?' автопровал':'')+'; тестовая скорость 30 → '+esc(m.effective)+'; захваты: '+esc(gtext)+'.';}
     function command(msg){
@@ -535,15 +634,20 @@ var AD5ConditionEngine=(function(){
                 if(!canControl(actor,msg.playerid))throw new Error('Вы не управляете этим токеном.');
                 standardAction(actor,dodge?'dodging':'disengaging');return;
             }
+            if(sub==='deathsave'||sub==='спасбросок-смерти'){var dt=a[2]?getObj('graphic',String(a[2])):tokens[0];if(!isToken(dt))throw new Error('Формат: !ad5cond deathsave TOKEN_ID');if(!canControl(dt,msg.playerid))throw new Error('Вы не управляете этим токеном.');deathSave(dt,msg.playerid);return;}
+            if(sub==='stabilize'||sub==='стабилизировать'){if(!playerIsGM(msg.playerid))throw new Error('Только GM.');if(!tokens.length)throw new Error('Выделите токен.');tokens.forEach(function(t){gm(esc(tokenName(t))+': '+esc(stabilizeToken(t,'GM')));});return;}
+            if(sub==='kill'||sub==='убить'){if(!playerIsGM(msg.playerid))throw new Error('Только GM.');if(!tokens.length)throw new Error('Выделите токен.');tokens.forEach(function(t){killToken(t,'GM');});return;}
+            if(sub==='revive'||sub==='оживить'){if(!playerIsGM(msg.playerid))throw new Error('Только GM.');if(!tokens.length)throw new Error('Выделите токен.');tokens.forEach(function(t){gm(esc(tokenName(t))+': '+esc(reviveToken(t,Number(a[2])||1,'GM')));});return;}
             if(sub==='exhaustion'||sub==='истощение'){
                 if(!playerIsGM(msg.playerid))throw new Error('Только GM.');if(!tokens.length)throw new Error('Выделите токен.');var raw=String(a[2]||'').trim();if(!raw)throw new Error('Формат: !ad5cond exhaustion +1 | -1 | set N | N');var setMode=norm(raw)==='set';var val=setMode?Number(a[3]):Number(raw);
                 tokens.forEach(function(t){var next=setMode?val:(/^[+-]/.test(raw)?exhaustionLevel(t)+val:val);setExhaustion(t,next);sendChat(SCRIPT,'/w gm '+esc(t.get('name')||t.id)+': истощение → <b>'+exhaustionLevel(t)+'</b>.',null,{noarchive:true});});return;
             }
-            throw new Error('Команды: status, sync, grapple, shove-prone, shove-push, escape, release, pin, dodge, disengage, exhaustion +1|-1|set N, ping.');
+            throw new Error('Команды: status, sync, grapple, shove-prone, shove-push, escape, release, pin, dodge, disengage, deathsave, stabilize, revive [N], kill, exhaustion +1|-1|set N, ping.');
         }catch(e){sendChat(SCRIPT,'/w "'+String(msg.who||'gm').replace(/"/g,'')+'" <b>'+SCRIPT+':</b> '+esc(e.message||e),null,{noarchive:true});}
     }
 
     on('chat:message',command);
+    on('change:campaign:turnorder',function(){setTimeout(promptDeathSave,0);});
     on('add:graphic',function(t){if(isToken(t))setTimeout(function(){syncToken(t);scheduleRelationshipCleanup();},0);});
     on('change:graphic',function(t,prev){
         if(!isToken(t))return;
@@ -561,7 +665,7 @@ var AD5ConditionEngine=(function(){
     on('change:attribute',function(a){var name=String(a&&a.get&&a.get('name')||'').toLowerCase(),cid=String(a&&a.get&&a.get('_characterid')||'');if(name==='exhaustion_level'||name==='hp')setTimeout(function(){syncCharacter(cid);scheduleRelationshipCleanup();},0);});
     on('ready',function(){root();cleanupContests();ensureContestMacros();registerMovementHook();setTimeout(function(){registerMovementHook();var startupTokens=allTokens();startupTokens.forEach(syncToken);normalizeExistingGrapples();var seenEscape={},neededEscape={};startupTokens.forEach(function(t){var cid=representedId(t);if(!cid)return;seenEscape[cid]=true;if(grapplesOf(t).length>0)neededEscape[cid]=true;});Object.keys(seenEscape).forEach(function(cid){syncEscapeActionForCharacter(cid,!!neededEscape[cid]);});setTimeout(cleanupRelationships,75);},500);sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' '+VERSION+'</b> запущен. Схвачен/Сбит с ног — условные состояния без таймера; «Встать» снимает Prone, «Освободиться» запускает повторное соревнование. Схваченная цель следует за хватающим и удерживается на расстоянии 5 фт, сохраняя сторону относительно хватающего; её перенос не расходует собственную скорость и не вызывает АОО. Для проверок характеристик nat 1/20 не являются авто-провалом/успехом. Временный эффект «Реакции 0» блокирует только реакции; отдельного запрета действий/движения не добавлено.',null,{noarchive:true});});
 
-    return {version:VERSION,has:has,entry:conditionEntry,source:sourceToken,rangeFeet:rangeFeet,exhaustionLevel:exhaustionLevel,setExhaustion:setExhaustion,attackRule:attackRule,saveRule:saveRule,abilityCheckRule:abilityCheckRule,damageDefense:damageDefense,movementRule:movementRule,canAct:canAct,canReact:canReact,effectiveHpMax:effectiveHpMax,syncToken:syncToken,syncCharacter:syncCharacter,startContest:startContest,contestRoll:contestRoll,grapplesOf:grapplesOf,grappledTargetsOf:grappledTargetsOf,releaseGrapple:releaseGrapple,standUp:standUp,cleanupRelationships:cleanupRelationships,registerMovementHook:registerMovementHook,skillBonus:skillBonus,normalizeGrapplePosition:normalizeGrapplePosition,
+    return {dyingState:dyingState,adjustHp:adjustHp,afterHp:afterHp,stabilize:stabilizeToken,revive:reviveToken,kill:killToken,deathSave:deathSave,version:VERSION,has:has,entry:conditionEntry,source:sourceToken,rangeFeet:rangeFeet,exhaustionLevel:exhaustionLevel,setExhaustion:setExhaustion,attackRule:attackRule,saveRule:saveRule,abilityCheckRule:abilityCheckRule,damageDefense:damageDefense,movementRule:movementRule,canAct:canAct,canReact:canReact,effectiveHpMax:effectiveHpMax,syncToken:syncToken,syncCharacter:syncCharacter,startContest:startContest,contestRoll:contestRoll,grapplesOf:grapplesOf,grappledTargetsOf:grappledTargetsOf,releaseGrapple:releaseGrapple,standUp:standUp,cleanupRelationships:cleanupRelationships,registerMovementHook:registerMovementHook,skillBonus:skillBonus,normalizeGrapplePosition:normalizeGrapplePosition,
         _test:{clampLevel:clampLevel,markers:MARKERS,labels:LABELS,sizeRankFromText:sizeRankFromText,contestType:contestType,rollAbilityCheck:rollAbilityCheck,skillBonus:skillBonus,effectCheckModifier:effectCheckModifier,grappleContactPosition:grappleContactPosition,normalizeGrapplePosition:normalizeGrapplePosition}};
 }());
 }

@@ -4,7 +4,7 @@ if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
 } else {
 /*
 AD5 Effect Turns 1.6.4
-1.6.4: damage defenses on one token — «сопр ТИП[/ТИП] [N%] ходы», «сопр все», «имм ТИП» (strongest wins, no stacking with zones/auras); «охранная связь» (Warding Bond: the effect's source takes the same typeless damage); cleansing items «снимает СОСТОЯНИЕ[/…]», «снимает проклятие», «снимает истощение N», «рассеивает N» (Dispel Magic: spell effects ≤N end, higher need a check vs 10+level; dispelled concentration spells end). Effect sources now record spell and spellLevel.
+1.6.4: damage defenses on one token — «сопр ТИП[/ТИП] [N%] ходы», «сопр все», «имм ТИП» (strongest wins, no stacking with zones/auras); «охранная связь» (Warding Bond: the effect's source takes the same typeless damage); cleansing items «снимает СОСТОЯНИЕ[/…]», «снимает проклятие», «снимает истощение N», «рассеивает N» (Dispel Magic: spell effects ≤N end, higher need a check vs 10+level; dispelled concentration spells end). Effect sources now record spell and spellLevel. «стабилизирует», «возвращает к жизни N» and the «защита от смерти» condition for death and dying.
 1.6.3: standard actions «Уклонение» (marker all-for-one) and «Отход» (marker flying-flag) as positive 1-turn conditions.
 Companion module for AD5 4.3.9+. Adds scoped ПАСС modifiers and concentration-aura owner filtering for Areas 2.17.2+.
 1.3.0: lifecycle conditions: Prone and Grappled are never turn-counted; Grappler Pin Restrained is indefinite until its parent grapple ends. Existing active records are migrated on ready.
@@ -115,7 +115,9 @@ var AD5EffectTurns = (function () {
         dodging:{marker:'all-for-one',label:'Уклонение',aliases:['уклонение','уклоняется','dodge','dodging']},
         disengaging:{marker:'flying-flag',label:'Отход',aliases:['отход','отходит','disengage','disengaging']},
         // 1.6.4: Warding Bond — the effect's source token takes the same damage as its bearer.
-        warding_bond:{marker:'three-leaves',label:'Охранная связь',aliases:['охранная связь','warding bond','связь урона']}
+        warding_bond:{marker:'three-leaves',label:'Охранная связь',aliases:['охранная связь','warding bond','связь урона']},
+        // Death Ward: first drop to 0 HP from damage leaves 1 HP instead (Condition Engine).
+        death_ward:{marker:'trophy',label:'Защита от смерти',aliases:['защита от смерти','death ward']}
     };
     var ALIAS={};
 
@@ -578,6 +580,8 @@ var AD5EffectTurns = (function () {
     //   a spellcasting-ability check vs DC 10 + level; a dispelled concentration spell ends.
     function cleanseSpec(item){
         var text=matchNorm(item),m;
+        if(/^стабилизирует$/.test(text))return {mode:'stabilize',label:'Стабилизация'};
+        if((m=/^(?:возвращает к жизни|оживляет)(?:\s+(\d{1,3}))?$/.exec(text)))return {mode:'revive',amount:m[1]?Number(m[1]):1,label:'Возвращение к жизни'};
         if((m=/^рассеивает(?:\s+(\d))?$/.exec(text)))return {mode:'dispel',level:m[1]?Number(m[1]):3,label:'Рассеивание '+(m[1]||3)};
         if(!(m=/^снимает\s+(.+)$/.exec(text)))return null;
         var body=m[1];
@@ -610,12 +614,14 @@ var AD5EffectTurns = (function () {
             }
         });
         if(spec.mode==='exhaustion')side.exhaustion=spec.amount;
+        if(spec.mode==='stabilize'||spec.mode==='revive'){side.life={mode:spec.mode,amount:spec.amount||1};return {text:spec.label,side:side};}
         var text=spec.label+': '+(removed.length?removed.join(', '):(spec.mode==='exhaustion'?'применено':'нечего снимать'))+(kept.length?'; не рассеяно: '+kept.join(', '):'');
         return {text:text,side:side};
     }
     function mergeCleanseSide(tx,side){
         tx.cleanse=tx.cleanse||{exhaustion:0,endConcentration:[]};
         tx.cleanse.exhaustion+=side.exhaustion||0;
+        if(side.life)tx.cleanse.life=side.life;
         (side.endConcentration||[]).forEach(function(c){if(tx.cleanse.endConcentration.indexOf(c)<0)tx.cleanse.endConcentration.push(c);});
     }
     function parseEffect(item){
@@ -753,7 +759,7 @@ var AD5EffectTurns = (function () {
             applied.push(after.effects[e.key]);
         });
         if(conditionalProfile&&!applied.length)добавитьУсловныйЯкорь(token,after,sourceContext,conditionalProfile,applied);
-        var cleanseEffects=cleanseSide&&cleanseSide.cleanse&&(cleanseSide.cleanse.exhaustion||cleanseSide.cleanse.endConcentration.length);
+        var cleanseEffects=cleanseSide&&cleanseSide.cleanse&&(cleanseSide.cleanse.exhaustion||cleanseSide.cleanse.endConcentration.length||cleanseSide.cleanse.life);
         var changed=!equals(before,after)||!!cleanseEffects;
         return {before:before,after:after,changed:changed,applied:applied,instant:instant,blocked:blocked,present:true,damage:sec.damage,outcome:outcome,cleanse:cleanseSide&&cleanseSide.cleanse||null};
     }
@@ -1290,7 +1296,7 @@ var AD5EffectTurns = (function () {
             if(mergeEffectIntoPlan(token,after,e,conditionImmunities,sourceContext,applied,blocked))consumed.push(item);
         });
         if(conditionalProfile&&!applied.length){добавитьУсловныйЯкорь(token,after,sourceContext,conditionalProfile,applied);consumed=consumed.concat(conditionalProfile.сырой||[]);}
-        var cleanseEffects=cleanseSide&&cleanseSide.cleanse&&(cleanseSide.cleanse.exhaustion||cleanseSide.cleanse.endConcentration.length);
+        var cleanseEffects=cleanseSide&&cleanseSide.cleanse&&(cleanseSide.cleanse.exhaustion||cleanseSide.cleanse.endConcentration.length||cleanseSide.cleanse.life);
         var changed=!equals(before,after)||!!cleanseEffects;
         return {before:before,after:after,changed:changed,applied:applied,instant:instant,blocked:blocked,present:consumed.length>0||!!conditionalProfile,damage:'full',outcome:'direct',consumed:consumed,cleanse:cleanseSide&&cleanseSide.cleanse||null};
     }
@@ -1311,7 +1317,7 @@ var AD5EffectTurns = (function () {
         if(!Number.isSafeInteger(dc)||dc<1||dc>99)return null;
         return {dc:dc,remaining:e.remaining,label:e.label||('Убежище '+dc)};
     }
-    var POSITIVE_CONDITIONS={invisible:true,haste:true,flying:true,concentration:true,shielded:true,blessed:true,sanctuary:true,dodging:true,disengaging:true,warding_bond:true};
+    var POSITIVE_CONDITIONS={invisible:true,haste:true,flying:true,concentration:true,shielded:true,blessed:true,sanctuary:true,dodging:true,disengaging:true,warding_bond:true,death_ward:true};
     function effectIsDebuff(e){
         if(!e)return false;
         if(e.kind==='modifier')return !!(e.modifier&&e.modifier.positive===false);
@@ -1468,6 +1474,9 @@ var AD5EffectTurns = (function () {
         var c=transaction.cleanse;if(!c)return;
         if(c.exhaustion&&typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.setExhaustion==='function'){
             try{AD5ConditionEngine.setExhaustion(token,Math.max(0,AD5ConditionEngine.exhaustionLevel(token)-c.exhaustion));}catch(exErr){sendChat(SCRIPT,'/w gm Истощение: '+esc(exErr.message||exErr));}
+        }
+        if(c.life&&typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine){
+            try{if(c.life.mode==='stabilize')AD5ConditionEngine.stabilize(token,'заклинание');else AD5ConditionEngine.revive(token,c.life.amount,'заклинание');}catch(lifeErr){sendChat(SCRIPT,'/w gm '+esc(lifeErr.message||lifeErr));}
         }
         (c.endConcentration||[]).forEach(function(id){try{if(typeof AD5Concentration!=='undefined'&&AD5Concentration&&typeof AD5Concentration.end==='function')AD5Concentration.end(id,'рассеяно');}catch(ignoreEnd){}});
     }
