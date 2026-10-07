@@ -1,12 +1,14 @@
 /* Disable old Areas before installing this guarded module. */
 if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skipped.');}else{
-/* AD5 Areas 2.25.3 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
+/* AD5 Areas 2.25.4 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
  * 2.25.0: директивы описания — «ДРЕЙФ: 10» (область уходит от заклинателя в начале его хода:
  *          Смертельное облако, Испепеляющее облако), «КОЛЬЦО: 5» (круг действует только полосой
  *          шириной 5 фт у края: Клинковый барьер), «СТОРОНА: 10» (у линии/стены появляется полоса
  *          10 фт со стороны, противоположной заклинателю, с фазами КНЦТ/ОБЛК: Огненная стена),
  *          «ОДИН РАЗ» (несколько областей одного каста — «4×» — задевают существо один раз:
  *          Огненная буря, Метеоритный дождь).
+ * 2.25.4: жар кольца «ВНУТРЬ» — полоса 10 фт от внутренней стороны стены к центру; красная линия
+ *          показывает дальнюю границу жара (как у «НАРУЖУ»), при 20-фт кольце — малый круг в центре.
  * 2.25.3: «СТОРОНА: 10 ОТ ЗАКЛИНАТЕЛЯ | К ЗАКЛИНАТЕЛЮ | ВНУТРЬ | НАРУЖУ» — сторона жара у стены и кольца;
  *          тонкое кольцо (тоньше клетки) задевает существо, чьё пространство его касается.
  * 2.25.2: «ОБЛАСТИ: 10» — до N шаблонов одного каста: кнопка «Новая область k/N», одно «Применить»
@@ -51,7 +53,7 @@ if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skip
  */
 var AD5Areas=(function(){
     'use strict';
-    var VERSION='2.25.3';
+    var VERSION='2.25.4';
     var resolutionSequence=0;
     function nextResolutionId(prefix){return String(prefix||'area')+':'+Date.now().toString(36)+':'+(++resolutionSequence);}
     function root(){
@@ -1673,13 +1675,19 @@ var AD5Areas=(function(){
     // N ft around its outside.
     function createRingSide(rec,path,feet,dir){
         var px=feetToPx(rec.page,feet),rr=rec.w/2,ring=Number(rec.ringPx)||0,outside=dir==='out';
-        var r2=outside?rr+px:Math.max(1,rr-ring),strip=createAreaPath(rec.page,'circle',2*r2,2*r2,pathLeft(path),pathTop(path),0,'','#ff3300',2);
+        // Heat covers a band of N ft from the wall's face. The red outline marks the FAR edge of
+        // the heat: N ft outside the ring, or N ft inward (a small circle at the centre when the
+        // heat reaches it).
+        var hotOuter=outside?rr+px:Math.max(1,rr-ring),hotInner=outside?rr:Math.max(0,hotOuter-px);
+        var drawR=outside?hotOuter:Math.max(hotInner,feetToPx(rec.page,2.5));
+        var r2=hotOuter,strip=createAreaPath(rec.page,'circle',2*drawR,2*drawR,pathLeft(path),pathTop(path),0,'','#ff3300',2);
         if(!strip)throw new Error('не удалось создать зону.');
         var z=JSON.parse(JSON.stringify(rec));
         z.id=strip.id;z.pathType=pathObjectType(strip);z.shape='circle';z.w=2*r2;z.h=2*r2;z.name=(rec.name||'Стена')+' — опасная сторона ('+(outside?'снаружи':'внутри')+')';
         z.rules={phased:true,persistent:true,targetEnd:rec.rules.targetEnd||null,areaEnd:rec.rules.areaEnd||null,source:''};
         z.moveProgress={};z.affected={};z.occupancy={};z.boundarySeen={};z.sideOf=rec.id;delete z.driftFeet;
-        if(outside)z.ringPx=px;else delete z.ringPx;
+        if(hotInner>0)z.ringPx=hotOuter-hotInner;else delete z.ringPx;
+        z.fixedGeometry=true;
         persistentDb()[strip.id]=z;stylePersistentPath(strip);strip.set({stroke:'#ff3300'});seedMembership(z,strip);rec.sideStrip=strip.id;
         return z;
     }
@@ -2549,7 +2557,7 @@ var AD5Areas=(function(){
         var rec=persistentDb()[path.id];if(!rec)return;
         rec.pathType=pathObjectType(path);rec.page=pathPage(path)||rec.page;
         var dims=pathDimensions(path,rec),w=Number(dims.w),h=Number(dims.h);
-        if(Number.isFinite(w)&&w>0)rec.w=w;if(Number.isFinite(h)&&h>0)rec.h=h;
+        if(!rec.fixedGeometry){if(Number.isFinite(w)&&w>0)rec.w=w;if(Number.isFinite(h)&&h>0)rec.h=h;}
         if(rec.terrain){
             findObjs({_type:'graphic',_subtype:'token',_pageid:rec.page,layer:'objects'}).filter(function(t){return combatToken(t,rec.page);}).forEach(function(t){
                 try{setMembership(rec,t,contains(rec,path,t),true);}catch(ignoreTerrainMove){}
