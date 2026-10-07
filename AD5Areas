@@ -1,12 +1,14 @@
 /* Disable old Areas before installing this guarded module. */
 if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skipped.');}else{
-/* AD5 Areas 2.25.1 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
+/* AD5 Areas 2.25.2 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
  * 2.25.0: директивы описания — «ДРЕЙФ: 10» (область уходит от заклинателя в начале его хода:
  *          Смертельное облако, Испепеляющее облако), «КОЛЬЦО: 5» (круг действует только полосой
  *          шириной 5 фт у края: Клинковый барьер), «СТОРОНА: 10» (у линии/стены появляется полоса
  *          10 фт со стороны, противоположной заклинателю, с фазами КНЦТ/ОБЛК: Огненная стена),
  *          «ОДИН РАЗ» (несколько областей одного каста — «4×» — задевают существо один раз:
  *          Огненная буря, Метеоритный дождь).
+ * 2.25.2: «ОБЛАСТИ: 10» — до N шаблонов одного каста: кнопка «Новая область k/N», одно «Применить»
+ *          для всех; каждое существо затрагивается один раз (Огненная буря, Метеоритный дождь).
  * 2.25.1: «АНТИМАГИЯ: 5 | КРУГ-1 | ВСЕ» — Сфера неуязвимости, Антимагическое поле (AD5 проверяет
  *          каждую цель заклинания через AD5Areas.antimagicFor).
  * Обычная область: способность → шаблон → размещение → «Применить».
@@ -47,7 +49,7 @@ if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skip
  */
 var AD5Areas=(function(){
     'use strict';
-    var VERSION='2.25.1';
+    var VERSION='2.25.2';
     var resolutionSequence=0;
     function nextResolutionId(prefix){return String(prefix||'area')+':'+Date.now().toString(36)+':'+(++resolutionSequence);}
     function root(){
@@ -678,11 +680,38 @@ var AD5Areas=(function(){
         try{if(typeof api().setSource==='function')api().setSource(q.id,pid,source.id);}catch(ignoreBindSource){}
         if(q.areaSpec.aura){auraPrompt(q,pid,source.id);return q.id;}
         var path=createTemplate(q,pid,source.id,q.areaOriginToken||null),created=db()[path.id];
+        var groupMax=areaGeometryDirective(q.description,'области');
+        if(groupMax>1&&created)created.group={max:Math.min(50,Math.floor(groupMax)),members:[]};
         var count=q.allArea?'все существа':('до '+q.max+' существ');
         var envLabel=environmentLabel(areaEnvironmentType(q,q.areaSpec));
         var centerToken=q.areaOriginToken&&getObj('graphic',q.areaOriginToken)||source;
         tell(pid,'<b>'+escape(q.name)+'</b><br>Шаблон создан <b>центром на токене</b> <b>'+escape(centerToken.get('name')||centerToken.id)+'</b>: '+escape(q.areaSpec.raw||q.areaSpec.shape)+' · высота <b>'+escape(created&&created.zHeight||6)+' фт</b>'+(created&&created.autoHeight?' <i>(рост заклинателя)</i>':'')+(envLabel?' · окружение <b>'+escape(envLabel)+'</b>':'')+(q.areaSpec.ignoreCover?' · <b>ПОКР</b>':'')+' · '+escape(count)+areaBatchLabel(q)+'.<br><b>Переместите и поверните шаблон на поле.</b><br>[Применить](!ad5-area apply '+path.id+') [Отмена](!ad5-area cancel '+path.id+')');
+        if(created&&created.group)groupControls(created,pid,q);
         return path.id;
+    }
+    // 2.25.2: «ОБЛАСТИ: 10» — up to N templates of one cast (Fire Storm, Meteor Swarm). The player
+    // adds them one by one («Новая область k/N»), places them freely, and one «Применить»
+    // resolves all of them together: every creature inside any of them is affected once.
+    function groupCount(a){return 1+((a.group&&a.group.members)||[]).length;}
+    function groupControls(a,pid,q){
+        var n=groupCount(a),max=a.group.max,name=(q&&q.name)||'Область';
+        tell(pid,'<b>'+escape(name)+'</b>: размещено областей <b>'+n+'/'+max+'</b>. Расставьте шаблоны на поле.<br>'+
+            (n<max?'[Новая область ('+(n+1)+'/'+max+')](!ad5-area add '+a.id+') ':'')+'[Применить все ('+n+')](!ad5-area apply '+a.id+') [Отмена](!ad5-area cancel '+a.id+')');
+    }
+    function groupMemberPaths(a){
+        return ((a.group&&a.group.members)||[]).map(function(m){return getObj(m.pathType,m.id)||getObj('pathv2',m.id)||getObj('path',m.id);}).filter(Boolean);
+    }
+    function removeGroupMembers(a){groupMemberPaths(a).forEach(function(p){try{p.remove();}catch(ignoreRemove){}});if(a.group)a.group.members=[];}
+    function addGroupArea(id,pid){
+        var a=activeOwned(id,pid);if(!a.group)throw new Error('Это заклинание не размещает несколько областей.');
+        if(groupCount(a)>=a.group.max)throw new Error('Уже размещено максимальное число областей: '+a.group.max+'.');
+        var last=groupMemberPaths(a).slice(-1)[0]||getAreaPath(a.id,a);if(!last)throw new Error('Шаблон удалён. Повторите способность.');
+        var path=createAreaPath(a.page,a.shape,a.w,a.h,pathLeft(last)+a.w,pathTop(last),pathRotation(last),pid,'#ff9900',3);
+        if(!path)throw new Error('Не удалось создать шаблон области.');
+        if(typeof toBack==='function')toBack(path);
+        a.group.members.push({id:path.id,pathType:pathObjectType(path)});
+        var q=null;try{q=api().get(a.draft,pid);}catch(ignoreGet){}
+        groupControls(a,pid,q);
     }
     function resolveFixed(id,pid,originTokenId){
         var q=api().get(id,pid);
@@ -796,7 +825,7 @@ var AD5Areas=(function(){
     }
     function defenseDirectiveKind(label){
         var n=normalizeUserText(label||'').replace(/\./g,'').trim();
-        if(/^(?:дрейф|кольцо|сторона|антимагия)$/.test(n))return 'geometry';
+        if(/^(?:дрейф|кольцо|сторона|антимагия|области)$/.test(n))return 'geometry';
         if(/^(?:сопр|сопротивление|resist|resistance)$/.test(n))return 'resistance';
         if(/^(?:имм|иммунитет|immune|immunity)$/.test(n))return 'immunity';
         return 'other';
@@ -808,7 +837,7 @@ var AD5Areas=(function(){
             .replace(/<[^>]*>/g,' ')
             .replace(/&nbsp;|&#160;/gi,' ')
             .replace(/&quot;/gi,'"').replace(/&amp;/gi,'&');
-        var names='КАСТ|НАЧК|НАЧИ|НАЧТ|КНЦИ|КНЦТ|КОНИ|КОНТ|ОКОН|ОСВОБ|ВХОД|ВЫХОД|ОБЛН|ОБЛК|ПАСС|При\\s+входе|Каждый\\s+ход|МУВ|СОПР(?:ОТИВЛЕНИЕ)?|СОПРОТИВЛЕНИЕ|RESIST(?:ANCE)?|ИММ(?:УНИТЕТ)?|ИММУНИТЕТ|IMMUN(?:E|ITY)|ДРЕЙФ|КОЛЬЦО|СТОРОНА|АНТИМАГИЯ';
+        var names='КАСТ|НАЧК|НАЧИ|НАЧТ|КНЦИ|КНЦТ|КОНИ|КОНТ|ОКОН|ОСВОБ|ВХОД|ВЫХОД|ОБЛН|ОБЛК|ПАСС|При\\s+входе|Каждый\\s+ход|МУВ|СОПР(?:ОТИВЛЕНИЕ)?|СОПРОТИВЛЕНИЕ|RESIST(?:ANCE)?|ИММ(?:УНИТЕТ)?|ИММУНИТЕТ|IMMUN(?:E|ITY)|ДРЕЙФ|КОЛЬЦО|СТОРОНА|АНТИМАГИЯ|ОБЛАСТИ';
         var re=new RegExp('(^|[\\n;.])\\s*('+names+')\\s*[:：—–-]\\s*','ig'),m,marks=[];
         while((m=re.exec(text))){
             marks.push({
@@ -2246,6 +2275,7 @@ var AD5Areas=(function(){
         var defensePersistent=hasAreaDamageDefense(q);
         if(explicitPersistent||concentrationPersistent||terrainPersistent||defensePersistent){
             if(Number(q.areaSpec&&q.areaSpec.count)>1)throw new Error('Несколько последовательных постоянных областей пока не поддерживаются.');
+            if(a.group&&a.group.members.length)throw new Error('ОБЛАСТИ: несколько областей работают только у мгновенных заклинаний.');
             if(!a.ignoreCover){var clipped=replaceDraftWithCoverage(a,path);a=clipped.a;path=clipped.path;}
             // Terrain/defense with concentration lasts until concentration ends.
             // Explicit ОБЛ N follows that counter. Without either, keep the footprint
@@ -2256,6 +2286,15 @@ var AD5Areas=(function(){
         if(persistentRules.phased&&persistentRules.persistent)throw new Error('Для ВХОД/ВЫХОД/ОБЛН/ОБЛК/ПАСС и других постоянных фаз укажите в Дистанции «обл» / «обл N» либо используйте концентрацию «кон N».');
         if(persistentRules.move)throw new Error('МУВ работает только у постоянной области. Добавьте к дистанции «обл» или «обл N», например «20 фт круг, обл 3».');
         var collected=collectDetailed(a,path,pid),ids=collected.ids;
+        if(a.group&&a.group.members.length){
+            groupMemberPaths(a).forEach(function(mp){
+                if(pathPage(mp)!==a.page)return;
+                var more=collectDetailed(a,mp,pid);
+                more.ids.forEach(function(tid){if(ids.indexOf(tid)<0){ids.push(tid);if(more.meta[tid])collected.meta[tid]=more.meta[tid];}});
+                (more.blocked||[]).forEach(function(b){collected.blocked.push(b);});
+            });
+            tell(pid,'Областей применено: <b>'+groupCount(a)+'</b>; каждое существо затрагивается один раз.');
+        }
         // 2.25.0: «ОДИН РАЗ» — areas of one cast affect each creature only once.
         if(onceDirective(q.description)&&Number(q.areaSpec&&q.areaSpec.count)>=1){
             var batches=root().batches=root().batches||{},seenAll=root().batchSeen=root().batchSeen||{},bkey=batches[a.draft]||a.draft;
@@ -2299,7 +2338,7 @@ var AD5Areas=(function(){
                 allowEmptyTargets:true,
                 emptyReason:emptyReason
             });
-            var emptyPath=getAreaPath(a.id,a);if(emptyPath)emptyPath.remove();delete db()[a.id];
+            removeGroupMembers(a);var emptyPath=getAreaPath(a.id,a);if(emptyPath)emptyPath.remove();delete db()[a.id];
             launchNextAreaDraft(nextEmptyDraft,pid);
             return;
         }
@@ -2327,7 +2366,7 @@ var AD5Areas=(function(){
             launchNextAreaDraft(nextDraft,pid);
         }
         // Range without "обл" / "обл N" is a one-shot area.
-        var p=getAreaPath(a.id,a);if(p)p.remove();delete db()[a.id];
+        removeGroupMembers(a);var p=getAreaPath(a.id,a);if(p)p.remove();delete db()[a.id];
     }
     function cancelReflected(id,pid){
         var a=activeOwned(id,pid);
@@ -2351,7 +2390,7 @@ var AD5Areas=(function(){
             tell(pid,permanent.kind==='aura'?'Аура снята.':'Постоянная область удалена.');return;
         }
         var a=db()[id];
-        if(a){owned(id,pid);var p=getAreaPath(a.id,a);if(p)p.remove();delete db()[id];tell(pid,'Применение отменено. Эффект не применён.');return;}
+        if(a){owned(id,pid);removeGroupMembers(a);var p=getAreaPath(a.id,a);if(p)p.remove();delete db()[id];tell(pid,'Применение отменено. Эффект не применён.');return;}
         api().cancel(id,pid);
         tell(pid,'Применение отменено. Шаблон ещё не создан, эффект не применён.');
     }
@@ -2431,6 +2470,7 @@ var AD5Areas=(function(){
             else if(sub==='source')source(args[2],msg.playerid,args[3]);
             else if(sub==='aura')auraTarget(args[2],msg.playerid,args[3]);
             else if(sub==='apply')apply(args[2],msg.playerid);
+            else if(sub==='add')addGroupArea(args[2],msg.playerid);
             else if(sub==='cancel-reflection')cancelReflected(args[2],msg.playerid);
             else if(sub==='cancel'||sub==='remove')cancel(args[2],msg.playerid);
             else if(sub==='find')findLegacy(msg,args);
@@ -2496,7 +2536,7 @@ var AD5Areas=(function(){
         });
         return {drafts:draftsRemoved,persistent:persistentRemoved};
     }
-    function areaPathDestroyed(path){delete db()[path.id];var rec=persistentDb()[path.id];if(rec)endPersistent(rec,path,true);}
+    function areaPathDestroyed(path){var draftRec=db()[path.id];if(draftRec&&draftRec.group)removeGroupMembers(draftRec);delete db()[path.id];var rec=persistentDb()[path.id];if(rec)endPersistent(rec,path,true);}
     on('destroy:path',areaPathDestroyed);
     on('destroy:pathv2',areaPathDestroyed);
     on('destroy:graphic',function(token){
