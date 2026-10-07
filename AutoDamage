@@ -48,7 +48,7 @@ var AD5Background = (function(){
     return {put:put,isReady:function(){return ready;}};
 }());
 /*
-AutoDamage 4.3.151 / NPC Forge RU 2.7.4 — «шепот звезд».
+AutoDamage 4.3.152 / NPC Forge RU 2.7.4 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Обычная атака игрока -> Target AD5 на карте -> штатные запросы преимущества/помехи/доп. урона Roll20 -> бросок -> урон и крит. NPC/Transform сохраняют штатный Target Roll20. AutoFront заранее держит боевые токены на переднем плане. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -72,6 +72,7 @@ hp листа используется однократно как началь�
 Поле «Описание» способности является источником исходов спасброска. Элементы разделяются запятыми: ПРВ: ... для провала, УСП: ... для успеха. Таймеры и маркеры ведёт отдельный AD5 Effect Turns. Если УСП отсутствует, успешный спас автоматически означает 0 урона и 0 эффектов.
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
+4.3.152: Antimagic: spells (attack, save or phase) do nothing to a target protected by an Areas «АНТИМАГИЯ:» zone — Globe of Invulnerability (level ≤ N from outside) or Antimagic Field (any spell on or from a creature inside). Area directives АНТИМАГИЯ/ДРЕЙФ/КОЛЬЦО/СТОРОНА make a spell mechanical.
 4.3.151: Damage to a «подчинён МДР15» target triggers its repeated save (Dominate).
 4.3.150: Mirror Image: an attack against a token with «зеркальные образы» may hit a duplicate (d20 6+/8+/11+, AC 10 + DEX); a hit destroys it and the target takes nothing.
 4.3.149: «СЛУЧАЙНО dN: 1 = …; 2 = …» — one roll per target picks a variant: «тип ТИП» retypes Урон1, «нет урона», «повтор N» (N more variants, each a separate damage type), other items are effects (Prismatic Spray).
@@ -768,7 +769,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.151', diagnostics = [], debug = false;
+    var VERSION = '4.3.152', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -1834,6 +1835,7 @@ var AD5 = (function () {
             // (сопр/имм, стабилизирует, макс хиты, без лечения, снимает …).
             /(?:^|[\s,;|])(?:НЕ\s+НИЖЕ\s+1|СНИЖ(?:ЕНИЕ)?\s+МАКС|ВАМП(?:ИРИЗМ)?|ХИТЫ\s*(?:<=|≤|<)\s*\d+)(?=$|[\s,;.:!?%\d])/im.test(AD5Text.mechanics(text))||
             effectTurnsRecognizes(text)||
+            /(?:^|[\n.;])\s*(?:антимагия|дрейф|кольцо|сторона)\s*:/i.test(AD5Text.mechanics(text))||
             /(?:убежище|замедлен(?:ие)?|осквернен(?:ие)?|разлом|отравлен|горение|обморожение)/.test(t)||
             /(?:^|[,;\n])\s*(?:[+-]\s*\d+\s*(?:сил|лов|тел|инт|мдр|хар)|(?:прем|пом)\s*(?:сил|лов|тел|инт|мдр|хар)|(?:атака|кд|урон)\s*[+-]?\s*(?:\d+|\d+[dд]\d+))/.test(t);
     }
@@ -5239,6 +5241,19 @@ var AD5 = (function () {
         if(!active(f,'ad5randomapplied')){var randomPick=randomVariantPlan(f.description!==undefined?f.description:(f.desc||''),p);if(randomPick){f=applyRandomVariant(f,randomPick);p.randomVariantReport=randomPick.report;}}
         var spellTargetText=f.description!==undefined?f.description:(f.desc||'');
         var explicitSpell=!!f.ad5attackrow||!!f.ad5spellprefix||active(f,'ad5directspell')||active(f,'ad5npcspell')||hasPlayerSpellTag(spellTargetText);
+        // 4.3.152: antimagic (Areas «АНТИМАГИЯ:») — Globe of Invulnerability / Antimagic Field.
+        if((explicitSpell||active(f,'ad5isspell'))&&!p.environmental&&typeof AD5Areas!=='undefined'&&AD5Areas&&typeof AD5Areas.antimagicFor==='function'){
+            var amSource=getObj('graphic',String(p.conditionSourceToken||p.sourceToken||'')),amLevel=String(f.ad5castlevel||'').trim()!==''?Number(f.ad5castlevel):(String(f.spelllevel||'').trim()!==''?Number(f.spelllevel)||0:0);
+            var am=null;try{am=AD5Areas.antimagicFor(t.token,amSource,amLevel);}catch(amErr){record('Антимагия: '+(amErr.message||amErr));}
+            if(am){
+                sendChat('шепот звезд','заклинание рассеивается — '+(am.all?'антимагическое поле':'магический барьер'));
+                gm('<b>'+esc(p.name||attackName(f)||'Заклинание')+'</b> → '+esc(t.token.get('name')||t.token.id)+'<br><b>'+esc(am.name||'Антимагия')+'</b>: '+(am.all?(am.sourceInside?'заклинатель внутри антимагического поля':'цель внутри антимагического поля'):'заклинание '+amLevel+' круга извне не действует (до '+am.level+' круга)')+'.');
+                if(p.batch)multiResult(p.batch,t.token.id,'антимагия');
+                if(p.phaseExecution&&typeof AD5Phases!=='undefined'&&AD5Phases.failed)AD5Phases.failed(p,t.token);
+                delete pending[msg.playerid];
+                return;
+            }
+        }
         if(explicitSpell&&typeof AD5Sides!=='undefined'&&AD5Sides&&typeof AD5Sides.targetModeFor==='function'&&typeof AD5Sides.targetAllowed==='function'){
             // 4.3.104: batch/area drafts already resolved target semantics at cast time.
             // Use that authoritative mode here. Re-parsing the mutated per-target
@@ -7822,6 +7837,18 @@ var AD5 = (function () {
                         // against a Paralyzed target within 5 ft automatically hits
                         // unless the kept d20 is a natural 1 and is treated as one
                         // critical hit (never a second/stacked critical on a natural 20).
+                        // 4.3.152: antimagic stops a spell attack before it hits.
+                        if(hasAttack&&(spellMeta||active(f,'ad5isspell')||f.ad5spellprefix||f.ad5attackrow)&&typeof AD5Areas!=='undefined'&&AD5Areas&&typeof AD5Areas.antimagicFor==='function'){
+                            var amLvl=spellMeta&&Number.isFinite(Number(spellMeta.castLevel!==undefined?spellMeta.castLevel:spellMeta.spellLevel))?Number(spellMeta.castLevel!==undefined?spellMeta.castLevel:spellMeta.spellLevel):(String(f.ad5castlevel||'').trim()!==''?Number(f.ad5castlevel):0);
+                            var amHit=null;try{amHit=AD5Areas.antimagicFor(t.token,sourceAttack.token||null,amLvl);}catch(ignoreAm){}
+                            if(amHit){
+                                sendChat('шепот звезд','заклинание рассеивается — '+(amHit.all?'антимагическое поле':'магический барьер'));
+                                if(context)multiResult(context.batch,context.tid,'антимагия');
+                                gm('<b>'+esc(name)+'</b> → '+esc(t.token.get('name')||t.token.id)+'<br><b>'+esc(amHit.name||'Антимагия')+'</b>: '+(amHit.all?(amHit.sourceInside?'заклинатель внутри антимагического поля':'цель внутри антимагического поля'):'заклинание '+amLvl+' круга извне не действует (до '+amHit.level+' круга)')+'.');
+                                if(targetMode()==='selected'){delete armed[pid];delete deferred[pid];delete pending[pid];}
+                                return;
+                            }
+                        }
                         // 4.3.150: Mirror Image — the attack may go to a duplicate instead of the target.
                         var mirror=null;try{if(hasAttack&&typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.mirrorImageAttack==='function')mirror=AD5EffectTurns.mirrorImageAttack(t.token,r.total,die);}catch(mirrorErr){record('Зеркальные образы: '+(mirrorErr.message||mirrorErr));}
                         if(mirror&&mirror.redirected){

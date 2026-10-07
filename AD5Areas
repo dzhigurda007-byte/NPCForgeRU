@@ -1,12 +1,14 @@
 /* Disable old Areas before installing this guarded module. */
 if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skipped.');}else{
-/* AD5 Areas 2.25.0 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
+/* AD5 Areas 2.25.1 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
  * 2.25.0: директивы описания — «ДРЕЙФ: 10» (область уходит от заклинателя в начале его хода:
  *          Смертельное облако, Испепеляющее облако), «КОЛЬЦО: 5» (круг действует только полосой
  *          шириной 5 фт у края: Клинковый барьер), «СТОРОНА: 10» (у линии/стены появляется полоса
  *          10 фт со стороны, противоположной заклинателю, с фазами КНЦТ/ОБЛК: Огненная стена),
  *          «ОДИН РАЗ» (несколько областей одного каста — «4×» — задевают существо один раз:
  *          Огненная буря, Метеоритный дождь).
+ * 2.25.1: «АНТИМАГИЯ: 5 | КРУГ-1 | ВСЕ» — Сфера неуязвимости, Антимагическое поле (AD5 проверяет
+ *          каждую цель заклинания через AD5Areas.antimagicFor).
  * Обычная область: способность → шаблон → размещение → «Применить».
  * Аура: Дистанция «аура N фт» → выбор токена-носителя → штатная Token Aura
  * Roll20 движется вместе с токеном; механика использует тот же фазовый синтаксис.
@@ -45,7 +47,7 @@ if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skip
  */
 var AD5Areas=(function(){
     'use strict';
-    var VERSION='2.25.0';
+    var VERSION='2.25.1';
     var resolutionSequence=0;
     function nextResolutionId(prefix){return String(prefix||'area')+':'+Date.now().toString(36)+':'+(++resolutionSequence);}
     function root(){
@@ -794,7 +796,7 @@ var AD5Areas=(function(){
     }
     function defenseDirectiveKind(label){
         var n=normalizeUserText(label||'').replace(/\./g,'').trim();
-        if(/^(?:дрейф|кольцо|сторона)$/.test(n))return 'geometry';
+        if(/^(?:дрейф|кольцо|сторона|антимагия)$/.test(n))return 'geometry';
         if(/^(?:сопр|сопротивление|resist|resistance)$/.test(n))return 'resistance';
         if(/^(?:имм|иммунитет|immune|immunity)$/.test(n))return 'immunity';
         return 'other';
@@ -806,7 +808,7 @@ var AD5Areas=(function(){
             .replace(/<[^>]*>/g,' ')
             .replace(/&nbsp;|&#160;/gi,' ')
             .replace(/&quot;/gi,'"').replace(/&amp;/gi,'&');
-        var names='КАСТ|НАЧК|НАЧИ|НАЧТ|КНЦИ|КНЦТ|КОНИ|КОНТ|ОКОН|ОСВОБ|ВХОД|ВЫХОД|ОБЛН|ОБЛК|ПАСС|При\\s+входе|Каждый\\s+ход|МУВ|СОПР(?:ОТИВЛЕНИЕ)?|СОПРОТИВЛЕНИЕ|RESIST(?:ANCE)?|ИММ(?:УНИТЕТ)?|ИММУНИТЕТ|IMMUN(?:E|ITY)|ДРЕЙФ|КОЛЬЦО|СТОРОНА';
+        var names='КАСТ|НАЧК|НАЧИ|НАЧТ|КНЦИ|КНЦТ|КОНИ|КОНТ|ОКОН|ОСВОБ|ВХОД|ВЫХОД|ОБЛН|ОБЛК|ПАСС|При\\s+входе|Каждый\\s+ход|МУВ|СОПР(?:ОТИВЛЕНИЕ)?|СОПРОТИВЛЕНИЕ|RESIST(?:ANCE)?|ИММ(?:УНИТЕТ)?|ИММУНИТЕТ|IMMUN(?:E|ITY)|ДРЕЙФ|КОЛЬЦО|СТОРОНА|АНТИМАГИЯ';
         var re=new RegExp('(^|[\\n;.])\\s*('+names+')\\s*[:：—–-]\\s*','ig'),m,marks=[];
         while((m=re.exec(text))){
             marks.push({
@@ -884,6 +886,31 @@ var AD5Areas=(function(){
             if(m)out=Number(m[1].replace(',','.'));
         });
         return out;
+    }
+    // 2.25.1: «АНТИМАГИЯ: 5» (Globe of Invulnerability: spells of level ≤5 cast from outside do
+    // not affect creatures inside), «АНТИМАГИЯ: КРУГ-1» (the cast level minus one),
+    // «АНТИМАГИЯ: ВСЕ» (Antimagic Field: no spell works on or from a creature inside).
+    function antimagicDirective(value,castLevel){
+        var scan=defenseDirectiveMarks(value),out=null;
+        scan.marks.forEach(function(mark,i){
+            if(normalizeUserText(mark.label).replace(/\./g,'').trim()!=='антимагия')return;
+            var body=normalizeUserText(scan.text.slice(mark.bodyStart,i+1<scan.marks.length?scan.marks[i+1].start:scan.text.length)).trim(),m;
+            if(/^(?:все|всё|all)/.test(body))out='all';
+            else if((m=/^круг\s*-\s*(\d)/.exec(body))&&Number.isFinite(Number(castLevel)))out=Math.max(0,Number(castLevel)-Number(m[1]));
+            else if((m=/^(\d)/.exec(body)))out=Number(m[1]);
+        });
+        return out;
+    }
+    function antimagicFor(targetToken,sourceToken,spellLevel){
+        if(!targetToken)return null;var page=String(targetToken.get('_pageid')||''),hit=null;
+        persistentAreas(page).forEach(function(rec){
+            if(hit||rec.antimagic===undefined||rec.antimagic===null)return;var path=getAreaPath(rec.id,rec);if(!path)return;
+            var tin=false,sin=false;try{tin=contains(rec,path,targetToken);}catch(ignoreT){}try{sin=!!sourceToken&&contains(rec,path,sourceToken);}catch(ignoreS){}
+            if(rec.antimagic==='all'){if(tin||sin)hit={name:rec.name,all:true,sourceInside:sin};return;}
+            var lvl=Number(spellLevel);if(!Number.isFinite(lvl))lvl=0;
+            if(tin&&!sin&&lvl<=Number(rec.antimagic))hit={name:rec.name,level:Number(rec.antimagic)};
+        });
+        return hit;
     }
     function onceDirective(value){return /(?:^|[\s;.,])ОДИН\s+РАЗ(?=$|[\s;.,])/i.test(descriptionText(value));}
     function feetToPx(pageId,feet){var page=getObj('page',pageId),unit=Number(page&&page.get('scale_number'))||5;return Number(feet)*70/unit;}
@@ -1547,6 +1574,7 @@ var AD5Areas=(function(){
         if(rec.snapshot)rec.snapshot.targetMode=rec.targetMode;
         if(Number(a.ringPx)>0)rec.ringPx=Number(a.ringPx);
         var driftFeet=areaGeometryDirective(q.description,'дрейф');if(driftFeet>0)rec.driftFeet=driftFeet;
+        var antimagic=antimagicDirective(q.description,q.spellMeta&&(q.spellMeta.castLevel!==undefined?q.spellMeta.castLevel:q.spellMeta.spellLevel));if(antimagic!==null)rec.antimagic=antimagic;
         persistentDb()[a.id]=rec;
         stylePersistentPath(path);
         var sideFeet=areaGeometryDirective(q.description,'сторона');if(sideFeet>0)try{createSideStrip(rec,path,sideFeet);}catch(sideErr){tell(pid,'СТОРОНА: '+escape(sideErr.message||sideErr));}
@@ -1625,6 +1653,7 @@ var AD5Areas=(function(){
             terrain:difficultTerrain(q),damageDefense:damageDefense,duration:duration,remaining:duration,moveProgress:{},affected:{},occupancy:{},boundarySeen:{}
         };
         if(rec.snapshot)rec.snapshot.targetMode=rec.targetMode;
+        var auraAntimagic=antimagicDirective(q.description,q.spellMeta&&(q.spellMeta.castLevel!==undefined?q.spellMeta.castLevel:q.spellMeta.spellLevel));if(auraAntimagic!==null)rec.antimagic=auraAntimagic;
         persistentDb()[rec.id]=rec;
         syncAuraVisual(rec);
         ensureAuraOffAbility(rec);
@@ -2532,7 +2561,7 @@ var AD5Areas=(function(){
             try{bringCombatTokensFront(active);}catch(ignore){}
         }
     });
-    return {version:VERSION,reconcileSides:reconcileSides,ownsPath:function(id){return !!(db()[id]||persistentDb()[id]);},begin:begin,resolveFixed:resolveFixed,removeByConcentration:removeByConcentration,setAreaHeight:setAreaHeight,damageDefenseForToken:damageDefenseForToken,defense:{forToken:damageDefenseForToken,parse:parseAreaDamageDefense,label:damageDefenseLabel},environment:{sync:syncEnvironmentArea,unsync:unsyncEnvironmentArea,type:environmentType},movement:{undo:function(txn){return movementProgressChange(txn,false);},redo:function(txn){return movementProgressChange(txn,true);}},height:{tokenHeightFeet:tokenHeightFeet,areaHeightFeet:areaHeightFeet,verticalContains:verticalContains},_test:{turnTargets:turnTargets,persistentTurnChanged:persistentTurnChanged,setTerrainMarker:setTerrainMarker,casterBaseHeightFeet:casterBaseHeightFeet,resolvedAreaHeight:resolvedAreaHeight,contains:contains,containsAt:containsAt,shapePoints:shapePoints,collectDetailed:collectDetailed,areaExposureForToken:areaExposureForToken,areaEffectOrigin:areaEffectOrigin,lineSourceSign:lineSourceSign,localToWorld:localToWorld,worldToLocal:worldToLocal,coveragePolygon:coveragePolygon,coneCoveragePolygon:coneCoveragePolygon,lineCoveragePolygon:lineCoveragePolygon,replaceDraftWithCoverage:replaceDraftWithCoverage,isJumpgate:isJumpgate,pathV2Points:pathV2Points,pathDimensions:pathDimensions,pathLeft:pathLeft,pathTop:pathTop,sourceToken:sourceToken,characterIsNPC:characterIsNPC,characterIsPlayerControlled:characterIsPlayerControlled,difficultTerrain:difficultTerrain,parseAreaDamageDefense:parseAreaDamageDefense,stripAreaDamageDefenseDirectives:stripAreaDamageDefenseDirectives,damageDefenseForToken:damageDefenseForToken,parsePersistentRules:parsePersistentRules,movementRule:movementRule,combatToken:combatToken,bringCombatTokensFront:bringCombatTokensFront,npcGroupName:npcGroupName,casterTurnMatches:casterTurnMatches,routeEntersArea:routeEntersArea,routeExitsArea:routeExitsArea,routeBoundaryEvents:routeBoundaryEvents,routeInsideDistance:routeInsideDistance,auraAnchorBoundaryEvents:auraAnchorBoundaryEvents,auraShape:auraShape,chooseAuraSlot:chooseAuraSlot,activateAura:activateAura,ensureAuraOffAbility:ensureAuraOffAbility,removeAuraOffAbility:removeAuraOffAbility,getAreaPath:getAreaPath,processBoundaryEvents:processBoundaryEvents,boundaryAllowed:boundaryAllowed,setMembership:setMembership,seedMembership:seedMembership,isConcentrationAuraOwner:isConcentrationAuraOwner,concentrationAuraOwnerProtection:concentrationAuraOwnerProtection,ownerAllowedComponent:ownerAllowedComponent,areaStackKey:areaStackKey,sameAreaStack:sameAreaStack,stackPhasePower:stackPhasePower,compareStackPower:compareStackPower,stackSemanticText:stackSemanticText,stackPhaseSignature:stackPhaseSignature,strongestStackArea:strongestStackArea,stackOccupiedByOther:stackOccupiedByOther,triggerPersistent:triggerPersistent,reconcileTerrainMarker:reconcileTerrainMarker,reconcileTerrainPage:reconcileTerrainPage,terrainMarkerTag:terrainMarkerTag,hasTerrainMarker:hasTerrainMarker}};
+    return {version:VERSION,antimagicFor:antimagicFor,reconcileSides:reconcileSides,ownsPath:function(id){return !!(db()[id]||persistentDb()[id]);},begin:begin,resolveFixed:resolveFixed,removeByConcentration:removeByConcentration,setAreaHeight:setAreaHeight,damageDefenseForToken:damageDefenseForToken,defense:{forToken:damageDefenseForToken,parse:parseAreaDamageDefense,label:damageDefenseLabel},environment:{sync:syncEnvironmentArea,unsync:unsyncEnvironmentArea,type:environmentType},movement:{undo:function(txn){return movementProgressChange(txn,false);},redo:function(txn){return movementProgressChange(txn,true);}},height:{tokenHeightFeet:tokenHeightFeet,areaHeightFeet:areaHeightFeet,verticalContains:verticalContains},_test:{turnTargets:turnTargets,persistentTurnChanged:persistentTurnChanged,setTerrainMarker:setTerrainMarker,casterBaseHeightFeet:casterBaseHeightFeet,resolvedAreaHeight:resolvedAreaHeight,contains:contains,containsAt:containsAt,shapePoints:shapePoints,collectDetailed:collectDetailed,areaExposureForToken:areaExposureForToken,areaEffectOrigin:areaEffectOrigin,lineSourceSign:lineSourceSign,localToWorld:localToWorld,worldToLocal:worldToLocal,coveragePolygon:coveragePolygon,coneCoveragePolygon:coneCoveragePolygon,lineCoveragePolygon:lineCoveragePolygon,replaceDraftWithCoverage:replaceDraftWithCoverage,isJumpgate:isJumpgate,pathV2Points:pathV2Points,pathDimensions:pathDimensions,pathLeft:pathLeft,pathTop:pathTop,sourceToken:sourceToken,characterIsNPC:characterIsNPC,characterIsPlayerControlled:characterIsPlayerControlled,difficultTerrain:difficultTerrain,parseAreaDamageDefense:parseAreaDamageDefense,stripAreaDamageDefenseDirectives:stripAreaDamageDefenseDirectives,damageDefenseForToken:damageDefenseForToken,parsePersistentRules:parsePersistentRules,movementRule:movementRule,combatToken:combatToken,bringCombatTokensFront:bringCombatTokensFront,npcGroupName:npcGroupName,casterTurnMatches:casterTurnMatches,routeEntersArea:routeEntersArea,routeExitsArea:routeExitsArea,routeBoundaryEvents:routeBoundaryEvents,routeInsideDistance:routeInsideDistance,auraAnchorBoundaryEvents:auraAnchorBoundaryEvents,auraShape:auraShape,chooseAuraSlot:chooseAuraSlot,activateAura:activateAura,ensureAuraOffAbility:ensureAuraOffAbility,removeAuraOffAbility:removeAuraOffAbility,getAreaPath:getAreaPath,processBoundaryEvents:processBoundaryEvents,boundaryAllowed:boundaryAllowed,setMembership:setMembership,seedMembership:seedMembership,isConcentrationAuraOwner:isConcentrationAuraOwner,concentrationAuraOwnerProtection:concentrationAuraOwnerProtection,ownerAllowedComponent:ownerAllowedComponent,areaStackKey:areaStackKey,sameAreaStack:sameAreaStack,stackPhasePower:stackPhasePower,compareStackPower:compareStackPower,stackSemanticText:stackSemanticText,stackPhaseSignature:stackPhaseSignature,strongestStackArea:strongestStackArea,stackOccupiedByOther:stackOccupiedByOther,triggerPersistent:triggerPersistent,reconcileTerrainMarker:reconcileTerrainMarker,reconcileTerrainPage:reconcileTerrainPage,terrainMarkerTag:terrainMarkerTag,hasTerrainMarker:hasTerrainMarker}};
 }());
 
 }
