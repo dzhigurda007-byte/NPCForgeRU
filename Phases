@@ -2,7 +2,9 @@
 if(typeof AD5Phases!=='undefined'&&AD5Phases) {
     log('AD5Phases: duplicate module skipped; keep one installed copy.');
 } else {
-/* AD5 Phases 1.1.4 — КАСТ, НАЧК/НАЧИ, НАЧТ, КНЦИ, КНЦТ, ОКОН, ОСВОБ, ВХОД, ВЫХОД, ОБЛН, ОБЛК, ПАСС, МУВ.
+/* AD5 Phases 1.1.5 — КАСТ, НАЧК/НАЧИ, НАЧТ, КНЦИ, КНЦТ, ОКОН, ОСВОБ, ВХОД, ВЫХОД, ОБЛН, ОБЛК, ПАСС, МУВ.
+ * 1.1.5: «РОСТ 1д6» in a phase adds that much damage for every turn the caster has kept
+ * concentration (Delayed Blast Fireball: «ОКОН: ПРВ: Урон1, РОСТ 1д6; УСП: Урон1, половина урона, РОСТ 1д6»).
  * 1.1.2: explicit НАЧТ overrides legacy «Каждый ход»; НАЧК is the preferred
  * caster/source-start label, while НАЧИ remains a backwards-compatible alias.
  * 1.1.4: МУВ is included in has(); a move-only phase now enters the phase/persistent-area pipeline correctly.
@@ -11,7 +13,7 @@ if(typeof AD5Phases!=='undefined'&&AD5Phases) {
  */
 var AD5Phases=(function(){
     'use strict';
-    var VERSION='1.1.4',seq=0,ending={},boundaryQueues={};
+    var VERSION='1.1.5',seq=0,ending={},boundaryQueues={};
     var labels={cast:'КАСТ',sourceStart:'НАЧК',turn:'НАЧТ',sourceEnd:'КНЦИ',targetEnd:'КНЦТ',end:'ОКОН',entry:'ВХОД',exit:'ВЫХОД',areaStart:'ОБЛН',areaEnd:'ОБЛК',passive:'ПАСС',move:'МУВ',recovery:'ОСВОБ'};
     function copy(x){return x==null?x:JSON.parse(JSON.stringify(x));}
     function text(s){
@@ -29,6 +31,8 @@ var AD5Phases=(function(){
     function branch(body){
         var out={refs:[],extra:[],effects:[],multiplier:1},seen={};
         trim(body).split(/[,;]/).map(trim).filter(Boolean).forEach(function(item){
+            var g=/^рост\s+((?:\d*\s*[dдк]\s*\d+|\d+))$/i.exec(item);
+            if(g){out.grow=g[1].replace(/\s+/g,'').replace(/[дк]/gi,'d');return;}
             var m=/^урон\s*(\d{1,3})$/i.exec(item);
             if(m){var n=Number(m[1]);if(!n)throw new Error('Нумерация УронN начинается с 1.');if(!seen[n]){out.refs.push(n);seen[n]=true;}return;}
             if(/^(нет эффекта|нет урона|без урона)$/i.test(item)){out.multiplier=0;return;}

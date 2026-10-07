@@ -48,7 +48,7 @@ var AD5Background = (function(){
     return {put:put,isReady:function(){return ready;}};
 }());
 /*
-AutoDamage 4.3.147 / NPC Forge RU 2.7.4 — «шепот звезд».
+AutoDamage 4.3.149 / NPC Forge RU 2.7.4 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Обычная атака игрока -> Target AD5 на карте -> штатные запросы преимущества/помехи/доп. урона Roll20 -> бросок -> урон и крит. NPC/Transform сохраняют штатный Target Roll20. AutoFront заранее держит боевые токены на переднем плане. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -72,6 +72,8 @@ hp листа используется однократно как началь�
 Поле «Описание» способности является источником исходов спасброска. Элементы разделяются запятыми: ПРВ: ... для провала, УСП: ... для успеха. Таймеры и маркеры ведёт отдельный AD5 Effect Turns. Если УСП отсутствует, успешный спас автоматически означает 0 урона и 0 эффектов.
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
+4.3.149: «СЛУЧАЙНО dN: 1 = …; 2 = …» — one roll per target picks a variant: «тип ТИП» retypes Урон1, «нет урона», «повтор N» (N more variants, each a separate damage type), other items are effects (Prismatic Spray).
+4.3.148: Phases «РОСТ XdY» adds XdY per caster turn under concentration (Delayed Blast Fireball). Fix: save-based phase damage (ВХОД/ОБЛН/ОКОН …) no longer reuses the pre-save placeholder dice (dealt 1 per component).
 4.3.147: A target's saving throw spends Effect Turns «РАСХ: СПАСБРОСОК» charges (Resistance).
 4.3.146: Hit point thresholds: lines «ХИТЫ<=N: эффекты» — the tightest tier at or above the target's current HP applies (only on a failed save when the card has one); «смерть» kills (Power Word Kill/Stun, Divine Word). Spells whose only mechanics are Effect Turns items (сопр, стабилизирует, макс хиты …) or HP directives now count as mechanical.
 4.3.145: Hit point rules: «НЕ НИЖЕ 1» (damage leaves at least 1 HP), «СНИЖ МАКС» (HP maximum drops by the HP lost, Harm), «ВАМП [N%]» (source regains N% of damage dealt, Vampiric Touch). Healing is blocked on a target with «без лечения» (Chill Touch).
@@ -764,7 +766,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.147', diagnostics = [], debug = false;
+    var VERSION = '4.3.149', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -5091,6 +5093,37 @@ var AD5 = (function () {
         var m=/(?:^|[\s,;|])ВАМП(?:ИРИЗМ)?(?:\s+(\d{1,3})\s*%)?(?=$|[\s,;.!?])/im.exec(text);if(m)out.vampire=m[1]?Math.min(100,Number(m[1])):50;
         return out;
     }
+    // Variant items: «тип ОГОНЬ» changes Урон1's damage type, «нет урона» drops the damage,
+    // «повтор N» rolls N more variants (never the повтор one) and adds each, anything else is an
+    // effect (failed-save branch when the card has a save).
+    function randomVariantPlan(description,p){
+        var text=String(description||'').replace(/<br\s*\/?\s*>/gi,'\n').replace(/<[^>]*>/g,' ').replace(/&nbsp;/gi,' ');
+        var m=/(^|\n)[ \t]*СЛУЧАЙНО\s+[dдк](\d{1,3})\s*:([^\n]*)/i.exec(text);if(!m)return null;
+        var sides=Number(m[2]),variants={};
+        m[3].split(';').forEach(function(part){var v=/^\s*(\d{1,3})(?:\s*-\s*(\d{1,3}))?\s*=\s*(.+?)\s*$/.exec(part);if(!v)return;var lo=Number(v[1]),hi=v[2]?Number(v[2]):lo;for(var i=lo;i<=hi;i++)variants[i]=v[3].split(',').map(function(x){return x.trim();}).filter(Boolean);});
+        function roll(){return typeof randomInteger==='function'?randomInteger(sides):1+Math.floor(Math.random()*sides);}
+        if(!p.randomRolls){
+            var rolls=[],first=roll();rolls.push(first);
+            var rep=(variants[first]||[]).map(function(x){return /^повтор\s+(\d)$/i.exec(x);}).filter(Boolean)[0];
+            if(rep){rolls=[first];for(var k=0;k<Number(rep[1]);k++){var r,guard=0;do{r=roll();}while(r===first&&guard++<50);rolls.push(r);}}
+            p.randomRolls=rolls;
+        }
+        var picked=p.randomRolls.length>1?p.randomRolls.slice(1):p.randomRolls,types=[],items=[],noDamage=false;
+        picked.forEach(function(r){(variants[r]||[]).forEach(function(x){var tm=/^тип\s+(.+)$/i.exec(x);if(tm)types.push(tm[1].trim());else if(/^(?:нет урона|без урона)$/i.test(x))noDamage=true;else if(!/^повтор\s+\d$/i.test(x))items.push(x);});});
+        if(types.length)noDamage=false;
+        return {stripped:text.replace(m[0],m[1]),types:types,items:items,noDamage:noDamage,report:'Случайный эффект d'+sides+': '+p.randomRolls.join(' → ')+' — '+esc(picked.map(function(r){return (variants[r]||['?']).join(', ');}).join(' + '))+'.'};
+    }
+    function applyRandomVariant(f,plan){
+        f=Object.assign({},f);f.ad5randomapplied='1';
+        var desc=plan.stripped;if(plan.items.length)desc+=(active(f,'save')?'\nПРВ: ':'\n')+plan.items.join(active(f,'save')?', ':'\n');
+        f.description=desc;f.desc=desc;
+        if(plan.noDamage){Object.keys(f).forEach(function(k){if(/^dmg\d+flag$/.test(k))f[k]='0';});f.damage='0';}
+        else if(plan.types.length){
+            var t0=effectType(plan.types[0]);if(t0)f.dmg1type=t0;
+            for(var i=1;i<plan.types.length;i++){var ti=effectType(plan.types[i]);if(!ti)continue;var n=1;while(f['dmg'+n]!==undefined&&String(f['dmg'+n]).trim()!=='')n++;f['dmg'+n]=f.dmg1;f['dmg'+n+'flag']='1';f['dmg'+n+'type']=ti;if(f.crit1!==undefined)f['crit'+n]=f.crit1;}
+        }
+        return f;
+    }
     function hpThresholdPlan(description,hp,outcome){
         var text=String(description||''),tiers=[],re=/(^|\n|<br\s*\/?>)[ \t]*ХИТЫ\s*(<=|≤|<)\s*(\d{1,4})\s*:([^\n<]*)/gi,m;
         while((m=re.exec(text)))tiers.push({limit:Number(m[3])-(m[2]==='<'?1:0),items:m[4].split(/\s*[,;]\s*/).map(function(x){return x.trim();}).filter(Boolean)});
@@ -5200,6 +5233,8 @@ var AD5 = (function () {
         if(wrongActor||npcMessage!==p.npcMessage||attackName(f)!==p.name)throw new Error('Урон не соответствует последней атаке. Используйте её карточку.');
         if(f.ad5target!==undefined&&f.ad5target!==p.target)throw new Error('Цель урона отличается от цели атаки. Повторите атаку.');
         var t=target(p.target,msg.playerid);if(t.cid!==p.cid)throw new Error('Связь токена с листом изменилась.');
+        // 4.3.149: «СЛУЧАЙНО dN: 1 = …; 2 = …» — one roll per target picks a variant (Prismatic Spray).
+        if(!active(f,'ad5randomapplied')){var randomPick=randomVariantPlan(f.description!==undefined?f.description:(f.desc||''),p);if(randomPick){f=applyRandomVariant(f,randomPick);p.randomVariantReport=randomPick.report;}}
         var spellTargetText=f.description!==undefined?f.description:(f.desc||'');
         var explicitSpell=!!f.ad5attackrow||!!f.ad5spellprefix||active(f,'ad5directspell')||active(f,'ad5npcspell')||hasPlayerSpellTag(spellTargetText);
         if(explicitSpell&&typeof AD5Sides!=='undefined'&&AD5Sides&&typeof AD5Sides.targetModeFor==='function'&&typeof AD5Sides.targetAllowed==='function'){
@@ -5281,7 +5316,9 @@ var AD5 = (function () {
         else if(p.phaseExecution&&!p.phaseResolved)outgoingDamageBuff={rolled:[],applied:0};
         else if(p.phaseExecution&&p.phaseDamageCache){g.damage=JSON.parse(JSON.stringify(p.phaseDamageCache.damage));outgoingDamageBuff=p.phaseDamageCache.buff;}
         else{outgoingDamageBuff=applyOutgoingDamageModifiers(g.damage,outgoingModifiers,criticalHit);if(p.phaseExecution)p.phaseDamageCache={damage:JSON.parse(JSON.stringify(g.damage)),buff:outgoingDamageBuff};}
-        if(!p.damageReactionCache)p.damageReactionCache={damage:JSON.parse(JSON.stringify(g.damage)),buff:JSON.parse(JSON.stringify(outgoingDamageBuff))};
+        // 4.3.148: the pre-save pass of a phase holds placeholder dice (1 each); caching it made
+        // every save-based phase (ВХОД/ОБЛН/ОКОН…) deal 1 damage per component.
+        if(!p.damageReactionCache&&!(p.phaseExecution&&!p.phaseResolved))p.damageReactionCache={damage:JSON.parse(JSON.stringify(g.damage)),buff:JSON.parse(JSON.stringify(outgoingDamageBuff))};
         var hasDamage=g.damage.components.length>0,hasHealing=g.healing.components.length>0,hasTemporary=g.temporary.components.length>0,hasAttackBonus=g.attackbonus.components.length>0;
         if(hasHealing&&blank(plan.max))throw new Error('Для лечения заполните максимальные HP.');
         var complexDescription=f.description!==undefined?f.description:(f.desc!==undefined?f.desc:''),transformDirective=null;
@@ -5539,6 +5576,7 @@ var AD5 = (function () {
         // 4.3.146: hit point thresholds — lines «ХИТЫ<=N: эффекты» (Power Word Kill/Stun,
         // Divine Word). The tightest threshold not below the target's current HP applies;
         // with a saving throw only on a failure. «смерть» kills outright.
+        if(p.randomVariantReport)report.push(p.randomVariantReport);
         var hpTier=hpThresholdPlan(complexDescription,plan.value,active(f,'save')?(success||saveCrit==='success'?'success':'failure'):'direct');
         if(hpTier.found){
             complexDescription=hpTier.description;
@@ -8122,7 +8160,13 @@ var AD5 = (function () {
                 var previewKey=String(n);if(preview&&previewSeenRefs[previewKey])return;previewSeenRefs[previewKey]=true;
                 index++;f['dmg'+index+'flag']='1';f['dmg'+index]=String(preview?1:(initial?Number(comp.fallback)+(initial.crit?Number(comp.critical||0):0):areaRollExpression(comp.expression,comp.fallback)));f['dmg'+index+'type']=comp.type;
             });
-            (b.extra||[]).forEach(function(comp){
+            // 4.3.148: Phases «РОСТ XdY» — XdY more for every caster turn under concentration.
+            var growExtra=[];
+            if(b.grow&&snapshot.concentrationId&&typeof AD5Concentration!=='undefined'&&AD5Concentration&&typeof AD5Concentration.elapsed==='function'){
+                var turns=Number(AD5Concentration.elapsed(snapshot.concentrationId))||0,gm2=/^(\d*)d(\d+)$/i.exec(b.grow),firstComp=snapshot.components[String((b.refs||[])[0]||1)];
+                if(turns>0&&firstComp)growExtra.push({expression:gm2?String((Number(gm2[1]||1))*turns)+'d'+gm2[2]:String(Number(b.grow)*turns),type:firstComp.type});
+            }
+            (b.extra||[]).concat(growExtra).forEach(function(comp){
                 var extraKey=JSON.stringify(comp);if(preview&&previewSeenExtra[extraKey])return;previewSeenExtra[extraKey]=true;
                 index++;f['dmg'+index+'flag']='1';f['dmg'+index]=String(preview?1:areaRollExpression(comp.expression,0));f['dmg'+index+'type']=comp.type;
             });

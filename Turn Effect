@@ -3,7 +3,9 @@ if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
     log('AD5EffectTurns: duplicate module skipped; keep one installed copy.');
 } else {
 /*
-AD5 Effect Turns 1.6.6
+AD5 Effect Turns 1.6.8
+1.6.8: «замешательство» condition (Confusion): d10 behaviour announced at the start of the creature's turn. New markers: drink-me (замешательство), death-zone (без лечения).
+1.6.7: Counted recovery «СОСТ АБЛ{DC} СЧЁТ N → эффект[+эффект]»: N successes end it, N failures replace it (Flesh to Stone, Contagion).
 1.6.6: УСЛЭФ: ПОМ АТАКАМ ПО ЦЕЛИ (Blur, Holy Aura, Foresight), ПРЕМ АТАКАМ ИСТОЧНИКА ПО ЦЕЛИ (True Strike), ПОМ/ПРЕМ АТАКАМ ЦЕЛИ (Vicious Mockery, Foresight); РАСХ: ЦЕЛЬ АТАКОВАЛА, АТАКА ИСТОЧНИКА ПО ЦЕЛИ, СПАСБРОСОК, ПРОВЕРКА; ability «ВСЕ» in save/check modifiers («Спас ВСЕ +1д4», «Проверка ВСЕ +1д4», «прем все»); rollUsed() for recovery saves.
 1.6.5: «макс хиты ±N» modifier (Aid) changes the HP maximum and, on gain, current HP; «без лечения» condition; «снимает снижение максимума» (Greater Restoration). AutoDamage HP directives are ignored by save sections.
 1.6.4: damage defenses on one token — «сопр ТИП[/ТИП] [N%] ходы», «сопр все», «имм ТИП» (strongest wins, no stacking with zones/auras); «охранная связь» (Warding Bond: the effect's source takes the same typeless damage); cleansing items «снимает СОСТОЯНИЕ[/…]», «снимает проклятие», «снимает истощение N», «рассеивает N» (Dispel Magic: spell effects ≤N end, higher need a check vs 10+level; dispelled concentration spells end). Effect sources now record spell and spellLevel. «стабилизирует», «возвращает к жизни N» and the «защита от смерти» condition for death and dying.
@@ -53,7 +55,7 @@ var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5
 // silently shadow every newer fix.
 var AD5EffectTurns = (function () {
     'use strict';
-    var VERSION='1.6.6', SCRIPT='AD5 Effect Turns';
+    var VERSION='1.6.8', SCRIPT='AD5 Effect Turns';
     var runtimeLastGroup=Object.create(null);
     var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
     var markerCacheRaw=null, markerCacheByName=Object.create(null);
@@ -120,7 +122,8 @@ var AD5EffectTurns = (function () {
         warding_bond:{marker:'three-leaves',label:'Охранная связь',aliases:['охранная связь','warding bond','связь урона']},
         // Death Ward: first drop to 0 HP from damage leaves 1 HP instead (Condition Engine).
         death_ward:{marker:'trophy',label:'Защита от смерти',aliases:['защита от смерти','death ward']},
-        no_healing:{marker:'broken-heart',label:'Без лечения',aliases:['без лечения','запрет лечения','не может восстанавливать хиты','no healing']}
+        confused:{marker:'drink-me',label:'Замешательство',aliases:['замешательство','смятение','в замешательстве','confused','confusion']},
+        no_healing:{marker:'death-zone',label:'Без лечения',aliases:['без лечения','запрет лечения','не может восстанавливать хиты','no healing']}
     };
     var ALIAS={};
 
@@ -638,8 +641,19 @@ var AD5EffectTurns = (function () {
         if(side.maxHp)tx.cleanse.maxHp=true;
         (side.endConcentration||[]).forEach(function(c){if(tx.cleanse.endConcentration.indexOf(c)<0)tx.cleanse.endConcentration.push(c);});
     }
+    // 1.6.7: «опутан ТЕЛ15 СЧЁТ 3 → окаменел» — the recovery save repeats; N successes end the
+    // effect, N failures replace it with the item(s) after the arrow («+» joins several).
+    function counterSplit(item){
+        var m=/^(.*?\S)\s+(?:СЧЁТ|СЧЕТ|COUNT)\s+(\d)\s*(?:→|->|=>|:)\s*(.+)$/i.exec(String(item||'').trim());
+        return m?{base:m[1],need:Number(m[2]),failTo:m[3].split(/\s*\+\s*/).map(function(x){return x.trim();}).filter(Boolean)}:null;
+    }
     function parseEffect(item){
         if(isDamageItem(item))return null;
+        var counter=counterSplit(item);
+        if(counter&&counter.need>0){
+            var ce=parseEffect(counter.base);if(!ce||!ce.recovery)return ce;
+            ce.recovery.counter={need:counter.need,succ:0,fail:0,failTo:counter.failTo};ce.label+=' ('+counter.need+'×)';ce.raw=item;return ce;
+        }
         var cleanse=cleanseSpec(item);
         if(cleanse)return {kind:'cleanse',key:null,condition:null,label:cleanse.label,marker:null,remaining:null,timed:false,cleanse:cleanse,raw:item};
         var mod=modifierSpec(item);
@@ -1834,8 +1848,19 @@ var AD5EffectTurns = (function () {
         return {die:die,die2:d2,bonus:bonus,total:die+bonus,mode:mode,check:!!recovery.check,critical:recovery.check?'':(die===1?'failure':(die===20?'success':''))};
     }
     function recoverySucceeded(result,recovery){if(!result)return false;if(result.autoFailCondition)return false;if(!recovery.check){if(result.die===1)return false;if(result.die===20)return true;}return Number(result.total)>=Number(recovery.dc);}
+    // Counts a recovery roll; returns 'remove' (effect ends), 'keep' or 'fail' (counter exhausted).
+    function recoveryVerdict(e,success){
+        var c=e&&e.recovery&&e.recovery.counter;if(!c)return success?'remove':'keep';
+        if(success)c.succ=(Number(c.succ)||0)+1;else c.fail=(Number(c.fail)||0)+1;
+        if(c.succ>=c.need)return 'remove';if(c.fail>=c.need)return 'fail';return 'keep';
+    }
+    function applyCounterFailure(token,e){
+        var c=e&&e.recovery&&e.recovery.counter;if(!c||!c.failTo||!c.failTo.length)return;var src=clone(e.source||{});
+        setTimeout(function(){try{var live=getObj('graphic',token.id);if(live){applyCondition(live,c.failTo.join('\n'),src);sendChat(SCRIPT,'<b>'+esc(live.get('name')||live.id)+'</b>: '+esc(c.need)+' провала — '+esc(c.failTo.join(', '))+'.');}}catch(err){sendChat(SCRIPT,'/w gm '+esc(err.message||err));}},0);
+    }
     function recoveryChat(token,e,result,success,automatic){
-        var r=e.recovery,who=esc(token.get('name')||token.id),status=success?'УСПЕХ — эффект снят':'ПРОВАЛ — эффект остаётся';
+        var r=e.recovery,who=esc(token.get('name')||token.id),status=success?'УСПЕХ — эффект снят':'ПРОВАЛ — эффект остаётся',cnt=r.counter;
+        if(cnt)status=(success?'УСПЕХ':'ПРОВАЛ')+' — успехов '+(Number(cnt.succ)||0)+'/'+cnt.need+', провалов '+(Number(cnt.fail)||0)+'/'+cnt.need+(Number(cnt.succ)>=cnt.need?', эффект снят':Number(cnt.fail)>=cnt.need?', наступает: '+cnt.failTo.join(', '):'');
         var effectName=esc((CONDITIONS[e.condition]&&CONDITIONS[e.condition].label)||e.label);
         // Keep the public recovery roll consistent with ordinary AD5 player saves:
         // show the result/status, but do not publish the DC in the common chat.
@@ -1854,8 +1879,10 @@ var AD5EffectTurns = (function () {
         rec.effects[key].recovery.attempted=true;rec.effects[key].recovery.attemptId=Date.now().toString(36)+':'+Math.random();writeRecord(token,rec);return rec.effects[key];
     }
     function autoNpcRecovery(token,e){
-        var result=recoveryRollTotal(token,e.recovery,e),success=recoverySucceeded(result,e.recovery);
-        recoveryChat(token,e,result,success,true);return success;
+        var result=recoveryRollTotal(token,e.recovery,e),success=recoverySucceeded(result,e.recovery),verdict=recoveryVerdict(e,success);
+        recoveryChat(token,e,result,success,true);
+        if(verdict==='fail'){applyCounterFailure(token,e);return true;}
+        return verdict==='remove';
     }
     function playerRecovery(token,condition,pid){
         if(!token||token.get('_pageid')!==partyPageId())throw new Error('Токен должен находиться на активной карте.');
@@ -1885,8 +1912,11 @@ var AD5EffectTurns = (function () {
                     return;
                 }
                 var liveRec=snapshot(live.id),liveE=liveRec&&liveRec.effects[key];if(!liveE||!liveE.recovery||liveE.recovery.attemptId!==r.attemptId)return;
+                var verdict=recoveryVerdict(liveE,success);
                 recoveryChat(live,liveE,result,success,false);
-                if(success)removeRecoveryEffect(live,condition);else{recoveryFailure(live,liveE);syncRecoveryActions(live);}
+                if(verdict==='remove')removeRecoveryEffect(live,condition);
+                else if(verdict==='fail'){removeRecoveryEffect(live,condition);applyCounterFailure(live,liveE);}
+                else{if(liveE.recovery.counter)writeRecord(live,liveRec);if(!success)recoveryFailure(live,liveE);syncRecoveryActions(live);}
             }catch(err){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+'</b>: '+esc(err.message||err));}
         });
     }
@@ -1921,6 +1951,17 @@ var AD5EffectTurns = (function () {
             return false;
         }
     }
+    // 1.6.8: Confusion — d10 behaviour at the start of the creature's turn.
+    function announceConfusion(token){
+        function d(n){return typeof randomInteger==='function'?randomInteger(n):1+Math.floor(Math.random()*n);}
+        var r=d(10),dirs=['север','северо-восток','восток','юго-восток','юг','юго-запад','запад','северо-запад'],text;
+        if(r===1)text='тратит всё движение и идёт в случайном направлении ('+dirs[d(8)-1]+'), действий не совершает';
+        else if(r<=6)text='не двигается и не совершает действий в этот ход';
+        else if(r<=8)text='атакует рукопашной атакой случайное существо в пределах досягаемости; если такого нет — ничего не делает';
+        else text='действует как обычно';
+        sendChat(SCRIPT,'&{template:default} {{name=Замешательство}} {{Существо='+esc(token.get('name')||token.id)+'}} {{d10='+r+'}} {{Поведение='+esc(text)+'}}');
+        return r;
+    }
     function beginGroup(pageId,key,silent){
         var active=partyPageId();
         if(!key||!active||pageId!==active)return {changed:0,expired:0,recovered:0};
@@ -1932,6 +1973,7 @@ var AD5EffectTurns = (function () {
             Object.keys(after.effects).sort().forEach(function(k){
                 var e=after.effects[k];if(!e)return;
                 if(e.condition==='no_reactions'){e.reactionTurnStarted=true;e.remaining=1;touched=true;return;}
+                if(e.condition==='confused')announceConfusion(token);
                 if(e.recovery){
                     e.recovery.attempted=false;touched=true;
                     if(npcToken(token)&&!e.recovery.action){

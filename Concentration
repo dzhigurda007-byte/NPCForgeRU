@@ -2,7 +2,8 @@
 if(typeof AD5Concentration!=='undefined'&&AD5Concentration) {
     log('AD5Concentration: duplicate module skipped; keep one installed copy.');
 } else {
-/* AD5 Concentration 1.2.9
+/* AD5 Concentration 1.2.10
+ * 1.2.10: counts the caster's turns under each concentration (elapsed(id)) for Phases «РОСТ».
  * 1.2.9: NPC flag lookup memoized per event (performance).
  * Concentration manager for AD5 / D&D 5E by Roll20 (2014).
  * Detection:
@@ -17,7 +18,7 @@ if(typeof AD5Concentration!=='undefined'&&AD5Concentration) {
  */
 var AD5Concentration=(function(){
     'use strict';
-    var VERSION='1.2.9',SCRIPT='AD5 Concentration',SEQ=0;
+    var VERSION='1.2.10',SCRIPT='AD5 Concentration',SEQ=0;
     var FALLBACK_MARKERS=['overdrive','aura','stopwatch','white-tower'];
     var ACTION_NAME=Array(21).join('\u200b')+'AD5 · Снять концентрацию',ACTION_CMD='!ad5conc endselected',runtimeTurnKey='';
 
@@ -194,9 +195,11 @@ var AD5Concentration=(function(){
         try{if(typeof AD5Transform!=='undefined'&&AD5Transform&&typeof AD5Transform.endByConcentration==='function')AD5Transform.endByConcentration(rec.id);}catch(e4){gm('Ошибка завершения Полиморфа: '+esc(e4.message||e4));}
         return summary;
     }
+    var endedElapsed=Object.create(null);
+    function elapsed(id){var rec=root().active[String(id||'')];return rec?(Number(rec.elapsed)||0):(Number(endedElapsed[String(id||'')])||0);}
     function endById(id,reason,silent){
         var r=root(),rec=r.active[String(id||'')];if(!rec)return null;
-        delete r.active[rec.id];if(r.owners[rec.ownerKey]===rec.id)delete r.owners[rec.ownerKey];
+        delete r.active[rec.id];if(r.owners[rec.ownerKey]===rec.id)delete r.owners[rec.ownerKey];endedElapsed[rec.id]=Number(rec.elapsed)||0;
         var summary=cleanup(rec);
         Object.keys(rec.markerTokens||{}).forEach(function(tid){var token=getObj('graphic',tid);restoreMarkerEntry(token,rec.markerTokens[tid]);refreshTooltip(token);});
         syncConcentrationAction(rec.actorId);
@@ -277,7 +280,7 @@ var AD5Concentration=(function(){
     }
     function tickTurn(info,previous){
         var r=root(),ended=[];
-        Object.keys(r.active).forEach(function(id){var rec=r.active[id];if(!rec||!recordMatchesTurn(rec,info)||(previous&&recordMatchesTurn(rec,previous))||rec.remaining===null||rec.remaining===undefined)return;
+        Object.keys(r.active).forEach(function(id){var rec=r.active[id];if(!rec||!recordMatchesTurn(rec,info)||(previous&&recordMatchesTurn(rec,previous)))return;rec.elapsed=(Number(rec.elapsed)||0)+1;if(rec.remaining===null||rec.remaining===undefined)return;
             rec.remaining=Math.max(0,(Number(rec.remaining)||0)-1);if(rec.remaining<=0)ended.push(id);else syncMarkerCounter(rec);
         });
         ended.forEach(function(id){endById(id,'истекла длительность концентрации');});
@@ -383,6 +386,6 @@ var AD5Concentration=(function(){
     on('change:graphic',function(t,prev){try{if(!currentForToken(t))return;var hpChanged=String(t.get('bar1_value'))!==String(prev&&prev.bar1_value),statusChanged=String(t.get('statusmarkers'))!==String(prev&&prev.statusmarkers);if(hpChanged||statusChanged)onStateChange(t);}catch(ignore){}});
     on('change:campaign:turnorder',function(c,p){try{turnChanged(c,p);}catch(e){gm('Ошибка счётчика концентрации: '+esc(e.message||e));}});
     on('ready',function(){root();var deduped=enforceSingleActive();clearAllConcentrationActions();Object.keys(root().active).forEach(function(id){var rec=root().active[id];if(rec){syncConcentrationAction(rec.actorId);syncMarkerCounter(rec);}});initTurn();gm('<b>'+SCRIPT+' '+VERSION+'</b> запущен. Концентрация: «КОН»/«КОН N» в Дистанции или штатный {{concentration=1}} spellcard. Одновременно у одного существа действует только одна концентрация; новая автоматически завершает предыдущую. Счётчик берётся из N или Duration. Маркер: overdrive, при занятости — aura/stopwatch. AD5 Transform: Дикая форма подавляет проверки концентрации от урона; Полиморф сохраняет проверки.'+(deduped?' Удалено старых дубликатов концентрации: '+deduped+'.':''));});
-    return {version:VERSION,claimAction:claimAction,bindSource:bindSource,onDamage:onDamage,onStateChange:onStateChange,end:endById,currentForToken:currentForToken,refreshToken:refreshToken,tooltipLines:tooltipLines,_test:{effectiveActorId:effectiveActorId,rangeConcentration:rangeConcentration,rangeConcentrationTurns:rangeConcentrationTurns,durationToTurns:durationToTurns,sheetSpellConcentration:sheetSpellConcentration,ownerKey:ownerKey,sameConcentrator:sameConcentrator,enforceSingleActive:enforceSingleActive,incapacitated:incapacitated}};
+    return {version:VERSION,elapsed:elapsed,claimAction:claimAction,bindSource:bindSource,onDamage:onDamage,onStateChange:onStateChange,end:endById,currentForToken:currentForToken,refreshToken:refreshToken,tooltipLines:tooltipLines,_test:{effectiveActorId:effectiveActorId,rangeConcentration:rangeConcentration,rangeConcentrationTurns:rangeConcentrationTurns,durationToTurns:durationToTurns,sheetSpellConcentration:sheetSpellConcentration,ownerKey:ownerKey,sameConcentrator:sameConcentrator,enforceSingleActive:enforceSingleActive,incapacitated:incapacitated}};
 }());
 }
