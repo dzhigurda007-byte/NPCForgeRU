@@ -3,7 +3,8 @@ if(typeof AD5Reactions!=='undefined'&&AD5Reactions) {
     log('AD5Reactions: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Reactions v1.6.10 — Generic Resource Binding / Countershot / Sheet First
+ * AD5 Reactions v1.6.11 — Generic Resource Binding / Countershot / Sheet First
+ * 1.6.11: a teleport (Movement 2.3.8, «телепорт N фт») never opens movement reactions.
  * 1.6.10: Disengage («Отход», Condition Engine 1.2.12): no opportunity attacks against the mover;
  *         custom «выход» reactions are skipped too unless the description says «ОТХОД НЕ ЗАЩИЩАЕТ».
  * 1.6.9: candidates without reaction rows are skipped before the sheet-reading availability
@@ -39,7 +40,7 @@ if(typeof AD5Reactions!=='undefined'&&AD5Reactions) {
 var AD5Reactions = (function(){
     'use strict';
 
-    var VERSION='1.6.10', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
+    var VERSION='1.6.11', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
     var opportunityPending=Object.create(null);
     var runtimePending=Object.create(null), seq=0, recentMove=Object.create(null), lastAreaCheck=null, movementHookRegistered=false, featherCollecting=Object.create(null), reactionRowCache=Object.create(null);
     // 1.4.2 Fast Fall: cache Feather Fall card discovery per character.
@@ -1242,7 +1243,7 @@ var AD5Reactions = (function(){
         html+=' {{Решение=[Пропустить](!ad5react oapass '+ev.id+' '+npc.id+')}}';return html;
     }
     function openOpportunityFromMovement(move){
-        if(!move||move.manual!==true||!move.tokenId)return;
+        if(!move||move.manual!==true||!move.tokenId||move.teleport)return;
         var mover=getObj('graphic',String(move.tokenId)),page=partyPageId();if(!combatToken(mover,page))return;
         var now=Date.now(),ev={id:'O'+now.toString(36)+(++seq).toString(36),type:'movement',moverTokenId:mover.id,sourceTokenId:mover.id,targetTokenId:mover.id,movementTxn:String(move.movementTxn||move.id||''),created:now,candidates:[],responses:Object.create(null),resolved:false};
         var perNpc=Object.create(null),idx=0;

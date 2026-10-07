@@ -3,7 +3,8 @@ if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine) {
     log('AD5ConditionEngine: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Condition Engine 1.2.15
+ * AD5 Condition Engine 1.2.16
+ * 1.2.16: Вялость, изгнан and эфирный план block actions; «нет реакций» blocks reactions.
  * 1.2.15: Ability contests spend Effect Turns «РАСХ: ПРОВЕРКА» charges (Guidance).
  * 1.2.14: HP maximum = base (halved at exhaustion 4+) + «макс хиты» buffs − Harm reduction; reduceMaxHp/clearMaxHpReduction/maxHpChanged. Fixes double halving of NPC max HP at exhaustion 4+.
  * 1.2.13: death and dying for player characters — 0 HP → unconscious + prone + death saves
@@ -47,7 +48,7 @@ if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine) {
  */
 var AD5ConditionEngine=(function(){
     'use strict';
-    var VERSION='1.2.15',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
+    var VERSION='1.2.16',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
     var MARKERS={
         blinded:'bleeding-eye',charmed:'chained-heart',deafened:'half-haze',frightened:'screaming',
         grappled:'grab',incapacitated:'broken-shield',no_reactions:'interdiction',invisible:'ninja-mask',paralyzed:'padlock',
@@ -59,10 +60,11 @@ var AD5ConditionEngine=(function(){
         grappled:'Схвачен',incapacitated:'Недееспособен',no_reactions:'Без реакций',invisible:'Невидим',paralyzed:'Парализован',
         petrified:'Окаменел',poisoned:'Отравлен',prone:'Сбит с ног',restrained:'Опутан',
         stunned:'Оглушён',unconscious:'Без сознания',exhaustion:'Истощение',death:'Мёртв',
+        lethargic:'Вялость',reactionless:'Нет реакций',banished:'Изгнан',ethereal:'На Эфирном плане',
         dodging:'Уклонение',disengaging:'Отход'
     };
-    var ACTION_BLOCKERS=['incapacitated','paralyzed','petrified','stunned','unconscious','death'];
-    var REACTION_BLOCKERS=ACTION_BLOCKERS.concat(['no_reactions']);
+    var ACTION_BLOCKERS=['incapacitated','paralyzed','petrified','stunned','unconscious','death','lethargic','banished','ethereal'];
+    var REACTION_BLOCKERS=ACTION_BLOCKERS.concat(['no_reactions','reactionless']);
     var MOVE_ZERO=['grappled','paralyzed','petrified','restrained','stunned','unconscious','death'];
 
     function root(){

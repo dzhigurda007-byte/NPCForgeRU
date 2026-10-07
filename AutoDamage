@@ -48,7 +48,7 @@ var AD5Background = (function(){
     return {put:put,isReady:function(){return ready;}};
 }());
 /*
-AutoDamage 4.3.150 / NPC Forge RU 2.7.4 — «шепот звезд».
+AutoDamage 4.3.151 / NPC Forge RU 2.7.4 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Обычная атака игрока -> Target AD5 на карте -> штатные запросы преимущества/помехи/доп. урона Roll20 -> бросок -> урон и крит. NPC/Transform сохраняют штатный Target Roll20. AutoFront заранее держит боевые токены на переднем плане. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -72,6 +72,7 @@ hp листа используется однократно как началь�
 Поле «Описание» способности является источником исходов спасброска. Элементы разделяются запятыми: ПРВ: ... для провала, УСП: ... для успеха. Таймеры и маркеры ведёт отдельный AD5 Effect Turns. Если УСП отсутствует, успешный спас автоматически означает 0 урона и 0 эффектов.
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
+4.3.151: Damage to a «подчинён МДР15» target triggers its repeated save (Dominate).
 4.3.150: Mirror Image: an attack against a token with «зеркальные образы» may hit a duplicate (d20 6+/8+/11+, AC 10 + DEX); a hit destroys it and the target takes nothing.
 4.3.149: «СЛУЧАЙНО dN: 1 = …; 2 = …» — one roll per target picks a variant: «тип ТИП» retypes Урон1, «нет урона», «повтор N» (N more variants, each a separate damage type), other items are effects (Prismatic Spray).
 4.3.148: Phases «РОСТ XdY» adds XdY per caster turn under concentration (Delayed Blast Fireball). Fix: save-based phase damage (ВХОД/ОБЛН/ОКОН …) no longer reuses the pre-save placeholder dice (dealt 1 per component).
@@ -767,7 +768,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.150', diagnostics = [], debug = false;
+    var VERSION = '4.3.151', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -5757,6 +5758,8 @@ var AD5 = (function () {
                 report.push('Источник восстанавливает '+vampHeal+' хитов.');
             }
         }
+        // 4.3.151: Dominate — a creature repeats its save each time it takes damage.
+        if(damageAmount>0&&!entry.undone&&typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.damageSaveCheck==='function'){var dsTokenId=t.token.id;setTimeout(function(){try{var dsLive=getObj('graphic',dsTokenId);if(dsLive)AD5EffectTurns.damageSaveCheck(dsLive);}catch(dsErr){gm('Спасбросок после урона: '+esc(dsErr.message||dsErr));}},0);}
         // 4.3.144: Warding Bond — the bond's caster takes the same (typeless) damage.
         if(damageAmount>0&&!p.wardingShare&&!entry.undone){
             try{

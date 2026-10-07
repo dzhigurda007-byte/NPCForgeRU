@@ -3,7 +3,8 @@ if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
     log('AD5EffectTurns: duplicate module skipped; keep one installed copy.');
 } else {
 /*
-AD5 Effect Turns 1.6.9
+AD5 Effect Turns 1.6.10
+1.6.10: Control: «приказ: ниц/стой/беги/брось/ко мне» (Command, acted out at the creature's next turn start), «подчинён МДР15» (Dominate: caster's players control the token, save on each damage), «вялость» after Haste ends, Haste doubles speed and announces the extra action, Slow restrictions announced, «нет реакций» for the whole duration; a successful recovery save ends every effect of the same cast on that creature. Speed: «скорость ±N» (Longstrider), «телепорт N фт» (Misty Step, Dimension Door).
 1.6.9: Absence: «изгнан» (Banishment, Maze) and «эфирный план» move the token to the GM layer and back; «мерцание» (Blink) rolls d20 at the end of the bearer's turn and returns it at the start of the next; «остановка времени» (Time Stop) rolls 1d4+1 turns, GM button !ad5fx timestop advances them; «зеркальные образы» (3 images); recovery «… ПРОВЕРКА ИНТ20» is an ability check (Maze).
 1.6.8: «замешательство» condition (Confusion): d10 behaviour announced at the start of the creature's turn. New markers: drink-me (замешательство), death-zone (без лечения).
 1.6.7: Counted recovery «СОСТ АБЛ{DC} СЧЁТ N → эффект[+эффект]»: N successes end it, N failures replace it (Flesh to Stone, Contagion).
@@ -56,7 +57,7 @@ var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5
 // silently shadow every newer fix.
 var AD5EffectTurns = (function () {
     'use strict';
-    var VERSION='1.6.9', SCRIPT='AD5 Effect Turns';
+    var VERSION='1.6.10', SCRIPT='AD5 Effect Turns';
     var runtimeLastGroup=Object.create(null);
     var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
     var markerCacheRaw=null, markerCacheByName=Object.create(null);
@@ -128,6 +129,11 @@ var AD5EffectTurns = (function () {
         ethereal:{marker:'grenade',label:'На Эфирном плане',aliases:['эфирный план','на эфирном плане','ethereal']},
         banished:{marker:'radioactive',label:'Изгнан',aliases:['изгнан','изгнание','в лабиринте','лабиринт','banished','maze']},
         time_stop:{marker:'snail',label:'Остановка времени',aliases:['остановка времени','time stop']},
+        commanded:{marker:'pink',label:'Приказ',aliases:['приказ','команда','command']},
+        dominated:{marker:'brown',label:'Подчинение',aliases:['подчинен','подчинён','подчинение','доминирование','dominated']},
+        lethargic:{marker:'spanner',label:'Вялость',aliases:['вялость','вялый','lethargy','lethargic']},
+        reactionless:{marker:'interdiction',label:'Нет реакций',aliases:['нет реакций','реакции запрещены','без реакций до конца']},
+        teleport:{marker:'blue',label:'Телепортация',aliases:['телепортация','телепорт','teleport']},
         confused:{marker:'drink-me',label:'Замешательство',aliases:['замешательство','смятение','в замешательстве','confused','confusion']},
         no_healing:{marker:'death-zone',label:'Без лечения',aliases:['без лечения','запрет лечения','не может восстанавливать хиты','no healing']}
     };
@@ -324,6 +330,9 @@ var AD5EffectTurns = (function () {
         var text=norm(label),m,ability,metric,spec;
         if(!text)return null;
         var defense=defenseCore(text);if(defense)return defense;
+        // 1.6.10: walking speed («скорость +10» — Longstrider).
+        m=/^(?:скорость|speed)\s*([+-])\s*(\d{1,3})(?:\s*(?:фт\.?|футов|ft\.?))?$/i.exec(text)||/^([+-])\s*(\d{1,3})\s*(?:фт\.?\s*)?(?:скорость|скорости|speed)$/i.exec(text);
+        if(m){var spv=(m[1]==='-'?-1:1)*Number(m[2]);if(spv)return {type:'speed',value:spv,positive:spv>0,label:'Скорость '+(spv>0?'+':'')+spv+' фт'};}
         // 1.6.5: hit point maximum («макс хиты +5» — Aid); current HP follows on gain.
         m=/^(?:макс(?:имум)?\.?\s*(?:хитов|хиты|хп|hp)|max\s*hp)\s*([+-])?\s*(\d{1,4})$/i.exec(text)||/^([+-])?\s*(\d{1,4})\s+(?:макс(?:имум)?\.?\s*(?:хитов|хиты|хп|hp)|max\s*hp)$/i.exec(text);
         if(m){var hpv=(m[1]==='-'?-1:1)*Number(m[2]);if(hpv)return {type:'maxhp',value:hpv,positive:hpv>0,label:'Макс. хиты '+(hpv>0?'+':'')+hpv};}
@@ -499,9 +508,15 @@ var AD5EffectTurns = (function () {
         if(!Number.isFinite(baseSpeed)){
             var token=getObj('graphic',tokenId);baseSpeed=baseWalkingSpeed(token);
         }
+        // 1.6.10: «скорость ±N» buffs, then Haste doubles the result.
+        if(Number.isFinite(baseSpeed)&&rec){
+            var bonus=0;activeModifierEntries(rec).forEach(function(row){if(row.modifier&&row.modifier.type==='speed')bonus+=Number(row.modifier.value)||0;});
+            baseSpeed=Math.max(0,baseSpeed+bonus);
+            if(Object.keys(effects).some(function(k){return effects[k]&&effects[k].condition==='haste';}))baseSpeed*=2;
+        }
         // Campaign rule: these conditions fully immobilize voluntary movement.
         // Forced movement remains possible because Movement Engine marks it as API/forced.
-        var immobilized=['stunned','restrained','petrified'].filter(function(k){return !!effects['condition:'+k];});
+        var immobilized=['stunned','restrained','petrified','lethargic'].filter(function(k){return !!effects['condition:'+k];});
         if(immobilized.length){
             return {active:true,loss:Number.isFinite(baseSpeed)?Math.max(0,baseSpeed):0,effective:0,half:false,immobilized:true,conditions:immobilized};
         }
@@ -656,6 +671,17 @@ var AD5EffectTurns = (function () {
         var m=/^(.*?\S)\s+(?:СЧЁТ|СЧЕТ|COUNT)\s+(\d)\s*(?:→|->|=>|:)\s*(.+)$/i.exec(String(item||'').trim());
         return m?{base:m[1],need:Number(m[2]),failTo:m[3].split(/\s*\+\s*/).map(function(x){return x.trim();}).filter(Boolean)}:null;
     }
+    // 1.6.10: «телепорт 30 фт» (next manual move is a teleport), «приказ: ниц» (Command),
+    // «подчинён МДР15» (Dominate: the save is repeated each time it takes damage).
+    function specialConditionSpec(label){
+        var t=String(label||'').trim(),m;
+        if((m=/^(?:телепорт|телепортация|teleport)\s+(\d{1,4})\s*(?:фт\.?|футов|фута|ft\.?)$/i.exec(t)))return {condition:'teleport',label:'Телепорт '+m[1]+' фт',extra:{teleportFeet:Number(m[1])}};
+        if((m=/^(?:приказ|команда|command)(?:\s*[:—–-]\s*|\s+)(.+)$/i.exec(t)))return {condition:'commanded',label:'Приказ: '+m[1].trim(),extra:{order:m[1].trim()}};
+        var rs=recoverySpec(t);
+        if(rs.recovery&&conditionKey(rs.label)==='dominated')return {condition:'dominated',label:CONDITIONS.dominated.label+' '+rs.recovery.short+rs.recovery.dc,extra:{damageSave:rs.recovery}};
+        return null;
+    }
+    function copyEffectExtras(e,target){['teleportFeet','order','damageSave'].forEach(function(k){if(e[k]!==undefined)target[k]=clone(e[k]);});}
     function parseEffect(item){
         if(isDamageItem(item))return null;
         var counter=counterSplit(item);
@@ -676,6 +702,8 @@ var AD5EffectTurns = (function () {
             var sc=CONDITIONS.sanctuary;
             return {kind:'condition',key:effectKey('condition','sanctuary','sanctuary'),condition:'sanctuary',label:sc.label+' '+sanctuary.dc,marker:sc.marker,remaining:d.remaining,timed:true,sanctuaryDC:sanctuary.dc,raw:item};
         }
+        var special=specialConditionSpec(d.label);
+        if(special){var sc2=CONDITIONS[special.condition];return Object.assign({kind:'condition',key:effectKey('condition',special.condition,special.condition),condition:special.condition,label:special.label||sc2.label,marker:sc2.marker,remaining:d.remaining,timed:d.explicit,raw:item},special.extra||{});}
         var rs=recoverySpec(d.label);
         var parsedBase={label:rs.label,remaining:d.remaining,explicit:d.explicit};
         var periodic=periodicSpec(parsedBase),slow=periodic?null:slowedSpec(rs.label),ck=periodic?periodic.condition:(slow?slow.condition:conditionKey(rs.label));
@@ -787,6 +815,7 @@ var AD5EffectTurns = (function () {
                 after.effects[e.key].recovery.attempted=false;
             }
             if(e.condition==='slowed')after.effects[e.key].slowLoss=(e.slowLoss===undefined?null:e.slowLoss);
+            copyEffectExtras(e,after.effects[e.key]);
             if(e.condition==='sanctuary')after.effects[e.key].sanctuaryDC=Number(e.sanctuaryDC)||null;
             if(e.periodic)after.effects[e.key].periodic=clone(e.periodic);
             after.effects[e.key].source=effectSourceRecord(sourceContext);
@@ -1319,6 +1348,7 @@ var AD5EffectTurns = (function () {
                 after.effects[e.key].recovery.attempted=false;
             }
         if(e.condition==='slowed')after.effects[e.key].slowLoss=(e.slowLoss===undefined?null:e.slowLoss);
+        copyEffectExtras(e,after.effects[e.key]);
         if(e.condition==='sanctuary')after.effects[e.key].sanctuaryDC=Number(e.sanctuaryDC)||null;
         if(e.periodic)after.effects[e.key].periodic=clone(e.periodic);
         after.effects[e.key].source=effectSourceRecord(sourceContext);
@@ -1519,6 +1549,7 @@ var AD5EffectTurns = (function () {
         // when it was blocked by condition immunity). Height schedules the fall
         // after the current AD5 transaction to avoid re-entrant HP writes.
         absenceChanged(token,old,newRec);
+        controlChanged(token,old,newRec);
         var maxHpDiff=maxHpBonusOf(newRec)-maxHpBonusOf(old);
         if(maxHpDiff&&typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.maxHpChanged==='function'){try{AD5ConditionEngine.maxHpChanged(token,maxHpDiff);}catch(maxHpError){sendChat(SCRIPT,'/w gm Максимум хитов: '+esc(maxHpError.message||maxHpError),null,{noarchive:true});}}
         try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.effectsChanged==='function')AD5Height.effectsChanged(token,old,newRec);}catch(heightEffectError){sendChat(SCRIPT,'/w gm Высота/падение: '+esc(heightEffectError.message||heightEffectError),null,{noarchive:true});}
@@ -1657,6 +1688,39 @@ var AD5EffectTurns = (function () {
     // Strongest active resistance percent / immunity per damage type on this token.
     // 1.6.9: absence from the battlefield — «изгнан» (Banishment, Maze) and «эфирный план»
     // (Blink) move the token to the GM layer and back when the effect ends.
+    // 1.6.10: Dominate hands the token to the caster's controllers; Haste ending brings lethargy.
+    function controllersFor(sourceTokenId){
+        var st=getObj('graphic',String(sourceTokenId||'')),out=[];if(!st)return out;
+        String(st.get('controlledby')||'').split(',').concat(String((getObj('character',st.get('represents'))||{get:function(){return '';}}).get('controlledby')||'').split(',')).forEach(function(id){id=id.trim();if(id&&out.indexOf(id)<0)out.push(id);});
+        return out;
+    }
+    function condEntry(rec,c){var f=null;if(rec)Object.keys(rec.effects||{}).some(function(k){if(rec.effects[k]&&rec.effects[k].condition===c){f=rec.effects[k];return true;}return false;});return f;}
+    function controlChanged(token,old,rec){
+        var r=root();r.dominatedPrev=r.dominatedPrev||{};
+        var was=condEntry(old,'dominated'),now=condEntry(rec,'dominated');
+        if(!was&&now){
+            if(r.dominatedPrev[token.id]===undefined)r.dominatedPrev[token.id]=String(token.get('controlledby')||'');
+            var ids=String(token.get('controlledby')||'').split(',').filter(Boolean);controllersFor(now.source&&now.source.sourceToken).forEach(function(id){if(ids.indexOf(id)<0)ids.push(id);});
+            token.set('controlledby',ids.join(','));sendChat(SCRIPT,'<b>'+esc(token.get('name')||'')+'</b> подчиняется воле заклинателя.');
+        }else if(was&&!now&&r.dominatedPrev[token.id]!==undefined){token.set('controlledby',r.dominatedPrev[token.id]);delete r.dominatedPrev[token.id];sendChat(SCRIPT,'<b>'+esc(token.get('name')||'')+'</b> освобождается от подчинения.');}
+        if(hasCond(old,'haste')&&!hasCond(rec,'haste')&&!hasCond(rec,'lethargic')){
+            var hid=token.id;setTimeout(function(){var live=getObj('graphic',hid);if(!live)return;try{if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&AD5ConditionEngine.dyingState&&AD5ConditionEngine.dyingState(live))return;}catch(ignoreDying){}applyCondition(live,'вялость 2',{sourceToken:hid,actionName:'Ускорение'});sendChat(SCRIPT,'<b>'+esc(live.get('name')||'')+'</b>: Ускорение закончилось — вялость до конца следующего хода.');},0);
+        }
+    }
+    // Saves repeated on damage (Dominate). Returns true when the effect ended.
+    function damageSaveCheck(token){
+        var rec=snapshot(token.id),key=null;if(!rec)return false;
+        Object.keys(rec.effects).some(function(k){if(rec.effects[k].damageSave){key=k;return true;}return false;});if(!key)return false;
+        var e=rec.effects[key],r=e.damageSave,result=recoveryRollTotal(token,r,e),success=recoverySucceeded(result,r);
+        sendChat(SCRIPT,'&{template:default} {{name=Спасбросок после урона: '+esc(e.label)+'}} {{Цель='+esc(token.get('name')||'')+'}} {{Результат='+esc(String(result.total))+'}} {{Статус=<b>'+(success?'УСПЕХ — эффект снят':'ПРОВАЛ')+'</b>}}');
+        if(success){removeWithSiblings(rec,key);writeRecord(token,rec);}
+        return success;
+    }
+    // A successful save ends the spell on that creature: drop effects of the same cast too.
+    function removeWithSiblings(rec,key){
+        var e=rec.effects[key],cast=e&&e.source&&e.source.castId;delete rec.effects[key];if(!cast)return;
+        Object.keys(rec.effects).forEach(function(k){var x=rec.effects[k];if(x&&x.source&&x.source.castId===cast)delete rec.effects[k];});
+    }
     function hasCond(rec,c){return !!(rec&&Object.keys(rec.effects||{}).some(function(k){return rec.effects[k]&&rec.effects[k].condition===c;}));}
     function absenceChanged(token,old,rec){
         var was=hasCond(old,'banished')||hasCond(old,'ethereal'),now=hasCond(rec,'banished')||hasCond(rec,'ethereal');
@@ -1692,6 +1756,8 @@ var AD5EffectTurns = (function () {
         writeRecord(token,rec);sendChat(SCRIPT,'Остановка времени: '+esc(token.get('name')||'')+' — ещё ходов: '+e.extraTurns+'.');
         sendChat(SCRIPT,'/w gm [Следующий ход в остановленном времени](!ad5fx timestop '+token.id+')',null,{noarchive:true});
     }
+    function teleportFor(tokenId){var e=condEntry(snapshot(tokenId),'teleport');return e?{feet:Number(e.teleportFeet)||0,label:e.label}:null;}
+    function consumeTeleport(token){var rec=snapshot(token.id);if(!rec)return;Object.keys(rec.effects).forEach(function(k){if(rec.effects[k].condition==='teleport')delete rec.effects[k];});writeRecord(token,rec);}
     function maxHpBonusOf(rec){
         if(!rec||!rec.effects)return 0;var total=0;
         activeModifierEntries(rec).forEach(function(row){if(row.modifier&&row.modifier.type==='maxhp')total+=Number(row.modifier.value)||0;});
@@ -1919,7 +1985,7 @@ var AD5EffectTurns = (function () {
     function removeRecoveryEffect(token,condition){
         var rec=snapshot(token.id);if(!rec)return false;
         var key='condition:'+condition;if(!rec.effects[key])return false;
-        delete rec.effects[key];writeRecord(token,rec);return true;
+        removeWithSiblings(rec,key);writeRecord(token,rec);return true;
     }
     function markRecoveryAttempt(token,condition){
         var rec=snapshot(token.id),key='condition:'+condition;if(!rec||!rec.effects[key]||!rec.effects[key].recovery)return null;
@@ -2009,6 +2075,16 @@ var AD5EffectTurns = (function () {
         sendChat(SCRIPT,'&{template:default} {{name=Замешательство}} {{Существо='+esc(token.get('name')||token.id)+'}} {{d10='+r+'}} {{Поведение='+esc(text)+'}}');
         return r;
     }
+    function announceCommand(token,e){
+        var o=String(e.order||''),n=matchNorm(o),text;
+        if(/^(?:ниц|пади|падай|на колени|grovel)/.test(n)){text='падает ничком и заканчивает ход';var proneSrc=clone(e.source||{}),proneId=token.id;setTimeout(function(){var live=getObj('graphic',proneId);if(live)try{applyCondition(live,'сбит с ног',proneSrc);}catch(ignoreProne){}},0);}
+        else if(/^(?:стой|замри|halt)/.test(n))text='не двигается и не совершает действий';
+        else if(/^(?:беги|прочь|flee)/.test(n))text='тратит ход на то, чтобы удалиться от заклинателя самым быстрым способом';
+        else if(/^(?:брось|отпусти|drop)/.test(n))text='бросает то, что держит, и заканчивает ход';
+        else if(/^(?:ко мне|подойди|approach)/.test(n))text='движется к заклинателю кратчайшим путём и заканчивает ход в 5 фт от него';
+        else text='выполняет приказ «'+o+'»';
+        sendChat(SCRIPT,'&{template:default} {{name=Приказ}} {{Существо='+esc(token.get('name')||'')+'}} {{Действие='+esc(text)+'}}');
+    }
     function beginGroup(pageId,key,silent){
         var active=partyPageId();
         if(!key||!active||pageId!==active)return {changed:0,expired:0,recovered:0};
@@ -2021,13 +2097,16 @@ var AD5EffectTurns = (function () {
                 var e=after.effects[k];if(!e)return;
                 if(e.condition==='no_reactions'){e.reactionTurnStarted=true;e.remaining=1;touched=true;return;}
                 if(e.condition==='confused')announceConfusion(token);
+                if(e.condition==='commanded'&&!e.commandAnnounced){e.commandAnnounced=true;touched=true;announceCommand(token,e);}
+                if(e.condition==='haste')sendChat(SCRIPT,'Ускорение — <b>'+esc(token.get('name')||'')+'</b>: +1 действие (одна атака оружием, Рывок, Отход, Засада или Использование предмета).');
+                if(e.condition==='slowed'&&e.source&&/замедл|slow/i.test(String(e.source.actionName||'')))sendChat(SCRIPT,'Замедление — <b>'+esc(token.get('name')||'')+'</b>: либо действие, либо бонусное действие; не более одной атаки; заклинание с временем накладывания 1 действие — d20 11+, иначе срабатывает в следующий ход.');
                 if(e.condition==='ethereal'&&e.source&&e.source.actionName==='Мерцание'){delete after.effects[k];touched=true;expired++;return;}
                 if(e.recovery){
                     e.recovery.attempted=false;touched=true;
                     if(npcToken(token)&&!e.recovery.action){
                         e.recovery.attempted=true;
                         try{
-                            if(autoNpcRecovery(token,e)){delete after.effects[k];expired++;recovered++;}
+                            if(autoNpcRecovery(token,e)){removeWithSiblings(after,k);expired++;recovered++;}
                         }catch(err){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+'</b>: спасбросок снятия эффекта по '+esc(token.get('name')||token.id)+': '+esc(err.message||err));}
                     }
                     return;
@@ -2056,6 +2135,7 @@ var AD5EffectTurns = (function () {
             Object.keys(after.effects).sort().forEach(function(k){
                 var e=after.effects[k];if(!e)return;
                 if(e.condition==='no_reactions'){if(e.reactionTurnStarted){delete after.effects[k];touched=true;expired++;}return;}
+                if((e.condition==='commanded'&&e.commandAnnounced)||e.condition==='teleport'){delete after.effects[k];touched=true;expired++;return;}
                 if(e.condition==='blink'){var bd=typeof randomInteger==='function'?randomInteger(20):1+Math.floor(Math.random()*20);sendChat(SCRIPT,'Мерцание — '+esc(token.get('name')||'')+': d20 '+bd+(bd>=11?' — уходит на Эфирный план до начала своего хода.':' — остаётся.'));if(bd>=11)blinkOut.push(token.id);}
                 if(!e.recovery)return;
                 // Recovery-save effects resolve their periodic damage at END of
@@ -2530,7 +2610,7 @@ var AD5EffectTurns = (function () {
         rollModifierFormula:rollModifierFormula,
         rollModifiers:rollModifierRows,
         conditionalProfile:условныйПрофиль,
-        conditionalAttackRule:условноеПравилоАтаки,rollUsed:rollUsed,mirrorImageAttack:mirrorImageAttack,
+        conditionalAttackRule:условноеПравилоАтаки,rollUsed:rollUsed,damageSaveCheck:damageSaveCheck,teleportFor:teleportFor,consumeTeleport:consumeTeleport,mirrorImageAttack:mirrorImageAttack,
         hitPayloadProfiles:разобратьHitPayloads,
         hitPayloadsForAttack:hitPayloadsForAttack,
         commitHitPayloads:commitHitPayloads,

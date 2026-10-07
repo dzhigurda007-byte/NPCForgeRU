@@ -3,7 +3,10 @@ if(typeof AD5Movement!=='undefined'&&AD5Movement) {
     log('AD5Movement: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Movement Engine v2.3.5
+ * AD5 Movement Engine v2.3.8
+ * 2.3.8: teleport — while the token has «телепорт N фт» (Effect Turns 1.6.10), its next
+ *        manual move up to N ft is a teleport: no speed spent, no path (areas see only the
+ *        destination), no opportunity attacks; the effect is used up. Longer moves are undone.
  * Companion for AD5 4.3.68 + AD5 Areas 2.23.5 + AD5 Reactions 1.4.1 + AD5 Condition Engine 1.0.0.
  *
  * Core path model:
@@ -32,7 +35,7 @@ if(typeof AD5Movement!=='undefined'&&AD5Movement) {
 var AD5Movement=(function(){
     'use strict';
 
-    var VERSION='2.3.7',SCRIPT='AD5 Movement';
+    var VERSION='2.3.8',SCRIPT='AD5 Movement';
     var runtimeLastGroup=Object.create(null),suppressed=Object.create(null),recentMoveByToken=Object.create(null),pendingForced=Object.create(null),listeners=[];
 
     function root(){
@@ -480,6 +483,19 @@ var AD5Movement=(function(){
         var page=getObj('page',token.get('_pageid')),forced=forcedMetaFor(token.id),route=routeFromMove(token,prev);
         if(!forced&&typeof AD5SpellEffects!=='undefined'&&AD5SpellEffects.gateMove(token,prev,route))return {blocked:true,tokenId:token.id,points:[{left:fromLeft,top:fromTop},{left:fromLeft,top:fromTop}],segments:[],distance:0};
         if(forced){route={points:[{left:fromLeft,top:fromTop},{left:toLeft,top:toTop}],hasWaypoints:false,mode:'forced',manual:false,raw:'',start:{left:fromLeft,top:fromTop},end:{left:toLeft,top:toTop}};delete pendingForced[token.id];}
+        var teleport=null;
+        if(!forced&&route.manual){try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.teleportFor==='function')teleport=AD5EffectTurns.teleportFor(token.id);}catch(ignoreTeleport){}}
+        if(teleport){
+            var jump=routeDistance([{left:fromLeft,top:fromTop},{left:toLeft,top:toTop}],page);
+            if(jump>teleport.feet+0.01){
+                withSuppressed(token.id,function(){token.set({left:fromLeft,top:fromTop,lastmove:String(prev&&prev.lastmove!==undefined?prev.lastmove:'')});});
+                sendChat(SCRIPT,'/w gm <b>'+esc(token.get('name')||token.id)+'</b>: телепорт не дальше '+fmt(teleport.feet)+' фт (попытка '+fmt(jump)+' фт).',null,{noarchive:true});
+                return {blocked:true,tokenId:token.id,points:[{left:fromLeft,top:fromTop},{left:fromLeft,top:fromTop}],segments:[],distance:0,charged:false,mode:'blocked',manual:true,forced:false};
+            }
+            route={points:[{left:toLeft,top:toTop},{left:toLeft,top:toTop}],hasWaypoints:false,mode:'teleport',manual:true,teleport:true,raw:'',start:{left:toLeft,top:toTop},end:{left:toLeft,top:toTop},jump:jump};
+            try{AD5EffectTurns.consumeTeleport(token);}catch(ignoreConsume){}
+            sendChat(SCRIPT,'<b>'+esc(token.get('name')||token.id)+'</b> телепортируется на '+fmt(jump)+' фт.',null,{noarchive:true});
+        }
         var solidBlock=null;
         try{
             if(typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.clipMovementRoute==='function'){
@@ -503,7 +519,7 @@ var AD5Movement=(function(){
         // Оглушение / Опутывание / Окаменение: effective speed is 0. A manual
         // drag is voluntary movement, so snap the token back before Areas/Reactions
         // can treat the drag as a real path. Forced/API movement is not blocked.
-        if(!forced&&route.manual&&si.effective!==null&&si.effective<=0){
+        if(!forced&&route.manual&&!route.teleport&&si.effective!==null&&si.effective<=0){
             withSuppressed(token.id,function(){token.set({left:fromLeft,top:fromTop,lastmove:String(prev&&prev.lastmove!==undefined?prev.lastmove:'')});});
             sendChat(SCRIPT,'/w gm <b>'+esc(token.get('name')||token.id)+'</b>: скорость 0 — добровольное перемещение отменено.',null,{noarchive:true});
             return {blocked:true,tokenId:token.id,points:[{left:fromLeft,top:fromTop},{left:fromLeft,top:fromTop}],segments:[],distance:0,charged:false,mode:'blocked',manual:true,forced:false};
@@ -511,19 +527,19 @@ var AD5Movement=(function(){
         // Both user movement modes are real movement. Direct LMB drag spends the
         // straight-line distance; waypoint movement spends the routed distance.
         // API/forced movement never spends the creature's voluntary speed.
-        var charged=!!(route.manual&&active&&si.effective!==null),afterSpent=charged?beforeSpent+distance:beforeSpent;st.spent=afterSpent;
+        var charged=!!(route.manual&&!route.teleport&&active&&si.effective!==null),afterSpent=charged?beforeSpent+distance:beforeSpent;st.spent=afterSpent;
         var id=newMoveId(),r=root(),tx={
             id:id,movementTxn:id,tokenId:token.id,page:token.get('_pageid'),name:String(token.get('name')||token.id),
             from:{left:fromLeft,top:fromTop,lastmove:String(prev&&prev.lastmove!==undefined?prev.lastmove:'')},to:{left:toLeft,top:toTop,lastmove:lastmove},
             points:clone(route.points),segments:segments,distance:distance,hasWaypoints:route.hasWaypoints,mode:route.mode,manual:route.manual,rawLastmove:route.raw,
             forced:!!forced,forcedKind:forced?String(forced.kind||''):'',forcedSourceTokenId:forced?String(forced.sourceTokenId||''):'',forcedReason:forced?String(forced.reason||''):'',requestedFeet:forced?Number(forced.requestedFeet)||0:0,solidBlocked:!!(solidBlock&&solidBlock.blocked),solidAreaId:solidBlock&&solidBlock.areaId?String(solidBlock.areaId):'',
-            charged:charged,activeTurn:active,beforeSpent:beforeSpent,afterSpent:afterSpent,effective:si.effective,base:si.base,status:'applied',created:now,summaryScheduled:false,emitted:false
+            teleport:!!route.teleport,charged:charged,activeTurn:active,beforeSpent:beforeSpent,afterSpent:afterSpent,effective:si.effective,base:si.base,status:'applied',created:now,summaryScheduled:false,emitted:false
         };
         r.moves[id]=tx;r.order.push(id);r.lastByToken[token.id]=id;pruneMoves();
         recentMoveByToken[token.id]={signature:signature,time:now,id:id};
         return {movementTxn:id,tokenId:token.id,points:clone(tx.points),segments:clone(tx.segments),distance:distance,charged:charged,mode:tx.mode,manual:tx.manual};
     }
-    function publicMove(tx){return tx?{movementTxn:tx.id,id:tx.id,tokenId:tx.tokenId,page:tx.page,name:tx.name,from:clone(tx.from),to:clone(tx.to),points:clone(tx.points),segments:clone(tx.segments),distance:tx.distance,hasWaypoints:tx.hasWaypoints,mode:tx.mode,manual:tx.manual,forced:!!tx.forced,forcedKind:tx.forcedKind||'',forcedSourceTokenId:tx.forcedSourceTokenId||'',forcedReason:tx.forcedReason||'',requestedFeet:Number(tx.requestedFeet)||0,charged:tx.charged,activeTurn:tx.activeTurn,created:tx.created,solidBlocked:!!tx.solidBlocked,solidAreaId:tx.solidAreaId||''}:null;}
+    function publicMove(tx){return tx?{movementTxn:tx.id,id:tx.id,tokenId:tx.tokenId,page:tx.page,name:tx.name,from:clone(tx.from),to:clone(tx.to),points:clone(tx.points),segments:clone(tx.segments),distance:tx.distance,hasWaypoints:tx.hasWaypoints,mode:tx.mode,manual:tx.manual,teleport:!!tx.teleport,forced:!!tx.forced,forcedKind:tx.forcedKind||'',forcedSourceTokenId:tx.forcedSourceTokenId||'',forcedReason:tx.forcedReason||'',requestedFeet:Number(tx.requestedFeet)||0,charged:tx.charged,activeTurn:tx.activeTurn,created:tx.created,solidBlocked:!!tx.solidBlocked,solidAreaId:tx.solidAreaId||''}:null;}
     function onMove(fn){if(typeof fn!=='function')return false;if(listeners.indexOf(fn)<0)listeners.push(fn);return true;}
     function offMove(fn){var i=listeners.indexOf(fn);if(i<0)return false;listeners.splice(i,1);return true;}
     function emitMove(tx){
