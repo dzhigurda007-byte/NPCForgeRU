@@ -48,7 +48,7 @@ var AD5Background = (function(){
     return {put:put,isReady:function(){return ready;}};
 }());
 /*
-AutoDamage 4.3.149 / NPC Forge RU 2.7.4 — «шепот звезд».
+AutoDamage 4.3.150 / NPC Forge RU 2.7.4 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Обычная атака игрока -> Target AD5 на карте -> штатные запросы преимущества/помехи/доп. урона Roll20 -> бросок -> урон и крит. NPC/Transform сохраняют штатный Target Roll20. AutoFront заранее держит боевые токены на переднем плане. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -72,6 +72,7 @@ hp листа используется однократно как началь�
 Поле «Описание» способности является источником исходов спасброска. Элементы разделяются запятыми: ПРВ: ... для провала, УСП: ... для успеха. Таймеры и маркеры ведёт отдельный AD5 Effect Turns. Если УСП отсутствует, успешный спас автоматически означает 0 урона и 0 эффектов.
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
+4.3.150: Mirror Image: an attack against a token with «зеркальные образы» may hit a duplicate (d20 6+/8+/11+, AC 10 + DEX); a hit destroys it and the target takes nothing.
 4.3.149: «СЛУЧАЙНО dN: 1 = …; 2 = …» — one roll per target picks a variant: «тип ТИП» retypes Урон1, «нет урона», «повтор N» (N more variants, each a separate damage type), other items are effects (Prismatic Spray).
 4.3.148: Phases «РОСТ XdY» adds XdY per caster turn under concentration (Delayed Blast Fireball). Fix: save-based phase damage (ВХОД/ОБЛН/ОКОН …) no longer reuses the pre-save placeholder dice (dealt 1 per component).
 4.3.147: A target's saving throw spends Effect Turns «РАСХ: СПАСБРОСОК» charges (Resistance).
@@ -766,7 +767,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.149', diagnostics = [], debug = false;
+    var VERSION = '4.3.150', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -7818,6 +7819,16 @@ var AD5 = (function () {
                         // against a Paralyzed target within 5 ft automatically hits
                         // unless the kept d20 is a natural 1 and is treated as one
                         // critical hit (never a second/stacked critical on a natural 20).
+                        // 4.3.150: Mirror Image — the attack may go to a duplicate instead of the target.
+                        var mirror=null;try{if(hasAttack&&typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.mirrorImageAttack==='function')mirror=AD5EffectTurns.mirrorImageAttack(t.token,r.total,die);}catch(mirrorErr){record('Зеркальные образы: '+(mirrorErr.message||mirrorErr));}
+                        if(mirror&&mirror.redirected){
+                            if(событиеАтаки)событиеAD5('ПРОМАХ',данныеСобытияАтаки({итогАтаки:r.total,натуральныйБросок:die,крит:false,концентрацияId:concentrationId||null}));
+                            sendChat('шепот звезд','атака приходится в зеркальный образ'+(mirror.hit?' — образ исчезает':' — промах'));
+                            if(context)multiResult(context.batch,context.tid,'зеркальный образ');
+                            gm('<b>'+esc(name)+'</b> → '+esc(t.token.get('name')||t.token.id)+'<br>Зеркальные образы ('+mirror.images+'): d20 '+mirror.roll+' ≥ '+mirror.need+' — атака по образу. Атака '+r.total+' против КД образа '+mirror.ac+' — '+(mirror.hit?'образ уничтожен, осталось '+mirror.left:'промах')+'.');
+                            if(targetMode()==='selected'){delete armed[pid];delete deferred[pid];delete pending[pid];}
+                            return;
+                        }
                         var hit = !hasAttack || (attackConditionRule.autoHitClose ? die!==1 : (die!==1 && (die===20 || r.total>=ac)));
                         var forceCritical=!!(attackConditionRule&&attackConditionRule.forceCritical&&die!==1);
                         // Only fixed, non-sensitive text is published to all players.

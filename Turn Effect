@@ -3,7 +3,8 @@ if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
     log('AD5EffectTurns: duplicate module skipped; keep one installed copy.');
 } else {
 /*
-AD5 Effect Turns 1.6.8
+AD5 Effect Turns 1.6.9
+1.6.9: Absence: «изгнан» (Banishment, Maze) and «эфирный план» move the token to the GM layer and back; «мерцание» (Blink) rolls d20 at the end of the bearer's turn and returns it at the start of the next; «остановка времени» (Time Stop) rolls 1d4+1 turns, GM button !ad5fx timestop advances them; «зеркальные образы» (3 images); recovery «… ПРОВЕРКА ИНТ20» is an ability check (Maze).
 1.6.8: «замешательство» condition (Confusion): d10 behaviour announced at the start of the creature's turn. New markers: drink-me (замешательство), death-zone (без лечения).
 1.6.7: Counted recovery «СОСТ АБЛ{DC} СЧЁТ N → эффект[+эффект]»: N successes end it, N failures replace it (Flesh to Stone, Contagion).
 1.6.6: УСЛЭФ: ПОМ АТАКАМ ПО ЦЕЛИ (Blur, Holy Aura, Foresight), ПРЕМ АТАКАМ ИСТОЧНИКА ПО ЦЕЛИ (True Strike), ПОМ/ПРЕМ АТАКАМ ЦЕЛИ (Vicious Mockery, Foresight); РАСХ: ЦЕЛЬ АТАКОВАЛА, АТАКА ИСТОЧНИКА ПО ЦЕЛИ, СПАСБРОСОК, ПРОВЕРКА; ability «ВСЕ» in save/check modifiers («Спас ВСЕ +1д4», «Проверка ВСЕ +1д4», «прем все»); rollUsed() for recovery saves.
@@ -55,7 +56,7 @@ var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5
 // silently shadow every newer fix.
 var AD5EffectTurns = (function () {
     'use strict';
-    var VERSION='1.6.8', SCRIPT='AD5 Effect Turns';
+    var VERSION='1.6.9', SCRIPT='AD5 Effect Turns';
     var runtimeLastGroup=Object.create(null);
     var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
     var markerCacheRaw=null, markerCacheByName=Object.create(null);
@@ -122,6 +123,11 @@ var AD5EffectTurns = (function () {
         warding_bond:{marker:'three-leaves',label:'Охранная связь',aliases:['охранная связь','warding bond','связь урона']},
         // Death Ward: first drop to 0 HP from damage leaves 1 HP instead (Condition Engine).
         death_ward:{marker:'trophy',label:'Защита от смерти',aliases:['защита от смерти','death ward']},
+        mirror_image:{marker:'sentry-gun',label:'Зеркальные образы',aliases:['зеркальные образы','отражения','mirror image']},
+        blink:{marker:'cobweb',label:'Мерцание',aliases:['мерцание','blink']},
+        ethereal:{marker:'grenade',label:'На Эфирном плане',aliases:['эфирный план','на эфирном плане','ethereal']},
+        banished:{marker:'radioactive',label:'Изгнан',aliases:['изгнан','изгнание','в лабиринте','лабиринт','banished','maze']},
+        time_stop:{marker:'snail',label:'Остановка времени',aliases:['остановка времени','time stop']},
         confused:{marker:'drink-me',label:'Замешательство',aliases:['замешательство','смятение','в замешательстве','confused','confusion']},
         no_healing:{marker:'death-zone',label:'Без лечения',aliases:['без лечения','запрет лечения','не может восстанавливать хиты','no healing']}
     };
@@ -428,9 +434,12 @@ var AD5EffectTurns = (function () {
         if(!m)return {label:text,recovery:null};
         var ability=RECOVERY_ALIAS[matchNorm(m[1])],dc=Number(m[2]);
         if(!ability||!Number.isSafeInteger(dc)||dc<1||dc>99)return {label:text,recovery:null};
-        var cleaned=text.slice(0,m.index).trim();
+        var cleaned=text.slice(0,m.index).trim(),check=false;
+        // 1.6.9: «… ПРОВЕРКА ИНТ20» — an ability check instead of a save (Maze).
+        var cm=/^(.*?\S)\s+(?:проверка|check)$/i.exec(cleaned);if(cm){cleaned=cm[1];check=true;}
         if(!cleaned)return {label:text,recovery:null};
-        return {label:cleaned,recovery:{ability:ability,dc:dc,short:RECOVERY_ABILITIES[ability].short,attempted:false}};
+        var rec={ability:ability,dc:dc,short:RECOVERY_ABILITIES[ability].short,attempted:false};if(check)rec.check=true;
+        return {label:cleaned,recovery:rec};
     }
 
     var PERIODIC_DAMAGE={
@@ -1367,7 +1376,7 @@ var AD5EffectTurns = (function () {
         if(!Number.isSafeInteger(dc)||dc<1||dc>99)return null;
         return {dc:dc,remaining:e.remaining,label:e.label||('Убежище '+dc)};
     }
-    var POSITIVE_CONDITIONS={invisible:true,haste:true,flying:true,concentration:true,shielded:true,blessed:true,sanctuary:true,dodging:true,disengaging:true,warding_bond:true,death_ward:true};
+    var POSITIVE_CONDITIONS={mirror_image:true,blink:true,time_stop:true,invisible:true,haste:true,flying:true,concentration:true,shielded:true,blessed:true,sanctuary:true,dodging:true,disengaging:true,warding_bond:true,death_ward:true};
     function effectIsDebuff(e){
         if(!e)return false;
         if(e.kind==='modifier')return !!(e.modifier&&e.modifier.positive===false);
@@ -1509,6 +1518,7 @@ var AD5EffectTurns = (function () {
         // fall when a flight-breaking condition is actually applied (and not
         // when it was blocked by condition immunity). Height schedules the fall
         // after the current AD5 transaction to avoid re-entrant HP writes.
+        absenceChanged(token,old,newRec);
         var maxHpDiff=maxHpBonusOf(newRec)-maxHpBonusOf(old);
         if(maxHpDiff&&typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.maxHpChanged==='function'){try{AD5ConditionEngine.maxHpChanged(token,maxHpDiff);}catch(maxHpError){sendChat(SCRIPT,'/w gm Максимум хитов: '+esc(maxHpError.message||maxHpError),null,{noarchive:true});}}
         try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.effectsChanged==='function')AD5Height.effectsChanged(token,old,newRec);}catch(heightEffectError){sendChat(SCRIPT,'/w gm Высота/падение: '+esc(heightEffectError.message||heightEffectError),null,{noarchive:true});}
@@ -1645,6 +1655,43 @@ var AD5EffectTurns = (function () {
         return {total:total,rolled:rolled};
     }
     // Strongest active resistance percent / immunity per damage type on this token.
+    // 1.6.9: absence from the battlefield — «изгнан» (Banishment, Maze) and «эфирный план»
+    // (Blink) move the token to the GM layer and back when the effect ends.
+    function hasCond(rec,c){return !!(rec&&Object.keys(rec.effects||{}).some(function(k){return rec.effects[k]&&rec.effects[k].condition===c;}));}
+    function absenceChanged(token,old,rec){
+        var was=hasCond(old,'banished')||hasCond(old,'ethereal'),now=hasCond(rec,'banished')||hasCond(rec,'ethereal');
+        if(!was&&now&&token.get('layer')==='objects'){token.set('layer','gmlayer');sendChat(SCRIPT,'<b>'+esc(token.get('name')||'Существо')+'</b> исчезает с поля боя.');}
+        else if(was&&!now&&token.get('layer')==='gmlayer'){token.set('layer','objects');sendChat(SCRIPT,'<b>'+esc(token.get('name')||'Существо')+'</b> возвращается на поле боя.');}
+        if(rec&&hasCond(rec,'time_stop')&&!hasCond(old,'time_stop'))Object.keys(rec.effects).forEach(function(k){var e=rec.effects[k];if(e.condition!=='time_stop'||e.extraTurns!==undefined)return;
+            e.extraTurns=(typeof randomInteger==='function'?randomInteger(4):1+Math.floor(Math.random()*4))+1;
+            sendChat(SCRIPT,'&{template:default} {{name=Остановка времени}} {{Существо='+esc(token.get('name')||'')+'}} {{Ходов подряд='+e.extraTurns+'}} {{Мастер=не передавайте ход; каждый следующий ход — кнопкой}}');
+            sendChat(SCRIPT,'/w gm [Следующий ход в остановленном времени](!ad5fx timestop '+token.id+')',null,{noarchive:true});
+        });
+    }
+    // Mirror Image: an attack against the bearer may hit a duplicate instead (d20 6+/8+/11+
+    // for 3/2/1 images); a duplicate has AC 10 + DEX modifier and is destroyed by a hit.
+    function mirrorImageAttack(target,attackTotal,die){
+        var rec=snapshot(target.id),key=null;if(!rec)return null;
+        Object.keys(rec.effects).some(function(k){if(rec.effects[k].condition==='mirror_image'){key=k;return true;}return false;});if(!key)return null;
+        var e=rec.effects[key],images=e.images===undefined?3:Number(e.images)||0;if(images<=0)return null;
+        var need=images>=3?6:images===2?8:11,d=typeof randomInteger==='function'?randomInteger(20):1+Math.floor(Math.random()*20);
+        var out={images:images,roll:d,need:need,redirected:d>=need};if(!out.redirected)return out;
+        var cid=target.get('represents'),dex=attr(cid,'dexterity_mod'),dm=dex?Number(dex.get('current'))||0:0;out.ac=10+dm;
+        out.hit=die!==1&&(die===20||Number(attackTotal)>=out.ac);
+        if(out.hit){e.images=images-1;out.left=e.images;e.label=CONDITIONS.mirror_image.label+' '+e.images;if(e.images<=0)delete rec.effects[key];writeRecord(target,rec);}else out.left=images;
+        return out;
+    }
+    function timeStopTurn(token,pid){
+        if(!playerIsGM(pid))throw new Error('Только Мастер ведёт ходы в остановленном времени.');
+        var rec=snapshot(token.id),key=null;if(rec)Object.keys(rec.effects).some(function(k){if(rec.effects[k].condition==='time_stop'){key=k;return true;}return false;});
+        if(!key)throw new Error('Остановка времени не активна.');
+        var g=groupKey(token),page=token.get('_pageid');endGroup(page,g,true);beginGroup(page,g,true);
+        rec=snapshot(token.id);var e=rec&&rec.effects[key];if(!e)return;
+        e.extraTurns=Math.max(0,(Number(e.extraTurns)||1)-1);
+        if(e.extraTurns<=0){delete rec.effects[key];writeRecord(token,rec);sendChat(SCRIPT,'<b>Время возобновляет ход.</b>');return;}
+        writeRecord(token,rec);sendChat(SCRIPT,'Остановка времени: '+esc(token.get('name')||'')+' — ещё ходов: '+e.extraTurns+'.');
+        sendChat(SCRIPT,'/w gm [Следующий ход в остановленном времени](!ad5fx timestop '+token.id+')',null,{noarchive:true});
+    }
     function maxHpBonusOf(rec){
         if(!rec||!rec.effects)return 0;var total=0;
         activeModifierEntries(rec).forEach(function(row){if(row.modifier&&row.modifier.type==='maxhp')total+=Number(row.modifier.value)||0;});
@@ -1974,6 +2021,7 @@ var AD5EffectTurns = (function () {
                 var e=after.effects[k];if(!e)return;
                 if(e.condition==='no_reactions'){e.reactionTurnStarted=true;e.remaining=1;touched=true;return;}
                 if(e.condition==='confused')announceConfusion(token);
+                if(e.condition==='ethereal'&&e.source&&e.source.actionName==='Мерцание'){delete after.effects[k];touched=true;expired++;return;}
                 if(e.recovery){
                     e.recovery.attempted=false;touched=true;
                     if(npcToken(token)&&!e.recovery.action){
@@ -2000,7 +2048,7 @@ var AD5EffectTurns = (function () {
     function endGroup(pageId,key,silent){
         var active=partyPageId();
         if(!key||!active||pageId!==active)return {changed:0,expired:0};
-        var db=root().tokens,changed=0,expired=0;
+        var db=root().tokens,changed=0,expired=0,blinkOut=[];
         Object.keys(db).forEach(function(tokenId){
             var token=getObj('graphic',tokenId);if(!token){delete db[tokenId];return;}
             if(token.get('_pageid')!==pageId||groupKey(token)!==key)return;
@@ -2008,6 +2056,7 @@ var AD5EffectTurns = (function () {
             Object.keys(after.effects).sort().forEach(function(k){
                 var e=after.effects[k];if(!e)return;
                 if(e.condition==='no_reactions'){if(e.reactionTurnStarted){delete after.effects[k];touched=true;expired++;}return;}
+                if(e.condition==='blink'){var bd=typeof randomInteger==='function'?randomInteger(20):1+Math.floor(Math.random()*20);sendChat(SCRIPT,'Мерцание — '+esc(token.get('name')||'')+': d20 '+bd+(bd>=11?' — уходит на Эфирный план до начала своего хода.':' — остаётся.'));if(bd>=11)blinkOut.push(token.id);}
                 if(!e.recovery)return;
                 // Recovery-save effects resolve their periodic damage at END of
                 // the turn. A successful recovery save removed the effect earlier,
@@ -2022,6 +2071,7 @@ var AD5EffectTurns = (function () {
             if(touched){changed++;writeRecord(token,after);}
         });
         clearRecoveryActionsForGroup(pageId,key);
+        blinkOut.forEach(function(id){var bt=getObj('graphic',id);if(bt)applyCondition(bt,'эфирный план',{sourceToken:id,actionName:'Мерцание'});});
         if(!silent&&changed)sendChat(SCRIPT,'/w gm <b>'+SCRIPT+'</b>: конец хода «'+String(key).replace(/^npc:|^token:/,'')+'» — обновлено токенов: '+changed+', завершено эффектов: '+expired+'.');
         return {changed:changed,expired:expired};
     }
@@ -2355,6 +2405,7 @@ var AD5EffectTurns = (function () {
                 if(!condition)throw new Error('Не указан эффект для снятия.');
                 playerRecovery(token,condition,msg.playerid);return;
             }
+            if(sub==='timestop'){var tst=getObj('graphic',parts[2]);if(!tst)throw new Error('Токен не найден.');timeStopTurn(tst,msg.playerid);return;}
             if(sub==='unrestrain'){var selected=String(msg.content||'').trim().split(/\s+/)[2],rt=getObj('graphic',selected||((msg.selected||[])[0]||{})._id);releaseRestrained(rt,msg.playerid);sendChat(SCRIPT,'/w gm Опутывание снято.',null,{noarchive:true});return;}
             if(sub==='ping'){sendChat(SCRIPT,'/w gm '+SCRIPT+' <b>'+VERSION+'</b> активен.'+(AD5EffectTurns_PreviousVersion?' До него в sandbox уже была загружена версия <b>'+esc(AD5EffectTurns_PreviousVersion)+'</b>; отключите старую вкладку Effect Turns и перезапустите API, чтобы не было двух обработчиков Turn Tracker.':''));return;}
             if(sub==='status'){
@@ -2479,7 +2530,7 @@ var AD5EffectTurns = (function () {
         rollModifierFormula:rollModifierFormula,
         rollModifiers:rollModifierRows,
         conditionalProfile:условныйПрофиль,
-        conditionalAttackRule:условноеПравилоАтаки,rollUsed:rollUsed,
+        conditionalAttackRule:условноеПравилоАтаки,rollUsed:rollUsed,mirrorImageAttack:mirrorImageAttack,
         hitPayloadProfiles:разобратьHitPayloads,
         hitPayloadsForAttack:hitPayloadsForAttack,
         commitHitPayloads:commitHitPayloads,
