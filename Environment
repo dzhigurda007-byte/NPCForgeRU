@@ -3,7 +3,8 @@ if(typeof AD5Environment!=='undefined'&&AD5Environment) {
     log('AD5Environment: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Environment 1.6.8
+ * AD5 Environment 1.6.9
+ * 1.6.9: a SOLID volume containing the target's centre (a wall panel's durability token) gives it no cover.
  * 1.6.8: body data from the character sheet — «Рост» (height, feet), «Вес» (weight, pounds), «Размер» (size);
  *        a bare number is feet / pounds; «6'2\"», «6 фт», «180 фунтов» also work. Order for height:
  *        «рост:» in Слабости (explicit override) → sheet Рост → size → token size. bodyProfile(token).
@@ -76,7 +77,7 @@ if(typeof AD5Environment!=='undefined'&&AD5Environment) {
  */
 var AD5Environment=(function(){
     'use strict';
-    var VERSION='1.6.8',SCRIPT='AD5 Environment',HEIGHT_HOOKED=false,BROWN='#8b4513',HEIGHT_LAYER='gmlayer',pendingTokenMoves=Object.create(null),forcedMoveGuards=Object.create(null),forcedMoveSequence=0;
+    var VERSION='1.6.9',SCRIPT='AD5 Environment',HEIGHT_HOOKED=false,BROWN='#8b4513',HEIGHT_LAYER='gmlayer',pendingTokenMoves=Object.create(null),forcedMoveGuards=Object.create(null),forcedMoveSequence=0;
     var COVER_RULES={quarter:{key:'quarter',label:'1/4 укрытия',ac:1,dex:1},half:{key:'half',label:'1/2 укрытия',ac:2,dex:2},threeQuarter:{key:'threeQuarter',label:'3/4 укрытия',ac:5,dex:5},full:{key:'full',label:'полное укрытие',ac:0,dex:0,full:true}};
     var TYPE_LABELS={phys:'ФИЗ',zaslow:'ЗАСЛОУ',zashigh:'ЗАСХАЙ',solid:'СОЛИД'};
     var POSTURE_MARKERS={crouch:'027-Blindsiding',lie:'302-Ambushing'};
@@ -467,7 +468,10 @@ var AD5Environment=(function(){
     function coverProfileFromPoint(pageId,sx,sy,sourceZ,target){
         if(!isToken(target)||String(pageId||'')!==pageIdOf(target))return emptyCover(null,[],0);
         sx=Number(sx)||0;sy=Number(sy)||0;sourceZ=Number(sourceZ);if(!Number.isFinite(sourceZ))sourceZ=0;
-        var targetInfo=bodyHeightFromSheet(target),targetHeight=Math.max(0.1,targetInfo.height),targetBase=elevation(target),targetTop=targetBase+targetHeight,areas=pageAreas(pageIdOf(target)).filter(function(a){var t=areaType(a.rec);return t==='phys'||t==='solid';}),usedMap={},samples=targetLateralPoints(sx,sy,target),hiddenSum=0,solidHidden=0;
+        // 1.6.9: a SOLID volume that contains the target's centre is the target itself (a wall panel's
+        // durability token) and does not hide it.
+        var targetCx=Number(target.get('left'))||0,targetCy=Number(target.get('top'))||0;
+        var targetInfo=bodyHeightFromSheet(target),targetHeight=Math.max(0.1,targetInfo.height),targetBase=elevation(target),targetTop=targetBase+targetHeight,areas=pageAreas(pageIdOf(target)).filter(function(a){var t=areaType(a.rec);if(t==='solid'&&containsPointArea(a,targetCx,targetCy))return false;return t==='phys'||t==='solid';}),usedMap={},samples=targetLateralPoints(sx,sy,target),hiddenSum=0,solidHidden=0;
         samples=samples.map(function(point){
             var threshold=-Infinity,solid=false,blockers=[];
             areas.forEach(function(a){

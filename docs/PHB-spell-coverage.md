@@ -1,6 +1,6 @@
 # Заклинания PHB (2014): что покрывает автоматизация AD5
 
-Состояние сборки на ветке `claude/confident-bell-k7s63s`: AutoDamage 4.3.153, Effect Turns 1.6.12, Areas 2.25.1, Phases 1.1.5, Condition Engine 1.2.16, Movement 2.3.8, Reactions 1.6.11, Concentration 1.2.10, Spell Library 2.3.19.
+Состояние сборки на ветке `claude/confident-bell-k7s63s`: AutoDamage 4.3.155, Effect Turns 1.6.13, Areas 2.26.0, Phases 1.1.5, Condition Engine 1.2.17, Movement 2.3.9, Environment 1.6.9, Reactions 1.6.11, Concentration 1.2.10, Spell Library 2.3.21.
 
 ## Как считалось
 
@@ -42,6 +42,13 @@
 | Опасная сторона стены | `СТОРОНА: 10` у линии | Wall of Fire |
 | Несколько областей | `ОБЛАСТИ: 10` — кнопка «Новая область (k/N)», одно «Применить» для всех, каждое существо один раз | Fire Storm, Meteor Swarm |
 | Антимагия | `АНТИМАГИЯ: 5` / `АНТИМАГИЯ: КРУГ-1` у области; `АНТИМАГИЯ: ВСЕ` у ауры | Globe of Invulnerability, Antimagic Field |
+| Стены из панелей | `ПАНЕЛИ: 10` — «Новая панель k/N», одно «Применить» | Wall of Stone, Wall of Ice, Wall of Force |
+| Вытеснение из места появления | `ВЫТЕСНЕНИЕ: ЗАКЛИНАТЕЛЬ` / `ВЫТЕСНЕНИЕ: ЛОВ` — кнопки выбора стороны, ближайшая свободная клетка | Wall of Stone, Wall of Ice, Wall of Force |
+| Прочность панели | `ПРОЧНОСТЬ: КД 15, 180 хитов, УЯЗВ огонь` / `ПРОЧНОСТЬ: НЕРАЗРУШИМА` — токен-«кирпич»; Распад разрушает | Wall of Stone, Wall of Ice, Wall of Force |
+| Зона на месте пролома | `ПРИ РАЗРУШЕНИИ: СПАС ТЕЛ, ВХОД: …` | Wall of Ice |
+| Защита от снарядов | `ЗАЩИТА ОТ СНАРЯДОВ` — дальняя атака оружием сквозь стену промахивается | Wind Wall |
+| Цена движения | `ЦЕНА ДВИЖЕНИЯ: 4` / `2` | Wall of Thorns, Spike Growth, Blade Barrier |
+| Непроходимый купол | `СОЛИД` + `КОЛЬЦО` у круга | Wall of Force, Wall of Ice (купол) |
 
 Попутно исправлено: урон фаз со спасброском (`ВХОД`, `ОБЛН`, `ОКОН` и др.) раньше считался по служебным кубам и давал 1 урон на компонент.
 
@@ -50,9 +57,9 @@
 | Чего нет | Заклинания |
 |---|---|
 | Подавление уже действующих эффектов внутри Антимагического поля (новые заклинания блокируются) | Antimagic Field |
-| Многослойные стены и ловушки-триггеры | Prismatic Wall, Symbol, Glyph of Warding, Contingency |
+| Многослойные стены и ловушки-триггеры | Prismatic Wall (семь слоёв), Symbol, Glyph of Warding, Contingency |
 | Изменение размера и характеристик листа | Enlarge/Reduce (размер токена), Feeblemind, Shillelagh, Magic Weapon (бонус токену, не оружию) |
-| Сложные сценарии площадей | Storm of Vengeance, Earthquake, Tsunami, Reverse Gravity, Wind Wall (отражение снарядов), Forcecage |
+| Сложные сценарии площадей | Storm of Vengeance, Earthquake, Tsunami, Reverse Gravity, Wind Wall (газы и мелкие летуны), Forcecage |
 | Ответный урон и особые сопротивления | Fire Shield (сопротивление есть, ответный урон вручную), Freedom of Movement, Aura of Purity |
 | Регенерация каждый ход, несколько лучей одной атакой | Regenerate, Eldritch Blast (рост лучей), Scorching Ray |
 | Ограничения по предмету/оружию | Heat Metal, Ray of Enfeeblement (половина урона Силой) |

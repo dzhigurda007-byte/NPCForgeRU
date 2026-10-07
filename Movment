@@ -3,7 +3,8 @@ if(typeof AD5Movement!=='undefined'&&AD5Movement) {
     log('AD5Movement: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Movement Engine v2.3.8
+ * AD5 Movement Engine v2.3.9
+ * 2.3.9: addMovementCost(txn, feet) — AD5 Areas «ЦЕНА ДВИЖЕНИЯ: N» charges extra speed for movement inside a zone.
  * 2.3.8: teleport — while the token has «телепорт N фт» (Effect Turns 1.6.10), its next
  *        manual move up to N ft is a teleport: no speed spent, no path (areas see only the
  *        destination), no opportunity attacks; the effect is used up. Longer moves are undone.
@@ -35,7 +36,7 @@ if(typeof AD5Movement!=='undefined'&&AD5Movement) {
 var AD5Movement=(function(){
     'use strict';
 
-    var VERSION='2.3.8',SCRIPT='AD5 Movement';
+    var VERSION='2.3.9',SCRIPT='AD5 Movement';
     var runtimeLastGroup=Object.create(null),suppressed=Object.create(null),recentMoveByToken=Object.create(null),pendingForced=Object.create(null),listeners=[];
 
     function root(){
@@ -117,6 +118,17 @@ var AD5Movement=(function(){
         if(active&&remaining+1e-9<feet)return {ok:false,reason:'not-enough',cost:feet,charged:0,activeTurn:true,remaining:remaining};
         if(active&&feet>0)st.spent=Number(st.spent||0)+feet;
         return {ok:true,reason:String(reason||''),cost:feet,charged:active?feet:0,activeTurn:active,remaining:active?Math.max(0,si.effective-Number(st.spent||0)):remaining,effective:si.effective};
+    }
+    // 2.3.9: extra movement cost charged by AD5 Areas («ЦЕНА ДВИЖЕНИЯ: 4», Wall of Thorns) on top of
+    // the distance of an already charged voluntary move. Undo restores beforeSpent as usual.
+    function addMovementCost(txnId,feet,reason){
+        var r=root(),tx=r.moves[String(txnId||'')];feet=Math.max(0,Number(feet)||0);
+        if(!tx||!feet||!tx.charged)return {ok:false,charged:0,remaining:null};
+        var token=getObj('graphic',tx.tokenId);if(!token)return {ok:false,charged:0,remaining:null};
+        var st=tokenState(token);st.spent=Number(st.spent||0)+feet;
+        tx.afterSpent=Number(tx.afterSpent||0)+feet;tx.extraCost=Number(tx.extraCost||0)+feet;tx.extraCostReason=String(reason||'');
+        var si=speedInfo(token);
+        return {ok:true,charged:feet,spent:st.spent,remaining:si.effective===null?null:Math.max(0,si.effective-st.spent)};
     }
     function spendStandCost(tokenOrId){
         var token=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId;
@@ -630,7 +642,7 @@ var AD5Movement=(function(){
         version:VERSION,
         beginGraphicMove:beginGraphicMove,endGraphicMove:endGraphicMove,isSuppressed:isSuppressed,withSuppressed:withSuppressed,refreshToken:refreshToken,
         baseSpeedForToken:baseSpeedForToken,remainingSpeed:remainingSpeed,distanceForPoints:routeDistance,rangeFeet:rangeFeet,heightFeet:heightFeet,
-        onMove:onMove,offMove:offMove,lastMove:lastMove,reachCrossings:reachCrossings,distanceAtPoint:distanceAtPoint,forceMove:forceMove,translateForcedMove:translateForcedMove,spendMovement:spendMovement,spendStandCost:spendStandCost,
+        onMove:onMove,offMove:offMove,lastMove:lastMove,reachCrossings:reachCrossings,distanceAtPoint:distanceAtPoint,forceMove:forceMove,addMovementCost:addMovementCost,translateForcedMove:translateForcedMove,spendMovement:spendMovement,spendStandCost:spendStandCost,
         _test:{routeFromMove:routeFromMove,parseLastMove:parseLastMove,routeDistance:routeDistance,segmentUnits:segmentUnits,buildSegments:buildSegments,speedInfo:speedInfo,groupKey:groupKey,reachRect:reachRect,pointInRect:pointInRect,segmentRectInterval:segmentRectInterval,reachCrossings:reachCrossings,distanceAtPoint3D:distanceAtPoint3D,heightAwareReachCrossings:heightAwareReachCrossings,rangeFeet:rangeFeet,gridStep:gridStep,snapPointToGrid:snapPointToGrid,gridCandidates:gridCandidates,snapSolidStop:snapSolidStop,snapForcedDestination:snapForcedDestination}
     };
 }());
