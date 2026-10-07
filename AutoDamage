@@ -48,7 +48,7 @@ var AD5Background = (function(){
     return {put:put,isReady:function(){return ready;}};
 }());
 /*
-AutoDamage 4.3.143 / NPC Forge RU 2.7.4 — «шепот звезд».
+AutoDamage 4.3.144 / NPC Forge RU 2.7.4 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Обычная атака игрока -> Target AD5 на карте -> штатные запросы преимущества/помехи/доп. урона Roll20 -> бросок -> урон и крит. NPC/Transform сохраняют штатный Target Roll20. AutoFront заранее держит боевые токены на переднем плане. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -72,6 +72,7 @@ hp листа используется однократно как началь�
 Поле «Описание» способности является источником исходов спасброска. Элементы разделяются запятыми: ПРВ: ... для провала, УСП: ... для успеха. Таймеры и маркеры ведёт отдельный AD5 Effect Turns. Если УСП отсутствует, успешный спас автоматически означает 0 урона и 0 эффектов.
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
+4.3.144: Token damage defenses from Effect Turns («сопр огонь 10», «имм яд 10») join zone/aura defenses (strongest wins); Warding Bond shares typeless damage with the bond's source.
 4.3.143: Ice Knife fix. Если HP цели изменились во время асинхронного чтения сопротивлений NPC (например, попадание ножом и взрыв по той же цели), чтение повторяется до 3 раз вместо ошибки «HP изменились…»; урон взрыва больше не теряется.
 4.3.142: Native Spell Attack transport + report fix. Spell Library 2.3.14 rebuilds imported ATTACK links through the Legacy sheet worker instead of API-created repeating_attack rows. Core report no longer prints “Без броска атаки” for a real attack merely because it had no dynamic attack modifiers.
 4.3.141: Native Spell Link + Chat Loop-Safe. Linked Spellbook attack hydration now mirrors Legacy fields (spell ability, damage ability, separate dmg/dmg2 flags, native save DC). AD5-generated attack reroll cards carry ad5internalroll=1 and are ignored by the top-level chat listener, preventing a synthetic attack card from re-entering AD5.
@@ -758,7 +759,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.143', diagnostics = [], debug = false;
+    var VERSION = '4.3.144', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -3848,14 +3849,24 @@ var AD5 = (function () {
         var petrified=!!(token&&hasCombatCondition(token,'petrified'));
         return {allResistance:petrified,poisonImmunity:petrified};
     }
+    // Temporary damage defenses: AD5 Areas zones/auras plus (4.3.144) Effect Turns
+    // buffs on the token itself («сопр огонь 10»). Like overlapping zones they do not
+    // stack with each other: the strongest percent per type wins.
     function areaDamageDefense(token){
+        var out={resistances:{},immunities:{},sources:[]},id=token&&token.id?token.id:token;
+        function merge(d){
+            if(!d||typeof d!=='object')return;
+            Object.keys(d.resistances||{}).forEach(function(t){out.resistances[t]=Math.max(Number(out.resistances[t]||0),Number(d.resistances[t])||0);});
+            Object.keys(d.immunities||{}).forEach(function(t){if(d.immunities[t])out.immunities[t]=true;});
+            (d.sources||[]).forEach(function(s){out.sources.push(s);});
+        }
         try{
-            if(typeof AD5Areas!=='undefined'&&AD5Areas&&typeof AD5Areas.damageDefenseForToken==='function'){
-                var d=AD5Areas.damageDefenseForToken(token&&token.id?token.id:token);
-                if(d&&typeof d==='object')return d;
-            }
+            if(typeof AD5Areas!=='undefined'&&AD5Areas&&typeof AD5Areas.damageDefenseForToken==='function')merge(AD5Areas.damageDefenseForToken(id));
         }catch(e){record('Area damage defense: '+String(e&&e.message||e));}
-        return {resistances:{},immunities:{},sources:[]};
+        try{
+            if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.defenseForToken==='function')merge(AD5EffectTurns.defenseForToken(id));
+        }catch(e2){record('Token damage defense: '+String(e2&&e2.message||e2));}
+        return out;
     }
     function conditionMode(sheetMode,rule){
         var adv=(sheetMode==='adv'?1:0)+((rule&&rule.advantage&&rule.advantage.length)||0);
@@ -5372,6 +5383,8 @@ var AD5 = (function () {
             damageDefenses=JSON.parse(JSON.stringify(damageDefenses||{}));
             damageDefenses.condition={allResistance:!!conditionDefense.allResistance,poisonImmunity:!!conditionDefense.poisonImmunity};
         }
+        // 4.3.144: typeless damage (Warding Bond share) ignores every defense.
+        if(p.typeless){damageDefenses={};targetDamageMultipliers={};ignoreDamageTypes={};}
         var resistance=hasDamage?typedDamage({components:g.damage.components},p.factor,saveMultiplier,damageDefenses,ignoreDamageTypes,targetDamageMultipliers):null,damageAmount=resistance?resistance.amount:0;
         var reactionDamageBefore=damageAmount,reactionDamageReduced=0;
         if(p.reactionDamageRule&&damageAmount>0){
@@ -5634,6 +5647,17 @@ var AD5 = (function () {
         }
         if(damageAmount>0&&!p.reactionExec&&typeof AD5Reactions!=='undefined'&&AD5Reactions&&typeof AD5Reactions.afterDamage==='function'){
             try{AD5Reactions.afterDamage({playerId:msg.playerid||'',actorId:String(p.actor||c.id||''),sourceTokenId:String(p.conditionSourceToken||p.sourceToken||''),targetTokenId:String(t.token.id),actionName:String(p.name||attackName(f)||'Урон'),damageAmount:Number(damageAmount)||0,historyKey:String(key),attack:p.событиеАтаки||null},function(){});}catch(afterDamageReactionError){record('Реакция после урона: '+(afterDamageReactionError.message||afterDamageReactionError));}
+        }
+        // 4.3.144: Warding Bond — the bond's caster takes the same (typeless) damage.
+        if(damageAmount>0&&!p.wardingShare&&!entry.undone){
+            try{
+                var bond=(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&AD5ConditionEngine.entry)?AD5ConditionEngine.entry(t.token,'warding_bond'):null;
+                var bondSource=bond&&bond.source&&String(bond.source.sourceToken||'');
+                if(bondSource&&bondSource!==String(t.token.id)&&getObj('graphic',bondSource)){
+                    var shared=Number(damageAmount)||0,bondTarget=t.token.id,bondCid=t.cid;
+                    setTimeout(function(){try{reactionDamage(bondSource,shared,'силовое поле','Охранная связь',{actorId:bondCid,sourceTokenId:bondTarget,playerId:msg.playerid,typeless:true,wardingShare:true});}catch(e){gm('Охранная связь: '+esc(e.message||e));}},0);
+                }
+            }catch(ignoreBond){}
         }
         if(Number(plan.value)>0&&Number.isFinite(финальныйHpСобытия)&&финальныйHpСобытия<=0){
             событиеAD5('ЦЕЛЬ УМЕРЛА',{
@@ -8200,6 +8224,7 @@ var AD5 = (function () {
         var f=Object.create(null);f.rname=actionName;f.charname=actorName;f.ad5source=actorId;f.ad5target=t.token.id;if(sourceToken)f.ad5sourcetoken=sourceToken.id;f.description='';f.desc='';f.dmg1flag='1';f.dmg1=String(amount);f.dmg1type=type;
         var msg={type:'general',playerid:pid,who:actorName,rolltemplate:'dmg',content:'',inlinerolls:[]};
         var pctx={actor:actorId,sourceName:actorName,npcMessage:false,name:actionName,target:t.token.id,cid:t.cid,hit:true,ac:0,hasAttack:false,total:0,baseAttackTotal:0,globalAttack:0,tokenAttackBonus:0,sourceToken:sourceToken?sourceToken.id:null,conditionSourceToken:sourceToken?sourceToken.id:null,concentrationId:null,die:0,factor:1,time:Date.now(),batch:null,reactionExec:true,fixedDamage:!!context.fixedDamage,onComplete:typeof context.onComplete==='function'?context.onComplete:null,sourceModifiers:sourceToken?effectModifiersForToken(sourceToken):emptyCombatModifiers()};
+        if(context.typeless)pctx.typeless=true;if(context.wardingShare)pctx.wardingShare=true;
         finish(msg,f,pctx);return {amount:amount,type:type,targetId:t.token.id,label:actionName};
     }
 

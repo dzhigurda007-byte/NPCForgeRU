@@ -3,7 +3,8 @@ if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
     log('AD5EffectTurns: duplicate module skipped; keep one installed copy.');
 } else {
 /*
-AD5 Effect Turns 1.6.3
+AD5 Effect Turns 1.6.4
+1.6.4: damage defenses on one token — «сопр ТИП[/ТИП] [N%] ходы», «сопр все», «имм ТИП» (strongest wins, no stacking with zones/auras); «охранная связь» (Warding Bond: the effect's source takes the same typeless damage).
 1.6.3: standard actions «Уклонение» (marker all-for-one) and «Отход» (marker flying-flag) as positive 1-turn conditions.
 Companion module for AD5 4.3.9+. Adds scoped ПАСС modifiers and concentration-aura owner filtering for Areas 2.17.2+.
 1.3.0: lifecycle conditions: Prone and Grappled are never turn-counted; Grappler Pin Restrained is indefinite until its parent grapple ends. Existing active records are migrated on ready.
@@ -50,7 +51,7 @@ var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5
 // silently shadow every newer fix.
 var AD5EffectTurns = (function () {
     'use strict';
-    var VERSION='1.6.3', SCRIPT='AD5 Effect Turns';
+    var VERSION='1.6.4', SCRIPT='AD5 Effect Turns';
     var runtimeLastGroup=Object.create(null);
     var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
     var markerCacheRaw=null, markerCacheByName=Object.create(null);
@@ -112,7 +113,9 @@ var AD5EffectTurns = (function () {
         bleeding:{marker:'arrowed',label:'Кровотечение',aliases:['кровотечение','кровоточит','bleeding']},
         // 1.6.3: standard actions. Applied for 1 turn, so they end at the start of the creature's next turn.
         dodging:{marker:'all-for-one',label:'Уклонение',aliases:['уклонение','уклоняется','dodge','dodging']},
-        disengaging:{marker:'flying-flag',label:'Отход',aliases:['отход','отходит','disengage','disengaging']}
+        disengaging:{marker:'flying-flag',label:'Отход',aliases:['отход','отходит','disengage','disengaging']},
+        // 1.6.4: Warding Bond — the effect's source token takes the same damage as its bearer.
+        warding_bond:{marker:'three-leaves',label:'Охранная связь',aliases:['охранная связь','warding bond','связь урона']}
     };
     var ALIAS={};
 
@@ -277,9 +280,31 @@ var AD5EffectTurns = (function () {
         if(spec.dynamic)return prefix+' '+(spec.sign>0?'+':'-')+String(spec.formula||'').replace(/d/g,'д');
         return prefix+' '+(spec.value>0?'+':'')+spec.value;
     }
+    // 1.6.4: damage defenses on one token: «сопр огонь», «сопр дробящий/колющий/рубящий»,
+    // «сопр огонь 25%», «сопр все», «имм яд». Duration is the trailing number as usual.
+    function defenseTypes(raw){
+        var parts=String(raw||'').split(/\s*\/\s*|\s+и\s+/),out=[];
+        for(var i=0;i<parts.length;i++){
+            var p=matchNorm(parts[i]);if(!p)return null;
+            if(/^(?:все|всё|весь урон|любой урон|all)$/.test(p)){out.push('*');continue;}
+            var t=null;try{if(typeof AD5!=='undefined'&&AD5&&AD5._test&&typeof AD5._test.effectType==='function')t=AD5._test.effectType(p);}catch(ignoreType){}
+            if(!t||['лечение','временное хп','атака'].indexOf(t)>=0)return null;
+            if(out.indexOf(t)<0)out.push(t);
+        }
+        return out.length?out:null;
+    }
+    function defenseCore(text){
+        var m=/^(сопр|сопротивление|resist|resistance|имм|иммунитет|immune|immunity)\s+(.+?)(?:\s+(\d{1,3})\s*%)?$/i.exec(text);
+        if(!m)return null;
+        var kind=/^(?:имм|иммунитет|immune|immunity)$/i.test(m[1])?'immunity':'resistance',types=defenseTypes(m[2]);if(!types)return null;
+        var percent=kind==='immunity'?100:(m[3]?Number(m[3]):50);if(!(percent>0&&percent<=100))return null;
+        var names=types.map(function(t){return t==='*'?'весь урон':t;}).join('/');
+        return {type:'defense',kind:kind,types:types,percent:percent,positive:true,label:(kind==='immunity'?'Имм ':'Сопр ')+names+(kind==='resistance'&&percent!==50?' '+percent+'%':'')};
+    }
     function modifierCore(label){
         var text=norm(label),m,ability,metric,spec;
         if(!text)return null;
+        var defense=defenseCore(text);if(defense)return defense;
         m=/^(прем|преим|преимущество|adv|advantage)\s+([a-zа-я]+)$/i.exec(text);
         if(m&&(ability=modifierAbility(m[2])))return {type:'saveMode',ability:ability,mode:'adv',positive:true,label:'ПРЕМ '+RECOVERY_ABILITIES[ability].short};
         m=/^(пом|помеха|dis|disadv|disadvantage)\s+([a-zа-я]+)$/i.exec(text);
@@ -356,6 +381,8 @@ var AD5EffectTurns = (function () {
         if(m.type==='save'&&m.ability)return 'save:'+m.ability;
         if(m.type==='check'&&m.ability)return 'check:'+m.ability;
         if(m.type==='saveMode'&&m.ability)return 'saveMode:'+m.ability;
+        // Different strengths coexist; defenseForToken takes the strongest (no stacking).
+        if(m.type==='defense')return 'defense:'+m.kind+':'+(m.types||[]).join('/')+':'+m.percent;
         return String(m.type||'modifier')+(m.ability?':'+m.ability:'');
     }
     function nextModifierSeq(){
@@ -1225,7 +1252,7 @@ var AD5EffectTurns = (function () {
         if(!Number.isSafeInteger(dc)||dc<1||dc>99)return null;
         return {dc:dc,remaining:e.remaining,label:e.label||('Убежище '+dc)};
     }
-    var POSITIVE_CONDITIONS={invisible:true,haste:true,flying:true,concentration:true,shielded:true,blessed:true,sanctuary:true,dodging:true,disengaging:true};
+    var POSITIVE_CONDITIONS={invisible:true,haste:true,flying:true,concentration:true,shielded:true,blessed:true,sanctuary:true,dodging:true,disengaging:true,warding_bond:true};
     function effectIsDebuff(e){
         if(!e)return false;
         if(e.kind==='modifier')return !!(e.modifier&&e.modifier.positive===false);
@@ -1490,6 +1517,21 @@ var AD5EffectTurns = (function () {
         rows=Array.isArray(rows)?rows:[];var total=0,rolled=[];
         rows.forEach(function(row){var sign=Number(row&&row.sign)<0?-1:1,r=rollModifierFormula(row&&row.formula||'0'),delta=sign*r.total;total+=delta;rolled.push({label:String(row&&row.label||''),formula:r.formula,sign:sign,raw:r.total,delta:delta,dice:r.dice});});
         return {total:total,rolled:rolled};
+    }
+    // Strongest active resistance percent / immunity per damage type on this token.
+    function defenseForToken(tokenId){
+        var out={resistances:{},immunities:{},sources:[]},rec=snapshot(tokenId);if(!rec||!rec.effects)return out;
+        activeModifierEntries(rec).forEach(function(row){
+            var m=row.modifier;if(!m||m.type!=='defense')return;
+            (m.types||[]).forEach(function(t){
+                if(m.kind==='immunity')out.immunities[t]=true;
+                else out.resistances[t]=Math.max(Number(out.resistances[t]||0),Number(m.percent)||50);
+            });
+            var src={name:row.effect.label||m.label,resistances:{},immunities:{}};
+            (m.types||[]).forEach(function(t){if(m.kind==='immunity')src.immunities[t]=true;else src.resistances[t]=Number(m.percent)||50;});
+            out.sources.push(src);
+        });
+        return out;
     }
     function modifiersForToken(tokenId){
         var abilities={strength:0,dexterity:0,constitution:0,intelligence:0,wisdom:0,charisma:0};
@@ -2264,6 +2306,7 @@ var AD5EffectTurns = (function () {
         conditionImmunitiesForToken:sheetConditionImmunities,
         damageMultiplierForToken:damageMultiplierForToken,
         modifiersForToken:modifiersForToken,
+        defenseForToken:defenseForToken,
         modifierTooltipParts:modifierTooltipParts,
         saveModifierForToken:saveModifierForToken,
         checkModifierForToken:checkModifierForToken,
