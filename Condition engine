@@ -3,7 +3,10 @@ if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine) {
     log('AD5ConditionEngine: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Condition Engine 1.2.11
+ * AD5 Condition Engine 1.2.12
+ * 1.2.12: standard actions Dodge («Уклонение»: attacks against it at disadvantage, DEX saves at
+ *         advantage, unless incapacitated or speed 0) and Disengage («Отход»); !ad5cond dodge|disengage
+ *         and token actions; both end at the start of the creature's next turn.
  * 1.2.11: attribute lookup back to exact-then-scan (cheaper without AD5 FastFind); per-event memo kept.
  * 1.2.10: performance: attribute lookups use one case-insensitive findObjs pass and per-event memoization.
  * Central combat-condition rules for the Arvenor Roll20 / Legacy D&D 5E stack.
@@ -38,7 +41,7 @@ if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine) {
  */
 var AD5ConditionEngine=(function(){
     'use strict';
-    var VERSION='1.2.11',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
+    var VERSION='1.2.12',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
     var MARKERS={
         blinded:'bleeding-eye',charmed:'chained-heart',deafened:'half-haze',frightened:'screaming',
         grappled:'grab',incapacitated:'broken-shield',no_reactions:'interdiction',invisible:'ninja-mask',paralyzed:'padlock',
@@ -49,7 +52,8 @@ var AD5ConditionEngine=(function(){
         blinded:'Ослеплён',charmed:'Очарован',deafened:'Оглохший',frightened:'Испуган',
         grappled:'Схвачен',incapacitated:'Недееспособен',no_reactions:'Без реакций',invisible:'Невидим',paralyzed:'Парализован',
         petrified:'Окаменел',poisoned:'Отравлен',prone:'Сбит с ног',restrained:'Опутан',
-        stunned:'Оглушён',unconscious:'Без сознания',exhaustion:'Истощение',death:'Мёртв'
+        stunned:'Оглушён',unconscious:'Без сознания',exhaustion:'Истощение',death:'Мёртв',
+        dodging:'Уклонение',disengaging:'Отход'
     };
     var ACTION_BLOCKERS=['incapacitated','paralyzed','petrified','stunned','unconscious','death'];
     var REACTION_BLOCKERS=ACTION_BLOCKERS.concat(['no_reactions']);
@@ -124,6 +128,13 @@ var AD5ConditionEngine=(function(){
     function blockedBy(token,keys){var reasons=[];(keys||[]).forEach(function(k){if(has(token,k))reasons.push(LABELS[k]||k);});return reasons;}
     function canAct(token){var reasons=blockedBy(token,ACTION_BLOCKERS);if(exhaustionLevel(token)>=6&&reasons.indexOf('Истощение 6')<0)reasons.push('Истощение 6');return {allowed:reasons.length===0,reasons:reasons};}
     function canReact(token){var reasons=blockedBy(token,REACTION_BLOCKERS);if(exhaustionLevel(token)>=6&&reasons.indexOf('Истощение 6')<0)reasons.push('Истощение 6');return {allowed:reasons.length===0,reasons:reasons};}
+    // Dodge (PHB 2014): no benefit while incapacitated or with speed 0.
+    // Seeing the attacker is not checked (no Visibility module); the GM rules on it.
+    function dodgeActive(token){
+        if(!has(token,'dodging'))return false;
+        if(blockedBy(token,ACTION_BLOCKERS).length)return false;
+        return !movementRule(token,30).zero;
+    }
     function attackRule(source,target){
         var adv=[],dis=[],forceCritical=false,autoHitClose=false,blocked=source?canAct(source):{allowed:true,reasons:[]},dist=(source&&target)?rangeFeet(source,target):Infinity;
         if(target){
@@ -135,6 +146,7 @@ var AD5ConditionEngine=(function(){
             if(has(target,'unconscious')){adv.push('Без сознания');if(dist<=5.0001)forceCritical=true;}
             if(has(target,'prone')){if(dist<=5.0001)adv.push('Сбит с ног ≤5 фт');else dis.push('Сбит с ног >5 фт');}
             if(has(target,'invisible'))dis.push('Невидимая цель');
+            if(dodgeActive(target))dis.push('Уклонение');
         }
         if(source){
             if(has(source,'blinded'))dis.push('Ослеплён');
@@ -154,6 +166,7 @@ var AD5ConditionEngine=(function(){
         }
         if(ability==='dexterity'&&has(token,'restrained')){mode='dis';labels.push('Опутан');}
         if(exhaustionLevel(token)>=3){mode='dis';labels.push('Истощение 3+');}
+        if(ability==='dexterity'&&!autoFail&&dodgeActive(token)){mode=mode==='dis'?'normal':'adv';labels.push('Уклонение');}
         return {autoFail:autoFail,mode:mode,labels:labels};
     }
     function abilityCheckRule(token,ability,context){
@@ -476,7 +489,9 @@ var AD5ConditionEngine=(function(){
             var defs=[
                 {rank:4,name:'Толчок',action:'!ad5cond shove-push @{selected|token_id} @{target|Цель толчка|token_id}'},
                 {rank:5,name:'Толчок опрокинуть',action:'!ad5cond shove-prone @{selected|token_id} @{target|Цель толчка|token_id}'},
-                {rank:6,name:'Схватить',action:'!ad5cond grapple @{selected|token_id} @{target|Цель захвата|token_id}'}
+                {rank:6,name:'Схватить',action:'!ad5cond grapple @{selected|token_id} @{target|Цель захвата|token_id}'},
+                {rank:7,name:'Уклонение',action:'!ad5cond dodge @{selected|token_id}'},
+                {rank:8,name:'Отход',action:'!ad5cond disengage @{selected|token_id}'}
             ],pid=String(pl.id),all=(findObjs({_type:'macro'})||[]).filter(function(m){return String(m.get('_playerid')||m.get('playerid')||'')===pid;});
             function plain(n){return String(n||'').replace(/^\u200b+/,'');}
             var legacyActions={
@@ -489,6 +504,16 @@ var AD5ConditionEngine=(function(){
         });}catch(e){gm('Макросы соревнований: '+esc(e.message||e));}
     }
 
+    // Standard actions: one-turn Effect Turns conditions; they expire at the start of
+    // the creature's next turn (PC token / NPC name-group), like any 1-turn effect.
+    function standardAction(token,key){
+        if(typeof AD5EffectTurns==='undefined'||!AD5EffectTurns||typeof AD5EffectTurns.applyCondition!=='function')throw new Error('Нужен AD5 Effect Turns 1.6.3+.');
+        var act=canAct(token);if(!act.allowed)throw new Error(tokenName(token)+' не может действовать: '+act.reasons.join(', ')+'.');
+        AD5EffectTurns.applyCondition(token,(key==='dodging'?'уклонение':'отход')+' 1',{sourceToken:token.id});
+        if(!has(token,key))throw new Error('Effect Turns не принял состояние «'+LABELS[key]+'». Обновите AD5 Effect Turns до 1.6.3.');
+        var text=key==='dodging'?'уклоняется: атаки по нему с помехой, спасброски Ловкости с преимуществом до начала его следующего хода.':'отходит: его перемещение не провоцирует атак до начала его следующего хода.';
+        sendChat(SCRIPT,'<b>'+esc(tokenName(token))+'</b> '+text);
+    }
     function selectedTokens(msg){return (msg.selected||[]).filter(function(x){return x._type==='graphic';}).map(function(x){return getObj('graphic',x._id);}).filter(isToken);}
     function statusLine(t){var ex=exhaustionLevel(t),a=attackRule(t,t),s=saveRule(t,'constitution'),m=movementRule(t,30),act=canAct(t),gs=grapplesOf(t),gtext=gs.length?gs.map(function(x){var g=getObj('graphic',String(x.source.sourceToken||''));return tokenName(g);}).join(', '):'нет';return '<b>'+esc(t.get('name')||t.id)+'</b>: истощение '+ex+'; действие '+(act.allowed?'можно':'НЕЛЬЗЯ ['+esc(act.reasons.join(', '))+']')+'; save '+esc(s.mode)+(s.autoFail?' автопровал':'')+'; тестовая скорость 30 → '+esc(m.effective)+'; захваты: '+esc(gtext)+'.';}
     function command(msg){
@@ -504,11 +529,17 @@ var AD5ConditionEngine=(function(){
             }
             if(sub==='escape'||sub==='освободиться'){var targetToken=getObj('graphic',String(a[2]||''));if(!isToken(targetToken))throw new Error('Формат: !ad5cond escape TOKEN_ID [GRAPPLER_ID]');if(!canControl(targetToken,msg.playerid))throw new Error('Вы не управляете этим токеном.');chooseEscape(targetToken,msg.playerid,a[3]);return;}
             if(sub==='release'||sub==='отпустить'){var grappler=getObj('graphic',String(a[2]||''));if(!isToken(grappler))throw new Error('Формат: !ad5cond release GRAPPLER_ID [TARGET_ID]');if(!canControl(grappler,msg.playerid))throw new Error('Вы не управляете хватающим токеном.');var released=releaseGrapple(grappler,a[3]);gm('<b>'+esc(tokenName(grappler))+'</b>: отпущено захватов — '+released+'.');return;}
+            if(sub==='dodge'||sub==='уклонение'||sub==='disengage'||sub==='отход'){
+                var dodge=sub==='dodge'||sub==='уклонение',actor=a[2]?getObj('graphic',String(a[2])):tokens[0];
+                if(!isToken(actor))throw new Error('Формат: !ad5cond '+(dodge?'dodge':'disengage')+' TOKEN_ID (или выделите токен).');
+                if(!canControl(actor,msg.playerid))throw new Error('Вы не управляете этим токеном.');
+                standardAction(actor,dodge?'dodging':'disengaging');return;
+            }
             if(sub==='exhaustion'||sub==='истощение'){
                 if(!playerIsGM(msg.playerid))throw new Error('Только GM.');if(!tokens.length)throw new Error('Выделите токен.');var raw=String(a[2]||'').trim();if(!raw)throw new Error('Формат: !ad5cond exhaustion +1 | -1 | set N | N');var setMode=norm(raw)==='set';var val=setMode?Number(a[3]):Number(raw);
                 tokens.forEach(function(t){var next=setMode?val:(/^[+-]/.test(raw)?exhaustionLevel(t)+val:val);setExhaustion(t,next);sendChat(SCRIPT,'/w gm '+esc(t.get('name')||t.id)+': истощение → <b>'+exhaustionLevel(t)+'</b>.',null,{noarchive:true});});return;
             }
-            throw new Error('Команды: status, sync, grapple, shove-prone, shove-push, escape, release, pin, exhaustion +1|-1|set N, ping.');
+            throw new Error('Команды: status, sync, grapple, shove-prone, shove-push, escape, release, pin, dodge, disengage, exhaustion +1|-1|set N, ping.');
         }catch(e){sendChat(SCRIPT,'/w "'+String(msg.who||'gm').replace(/"/g,'')+'" <b>'+SCRIPT+':</b> '+esc(e.message||e),null,{noarchive:true});}
     }
 

@@ -3,7 +3,9 @@ if(typeof AD5Reactions!=='undefined'&&AD5Reactions) {
     log('AD5Reactions: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Reactions v1.6.9 — Generic Resource Binding / Countershot / Sheet First
+ * AD5 Reactions v1.6.10 — Generic Resource Binding / Countershot / Sheet First
+ * 1.6.10: Disengage («Отход», Condition Engine 1.2.12): no opportunity attacks against the mover;
+ *         custom «выход» reactions are skipped too unless the description says «ОТХОД НЕ ЗАЩИЩАЕТ».
  * 1.6.9: candidates without reaction rows are skipped before the sheet-reading availability
  *        checks; attribute lookup back to exact-then-scan; per-event memo kept.
  * 1.6.8: performance: attribute lookups use one case-insensitive findObjs pass and per-event memoization.
@@ -37,7 +39,7 @@ if(typeof AD5Reactions!=='undefined'&&AD5Reactions) {
 var AD5Reactions = (function(){
     'use strict';
 
-    var VERSION='1.6.9', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
+    var VERSION='1.6.10', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
     var opportunityPending=Object.create(null);
     var runtimePending=Object.create(null), seq=0, recentMove=Object.create(null), lastAreaCheck=null, movementHookRegistered=false, featherCollecting=Object.create(null), reactionRowCache=Object.create(null);
     // 1.4.2 Fast Fall: cache Feather Fall card discovery per character.
@@ -1209,16 +1211,24 @@ var AD5Reactions = (function(){
         if(!r||!source||!target||r.source!==source.id||r.target!==target.id||Date.now()-r.time>30000)return null;
         delete opportunityPending[String(ticket)];return {target:pointToken(target,r.point),reach:r.reach};
     }
+    // Disengage («Отход»): the mover's movement provokes no opportunity attacks. Custom
+    // «выход» reactions are opportunity attacks too, unless their description says
+    // «ОТХОД НЕ ЗАЩИЩАЕТ» (Sentinel-style).
+    function moverDisengaging(mover){
+        try{if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.has==='function')return !!AD5ConditionEngine.has(mover,'disengaging');}catch(ignore){}
+        return false;
+    }
     function movementReactionCandidates(npc,mover,move){
-        var out=[],evBase={type:'movement',sourceTokenId:mover.id,moverTokenId:mover.id,targetTokenId:mover.id};
+        var out=[],evBase={type:'movement',sourceTokenId:mover.id,moverTokenId:mover.id,targetTokenId:mover.id},disengaging=moverDisengaging(mover);
         reactionsForToken(npc).forEach(function(r){
-            if(['enter','exit'].indexOf(r.trigger)<0)return;if(!relationAllowed(r,npc,mover,sideOf(mover))||!reactionResourceReady(npc,r))return;
+            if(['enter','exit'].indexOf(r.trigger)<0)return;
+            if(disengaging&&r.trigger==='exit'&&!/отход\s+не\s+защищает/i.test(String(r.description||'')))return;if(!relationAllowed(r,npc,mover,sideOf(mover))||!reactionResourceReady(npc,r))return;
             var reach=Number(r.range)||5,events=[];try{events=AD5Movement.reachCrossings(npc,mover,reach,move)||[];}catch(ignore){}
             var crossing=events.filter(function(e){return e&&e.type===r.trigger;})[0];if(!crossing)return;
             out.push({tokenId:npc.id,reaction:r,crossing:crossing,event:evBase});
         });
         // Each weapon has its own reach; ranged weapons held nearby are not melee.
-        var actions=isNpc(npc)?npcMeleeActions(npc.get('represents')):playerMeleeActions(npc.get('represents'));
+        var actions=disengaging?[]:(isNpc(npc)?npcMeleeActions(npc.get('represents')):playerMeleeActions(npc.get('represents')));
         actions.forEach(function(action){
             var crossings=AD5Movement.reachCrossings(npc,mover,action.reach||5,move)||[];
             var exit=crossings.filter(function(e){return e&&e.type==='exit';})[0];
