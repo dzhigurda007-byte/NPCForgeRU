@@ -3,7 +3,10 @@ if(typeof AD5Environment!=='undefined'&&AD5Environment) {
     log('AD5Environment: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Environment 1.6.7
+ * AD5 Environment 1.6.8
+ * 1.6.8: body data from the character sheet — «Рост» (height), «Вес» (weight), «Размер» (size);
+ *        heights like «6 фт», «6'2\"», «185 см», «1,85 м», weights in фунтах или кг. Order for height:
+ *        «рост:» in Слабости (explicit override) → sheet Рост → size → token size. bodyProfile(token).
  * 1.6.7: body height from sheet memoized per event (performance).
  * Static and spell-created combat-map environment for Roll20 AD5.
  *
@@ -73,7 +76,7 @@ if(typeof AD5Environment!=='undefined'&&AD5Environment) {
  */
 var AD5Environment=(function(){
     'use strict';
-    var VERSION='1.6.7',SCRIPT='AD5 Environment',HEIGHT_HOOKED=false,BROWN='#8b4513',HEIGHT_LAYER='gmlayer',pendingTokenMoves=Object.create(null),forcedMoveGuards=Object.create(null),forcedMoveSequence=0;
+    var VERSION='1.6.8',SCRIPT='AD5 Environment',HEIGHT_HOOKED=false,BROWN='#8b4513',HEIGHT_LAYER='gmlayer',pendingTokenMoves=Object.create(null),forcedMoveGuards=Object.create(null),forcedMoveSequence=0;
     var COVER_RULES={quarter:{key:'quarter',label:'1/4 укрытия',ac:1,dex:1},half:{key:'half',label:'1/2 укрытия',ac:2,dex:2},threeQuarter:{key:'threeQuarter',label:'3/4 укрытия',ac:5,dex:5},full:{key:'full',label:'полное укрытие',ac:0,dex:0,full:true}};
     var TYPE_LABELS={phys:'ФИЗ',zaslow:'ЗАСЛОУ',zashigh:'ЗАСХАЙ',solid:'СОЛИД'};
     var POSTURE_MARKERS={crouch:'027-Blindsiding',lie:'302-Ambushing'};
@@ -177,11 +180,35 @@ var AD5Environment=(function(){
     function baseBodyHeightFromSheet(token){
         return memo('height:'+(token&&token.id)+':'+(token&&token.get('represents'))+':'+(token&&token.get('width'))+'x'+(token&&token.get('height')),function(){return baseBodyHeightFromSheetNow(token);});
     }
+    // «6 фт», «6'2"», «6 футов 2 дюйма», «185 см», «1,85 м», «6ft 2in»; a bare number: ≥30 → см, <3 → м, else фт.
+    function parseHeightFeet(raw){
+        var t=decodeText(String(raw==null?'':raw)).toLowerCase().replace(/ё/g,'е').replace(/,/g,'.').trim(),m;if(!t)return null;
+        if((m=/(\d+(?:\.\d+)?)\s*(?:см|cm)(?![a-zа-я])/.exec(t)))return Number(m[1])/30.48;
+        if((m=/(\d+(?:\.\d+)?)\s*(?:м|m)(?:$|[^a-zа-я])/.exec(t)))return Number(m[1])/0.3048;
+        if((m=/(\d+(?:\.\d+)?)\s*(?:'|’|фт\.?|фут(?:а|ов)?|ft\.?|feet|foot)\s*(?:(\d+(?:\.\d+)?)\s*(?:"|”|''|дюйм(?:а|ов)?|in\.?|inch(?:es)?)?)?/.exec(t)))return Number(m[1])+(m[2]?Number(m[2])/12:0);
+        if((m=/(\d+(?:\.\d+)?)\s*(?:"|дюйм(?:а|ов)?|in\.?|inch(?:es)?)/.exec(t)))return Number(m[1])/12;
+        if((m=/^(\d+(?:\.\d+)?)$/.exec(t))){var n=Number(m[1]);return n>=30?n/30.48:(n<3?n/0.3048:n);}
+        return null;
+    }
+    // Weight in pounds: «180 фунтов», «180 lb», «80 кг»; a bare number is pounds.
+    function parseWeightLb(raw){
+        var t=decodeText(String(raw==null?'':raw)).toLowerCase().replace(/ё/g,'е').replace(/,/g,'.').trim(),m;if(!t)return null;
+        if((m=/(\d+(?:\.\d+)?)\s*(?:кг|kg)/.exec(t)))return Math.round(Number(m[1])*2.2046*10)/10;
+        if((m=/(\d+(?:\.\d+)?)/.exec(t)))return Number(m[1]);
+        return null;
+    }
+    function bodyProfile(token){
+        var cid=String(token&&token.get&&token.get('represents')||''),h=bodyHeightFromSheet(token),w=parseWeightLb(attrValue(cid,['weight','npc_weight'])),size='';
+        try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.sizeProfile==='function')size=AD5Height.sizeProfile(token).key;}catch(ignoreSize){}
+        return {height:h.height,baseHeight:h.baseHeight,heightSource:h.source,weight:w,size:size};
+    }
     function baseBodyHeightFromSheetNow(token){
         var cid=String(token&&token.get('represents')||''),parts=[];
         ['flaws','npc_flaws','weaknesses','npc_weaknesses'].forEach(function(n){var v=attrValue(cid,[n]);if(v)parts.push(v);});
         var text=decodeText(parts.join('\n')),m=/(?:^|[\s,;])(?:рост|height)\s*[-:=]\s*(\d+(?:[.,]\d+)?)\s*(?:фт\.?|фут(?:а|ов)?|ft\.?|feet|foot)?/i.exec(text);
         if(m){var n=Number(String(m[1]).replace(',','.'));if(Number.isFinite(n)&&n>0)return {height:n,source:'Слабости'};}
+        var sheetHeight=parseHeightFeet(attrValue(cid,['height','npc_height']));
+        if(Number.isFinite(sheetHeight)&&sheetHeight>0&&sheetHeight<1000)return {height:Math.round(sheetHeight*100)/100,source:'Рост в листе'};
         try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.sizeProfile==='function'){var sp=AD5Height.sizeProfile(token),fallback={tiny:2,small:4,medium:6,large:10,huge:15,gargantuan:20}[sp.key];if(fallback)return {height:fallback,source:'размер '+sp.label};}}catch(ignore2){}
         var p=getObj('page',pageIdOf(token)),scale=Number(p&&p.get('scale_number'))||5,squares=Math.max(Number(token.get('width')||70),Number(token.get('height')||70))/70;
         return {height:Math.max(scale,Math.round(squares*scale*100)/100),source:'размер токена'};
@@ -974,7 +1001,7 @@ var AD5Environment=(function(){
         if(Number(r.bar4ModelVersion||0)<2){tokens.forEach(migrateLegacyToken);r.bar4ModelVersion=2;}else tokens.forEach(preserveTokenTerrainOnReady);
     },250);sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' '+VERSION+'</b> запущен. Псевдо-3D укрытие активно; DOCTOR: !ad5env doctor; REPAIR: !ad5env repair.  Сесть = рост ×1/2 (027-Blindsiding), Лечь = рост ×1/4 (302-Ambushing), Встать = исходный рост. Статические ФИЗ/пропасти и СОЛИД находятся на GM Layer, но участвуют в геометрии. Автосинхронизация bar4 выполняется только для представленных персонажей/NPC на Objects; высота декоративных, MAP- и portal-token больше не перезаписывается при рестарте/обновлении. bar3 = полёт, bar4 = высота поверхности; state.AD5Environment.terrain зеркалирует bar4 для стабильного расчёта переходов. При движении bar4 автоматически принимает высоту ФИЗ/пропасти под токеном; выход с положительной ФИЗ определяется по исходным координатам и автоматически запускает урон падения; ТЯГ/ТОЛЧ после финальной клетки используют тот же расчёт; переходы AD5 Floors синхронизируют bar4 без ложного падения.',null,{noarchive:true});});
 
-    return {version:VERSION,barNumber:barNumber,coverBetween:coverBetween,coverBetweenPoint:coverBetweenPoint,coverProfileFromPoint:coverProfileFromPoint,areaExposure:areaExposure,propagationLimit:propagationLimit,attackVisibility:attackVisibility,bodyHeightFeet:bodyHeightFeet,bodyHeightInfo:bodyHeightFromSheet,areaHeight:areaHeight,areaType:areaType,pageAreas:pageAreas,
+    return {version:VERSION,barNumber:barNumber,coverBetween:coverBetween,coverBetweenPoint:coverBetweenPoint,coverProfileFromPoint:coverProfileFromPoint,areaExposure:areaExposure,propagationLimit:propagationLimit,attackVisibility:attackVisibility,bodyHeightFeet:bodyHeightFeet,bodyHeightInfo:bodyHeightFromSheet,bodyProfile:bodyProfile,parseHeightFeet:parseHeightFeet,parseWeightLb:parseWeightLb,areaHeight:areaHeight,areaType:areaType,pageAreas:pageAreas,
         registerExternalArea:registerExternalArea,unregisterExternalArea:unregisterExternalArea,setAreaHeight:setAreaHeightById,
         terrainHeightFeet:terrainHeightFeet,setTerrainHeight:setTerrainHeight,terrainSurfaceAt:terrainSurfaceAt,terrainHeightAt:terrainHeightAt,flightHeightFeet:flightHeightFeet,totalHeightFeet:elevation,
         beginForcedMove:beginForcedMove,endForcedMove:endForcedMove,cancelForcedMove:cancelForcedMove,processTokenMove:processTokenMove,

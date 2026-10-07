@@ -3,7 +3,8 @@ if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine) {
     log('AD5ConditionEngine: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Condition Engine 1.2.16
+ * AD5 Condition Engine 1.2.17
+ * 1.2.17: sizeRank also reads the NPC type («Средний гуманоид») when no size attribute is set.
  * 1.2.16: Вялость, изгнан and эфирный план block actions; «нет реакций» blocks reactions.
  * 1.2.15: Ability contests spend Effect Turns «РАСХ: ПРОВЕРКА» charges (Guidance).
  * 1.2.14: HP maximum = base (halved at exhaustion 4+) + «макс хиты» buffs − Harm reduction; reduceMaxHp/clearMaxHpReduction/maxHpChanged. Fixes double halving of NPC max HP at exhaustion 4+.
@@ -48,7 +49,7 @@ if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine) {
  */
 var AD5ConditionEngine=(function(){
     'use strict';
-    var VERSION='1.2.16',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
+    var VERSION='1.2.17',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
     var MARKERS={
         blinded:'bleeding-eye',charmed:'chained-heart',deafened:'half-haze',frightened:'screaming',
         grappled:'grab',incapacitated:'broken-shield',no_reactions:'interdiction',invisible:'ninja-mask',paralyzed:'padlock',
@@ -342,7 +343,7 @@ var AD5ConditionEngine=(function(){
         return null;
     }
     function sizeRank(token){
-        if(!isToken(token))return 2;var cid=representedId(token),names=npcToken(token)?['npc_size','size','creature_size']:['size','creature_size','npc_size'],rank=null;
+        if(!isToken(token))return 2;var cid=representedId(token),names=npcToken(token)?['npc_size','size','creature_size','npc_type']:['size','creature_size','npc_size'],rank=null;
         names.some(function(name){var a=cid&&attr(cid,name);rank=a?sizeRankFromText(a.get('current')):null;return rank!==null;});if(rank!==null)return rank;
         var page=getObj('page',token.get('_pageid')),step=70,scale=Number(page&&page.get('snapping_increment'));if(Number.isFinite(scale)&&scale>0)step=70*scale;
         var cells=Math.max(Number(token.get('width')||70),Number(token.get('height')||70))/Math.max(1,step);if(cells<=0.55)return 0;if(cells<=1.05)return 2;if(cells<=2.05)return 3;if(cells<=3.05)return 4;return 5;

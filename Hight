@@ -3,7 +3,8 @@ if(typeof AD5Height!=='undefined'&&AD5Height) {
     log('AD5Height: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Height Engine 1.4.11
+ * AD5 Height Engine 1.4.12
+ * 1.4.12: size from the sheet «Размер»; NPC size also read from the type («Средний гуманоид»).
  * 1.4.11: sizeProfile memoized per event (performance).
  * Вертикальная модель Roll20 / AD5.
  *
@@ -30,7 +31,7 @@ if(typeof AD5Height!=='undefined'&&AD5Height) {
  */
 var AD5Height=(function(){
     'use strict';
-    var VERSION='1.4.11',SCRIPT='AD5 Height',MARKER_NAME='fluffy-wing',LEGACY_MARKER_NAMES=['Fluffy-wnig','fluffy-wnig'],listeners=[],falling=Object.create(null),syncingMarkers=Object.create(null);
+    var VERSION='1.4.12',SCRIPT='AD5 Height',MARKER_NAME='fluffy-wing',LEGACY_MARKER_NAMES=['Fluffy-wnig','fluffy-wnig'],listeners=[],falling=Object.create(null),syncingMarkers=Object.create(null);
 
     function root(){
         if(!state.AD5Height||typeof state.AD5Height!=='object')state.AD5Height={};
@@ -242,7 +243,9 @@ var AD5Height=(function(){
         return {key:p.key,label:p.label,capDice:p.capDice,multiplier:p.multiplier,raw:p.raw,inferred:p.inferred};
     }
     function sizeProfileNow(t){
-        var cid=String(t.get('represents')||''),raw=attrValue(cid,['npc_size','size','character_size']),key=sizeKey(raw)||inferredSizeKey(t)||'medium',base=SIZE_RULES[key]||SIZE_RULES.medium;
+        // 1.4.12: the sheet's «Размер» (size) first; NPC sheets keep the size inside the type («Средний гуманоид»).
+        var cid=String(t.get('represents')||''),raw=attrValue(cid,['npc_size','size','character_size']);if(!sizeKey(raw)){var typeRaw=attrValue(cid,['npc_type']);if(sizeKey(typeRaw))raw=typeRaw;}
+        var key=sizeKey(raw)||inferredSizeKey(t)||'medium',base=SIZE_RULES[key]||SIZE_RULES.medium;
         return {key:base.key,label:base.label,capDice:base.capDice,multiplier:base.multiplier,raw:raw||'',inferred:!sizeKey(raw)};
     }
     function constitutionScore(tokenOrId){
