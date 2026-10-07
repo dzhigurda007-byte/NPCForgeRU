@@ -3,7 +3,8 @@ if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
     log('AD5EffectTurns: duplicate module skipped; keep one installed copy.');
 } else {
 /*
-AD5 Effect Turns 1.6.14
+AD5 Effect Turns 1.6.15
+1.6.15: a condition with a formula and an explicit damage type deals periodic damage («опутан 1д6 колющий ПРОВЕРКА СИЛ14» — Ensnaring Strike, Evard's Black Tentacles); recovery effects deal it at the end of the bearer's turn.
 1.6.14: modifiers «магическое оружие», «имм <состояние>», «прем/пом спас против <состояние|заклинаний>», «увёртливость против заклинаний», «макс хиты не снижаются», «регенерация N», «оживление N», «размер ±1» (токен ×2 / ×½), «полёт N» (падение по окончании); conditions «без действия» (маркер stopwatch) and «слабоумие»; ПОПАДЗАМЕНА / ПОПАДПРОМАХ.
 1.6.13: «ОБЛАСТИ: N» (Areas grouped placement) is not an effect.
 1.6.12: recognizesDirect() also accepts AutoDamage hit-point lines (ХИТЫ<=, СЛУЧАЙНО, ВАМП, НЕ НИЖЕ 1, СНИЖ МАКС), so NPC actions with only these lines are mechanical.
@@ -61,7 +62,7 @@ var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5
 // silently shadow every newer fix.
 var AD5EffectTurns = (function () {
     'use strict';
-    var VERSION='1.6.14', SCRIPT='AD5 Effect Turns';
+    var VERSION='1.6.15', SCRIPT='AD5 Effect Turns';
     var runtimeLastGroup=Object.create(null);
     var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
     var markerCacheRaw=null, markerCacheByName=Object.create(null);
@@ -559,11 +560,17 @@ var AD5EffectTurns = (function () {
         // damage formula.  This allows both "2д8" and "2d8 + 3".
         for(var n=words.length-1;n>=1;n--){
             var ck=conditionKey(words.slice(0,n).join(' '));
-            if(!ck||!PERIODIC_DAMAGE[ck])continue;
-            var formula=words.slice(n).join(' ').trim();
+            if(!ck)continue;
+            var formula=words.slice(n).join(' ').trim(),explicitType=null;
+            // 1.6.15: «опутан 1д6 колющий» — any condition with an explicit damage type (Ensnaring Strike,
+            // Evard's Black Tentacles).
+            var tm=/^([0-9dDдД+*\/().\s-]*\d[0-9dDдД+*\/().\s-]*?)\s+([A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё ]*)$/.exec(formula);
+            if(tm){try{if(typeof AD5!=='undefined'&&AD5&&AD5._test&&typeof AD5._test.effectType==='function')explicitType=AD5._test.effectType(tm[2]);}catch(ignoreType){}
+                if(explicitType&&['лечение','временное хп','атака'].indexOf(explicitType)<0)formula=tm[1].trim();else explicitType=null;}
+            if(!explicitType&&!PERIODIC_DAMAGE[ck])continue;
             if(!formula)return null;
             if(!/^[0-9dDдД+*\/().\s-]+$/.test(formula)||!/\d/.test(formula))return null;
-            return {condition:ck,formula:formula,damageType:PERIODIC_DAMAGE[ck]};
+            return {condition:ck,formula:formula,damageType:explicitType||PERIODIC_DAMAGE[ck]};
         }
         return null;
     }
