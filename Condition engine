@@ -3,7 +3,8 @@ if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine) {
     log('AD5ConditionEngine: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Condition Engine 1.2.14
+ * AD5 Condition Engine 1.2.15
+ * 1.2.15: Ability contests spend Effect Turns «РАСХ: ПРОВЕРКА» charges (Guidance).
  * 1.2.14: HP maximum = base (halved at exhaustion 4+) + «макс хиты» buffs − Harm reduction; reduceMaxHp/clearMaxHpReduction/maxHpChanged. Fixes double halving of NPC max HP at exhaustion 4+.
  * 1.2.13: death and dying for player characters — 0 HP → unconscious + prone + death saves
  *         (button at turn start, !ad5cond deathsave), damage at 0 HP = failure (crit = 2), damage
@@ -46,7 +47,7 @@ if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine) {
  */
 var AD5ConditionEngine=(function(){
     'use strict';
-    var VERSION='1.2.14',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
+    var VERSION='1.2.15',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
     var MARKERS={
         blinded:'bleeding-eye',charmed:'chained-heart',deafened:'half-haze',frightened:'screaming',
         grappled:'grab',incapacitated:'broken-shield',no_reactions:'interdiction',invisible:'ninja-mask',paralyzed:'padlock',
@@ -318,6 +319,7 @@ var AD5ConditionEngine=(function(){
         var spec=SKILLS[skill];if(!spec)throw new Error('Неизвестный навык проверки: '+skill+'.');
         var rule=abilityCheckRule(token,spec.ability,{skill:skill,contest:true}),mode=rule&&rule.mode||'normal',d1=randomD20(),d2=null,die=d1;
         if(mode==='adv'||mode==='dis'){d2=randomD20();die=mode==='adv'?Math.max(d1,d2):Math.min(d1,d2);}
+        try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.rollUsed==='function')setTimeout(function(){try{AD5EffectTurns.rollUsed(token.id,'check');}catch(ignoreRollUsed){}},0);}catch(ignoreHook){}
         var baseBonus=skillBonus(token,skill),effect=effectCheckModifier(token,spec.ability),dynamic=rollCheckModifiers(effect.rolls),bonus=baseBonus+Number(effect.bonus||0)+Number(dynamic.total||0),total=rule&&rule.autoFail?-999999:die+bonus;
         return {skill:skill,label:spec.label,ability:spec.ability,mode:mode,d1:d1,d2:d2,die:die,baseBonus:baseBonus,effectBonus:Number(effect.bonus||0),dynamicBonus:Number(dynamic.total||0),dynamicRolls:dynamic.rolled||[],bonus:bonus,total:total,autoFail:!!(rule&&rule.autoFail),labels:(rule&&rule.labels)||[]};
     }

@@ -48,7 +48,7 @@ var AD5Background = (function(){
     return {put:put,isReady:function(){return ready;}};
 }());
 /*
-AutoDamage 4.3.146 / NPC Forge RU 2.7.4 — «шепот звезд».
+AutoDamage 4.3.147 / NPC Forge RU 2.7.4 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Обычная атака игрока -> Target AD5 на карте -> штатные запросы преимущества/помехи/доп. урона Roll20 -> бросок -> урон и крит. NPC/Transform сохраняют штатный Target Roll20. AutoFront заранее держит боевые токены на переднем плане. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -72,6 +72,7 @@ hp листа используется однократно как началь�
 Поле «Описание» способности является источником исходов спасброска. Элементы разделяются запятыми: ПРВ: ... для провала, УСП: ... для успеха. Таймеры и маркеры ведёт отдельный AD5 Effect Turns. Если УСП отсутствует, успешный спас автоматически означает 0 урона и 0 эффектов.
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
+4.3.147: A target's saving throw spends Effect Turns «РАСХ: СПАСБРОСОК» charges (Resistance).
 4.3.146: Hit point thresholds: lines «ХИТЫ<=N: эффекты» — the tightest tier at or above the target's current HP applies (only on a failed save when the card has one); «смерть» kills (Power Word Kill/Stun, Divine Word). Spells whose only mechanics are Effect Turns items (сопр, стабилизирует, макс хиты …) or HP directives now count as mechanical.
 4.3.145: Hit point rules: «НЕ НИЖЕ 1» (damage leaves at least 1 HP), «СНИЖ МАКС» (HP maximum drops by the HP lost, Harm), «ВАМП [N%]» (source regains N% of damage dealt, Vampiric Touch). Healing is blocked on a target with «без лечения» (Chill Touch).
 4.3.144: Token damage defenses from Effect Turns («сопр огонь 10», «имм яд 10») join zone/aura defenses (strongest wins); Warding Bond shares typeless damage with the bond's source. Spell casts pass spell/spellLevel to Effect Turns for Dispel Magic. Death and dying hooks (Condition Engine adjustHp/afterHp); a dying PC shows no skull.
@@ -763,7 +764,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.146', diagnostics = [], debug = false;
+    var VERSION = '4.3.147', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -5382,6 +5383,8 @@ var AD5 = (function () {
         if(effect.global)report.push('Общий модификатор урона Roll20: '+effect.global.base+(effect.global.crit?' + крит '+effect.global.crit:'')+' = <b>'+effect.global.total+'</b>; тип: '+esc(effect.global.type)+'.');
         (effect.warnings||[]).forEach(function(w){report.push('<b>Внимание:</b> '+esc(w));});
         var success=false,spec=null,saveMode='full',saveCrit='';
+        // 4.3.147: the target's saving throw spends «РАСХ: СПАСБРОСОК» effects (Resistance).
+        if(active(f,'save')&&saveResult&&!saveResult.autoFailSkull&&typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.rollUsed==='function'){var savedTokenId=t.token.id;setTimeout(function(){try{AD5EffectTurns.rollUsed(savedTokenId,'save');}catch(ignoreRollUsed){}},0);}
         if(active(f,'save')){spec=saveResult.spec;var saveDie=saveResult.die,total=saveResult.total;saveCrit=saveCritical(saveResult);success=saveSucceeded(saveResult,spec);saveMode=success?spec.effect:(spec.failureEffect||'full');record('Спасбросок '+spec.ability+': d20='+saveDie+', бонус='+spec.bonus+', СЛ='+spec.dc+', успех='+success+', режим='+saveMode+(saveCrit?', крит='+saveCrit:'')+(saveResult.autoFailSkull?', автопровал=skull':''));var labels={strength:'Сила',dexterity:'Ловкость',constitution:'Телосложение',intelligence:'Интеллект',wisdom:'Мудрость',charisma:'Харизма'};if(saveResult.autoFailSkull)report.push('Спасбросок ('+labels[spec.ability]+'): <b>автоматический провал</b> — на токене установлен маркер skull.');else if(saveResult.autoFailCondition)report.push('Спасбросок ('+labels[spec.ability]+'): <b>автоматический провал</b> — состояние: '+esc((saveResult.conditionLabels||[]).join(', ')||'особое состояние')+'.');else report.push('Спасбросок ('+labels[spec.ability]+'): d20 '+dieLabel(saveDie)+' = '+total+' против СЛ '+spec.dc+' — <b>'+(success?'успех':'провал')+'</b>.'+(saveCrit==='failure'?' <b>НАТ 1:</b> урон ×1,5, длительность наложенных эффектов +1 ход.':saveCrit==='success'?' <b>НАТ 20:</b> состояния/дебаффы не применяются; урон успешной ветки уменьшается ещё вдвое.':''));if(spec.cover&&Number(spec.coverBonus||0)>0)report.push('Укрытие: <b>'+esc(spec.cover.label)+'</b> · бонус к спасброску Ловкости +'+Number(spec.coverBonus)+'.');if(spec.areaCoverAdvantage)report.push('Укрытие от центра области: <b>'+(spec.areaCoverLabel?esc(spec.areaCoverLabel):'есть укрытие')+'</b> · преимущество на спасбросок Ловкости.');}
         if(active(f,'save')&&saveResult&&saveResult.dynamicRolls&&saveResult.dynamicRolls.length)report.push('Динамический бафф спасброска: '+saveResult.dynamicRolls.map(function(x){return esc(x.label||x.formula||'модификатор')+' → '+(Number(x.delta)>=0?'+':'')+Number(x.delta||0);}).join('; ')+'.');
         var saveMultiplier=active(f,'save')?saveDamageMultiplier(saveMode,saveResult):1;

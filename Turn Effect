@@ -3,7 +3,8 @@ if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
     log('AD5EffectTurns: duplicate module skipped; keep one installed copy.');
 } else {
 /*
-AD5 Effect Turns 1.6.5
+AD5 Effect Turns 1.6.6
+1.6.6: УСЛЭФ: ПОМ АТАКАМ ПО ЦЕЛИ (Blur, Holy Aura, Foresight), ПРЕМ АТАКАМ ИСТОЧНИКА ПО ЦЕЛИ (True Strike), ПОМ/ПРЕМ АТАКАМ ЦЕЛИ (Vicious Mockery, Foresight); РАСХ: ЦЕЛЬ АТАКОВАЛА, АТАКА ИСТОЧНИКА ПО ЦЕЛИ, СПАСБРОСОК, ПРОВЕРКА; ability «ВСЕ» in save/check modifiers («Спас ВСЕ +1д4», «Проверка ВСЕ +1д4», «прем все»); rollUsed() for recovery saves.
 1.6.5: «макс хиты ±N» modifier (Aid) changes the HP maximum and, on gain, current HP; «без лечения» condition; «снимает снижение максимума» (Greater Restoration). AutoDamage HP directives are ignored by save sections.
 1.6.4: damage defenses on one token — «сопр ТИП[/ТИП] [N%] ходы», «сопр все», «имм ТИП» (strongest wins, no stacking with zones/auras); «охранная связь» (Warding Bond: the effect's source takes the same typeless damage); cleansing items «снимает СОСТОЯНИЕ[/…]», «снимает проклятие», «снимает истощение N», «рассеивает N» (Dispel Magic: spell effects ≤N end, higher need a check vs 10+level; dispelled concentration spells end). Effect sources now record spell and spellLevel. «стабилизирует», «возвращает к жизни N» and the «защита от смерти» condition for death and dying.
 1.6.3: standard actions «Уклонение» (marker all-for-one) and «Отход» (marker flying-flag) as positive 1-turn conditions.
@@ -52,7 +53,7 @@ var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5
 // silently shadow every newer fix.
 var AD5EffectTurns = (function () {
     'use strict';
-    var VERSION='1.6.5', SCRIPT='AD5 Effect Turns';
+    var VERSION='1.6.6', SCRIPT='AD5 Effect Turns';
     var runtimeLastGroup=Object.create(null);
     var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
     var markerCacheRaw=null, markerCacheByName=Object.create(null);
@@ -262,9 +263,12 @@ var AD5EffectTurns = (function () {
         RECOVERY_ALIAS[matchNorm(RECOVERY_ABILITIES[k].short)]=k;
         (RECOVERY_ABILITIES[k].aliases||[]).forEach(function(a){RECOVERY_ALIAS[matchNorm(a)]=k;});
     });
+    // 1.6.6: «все» = every ability (Guidance/Resistance «Проверка ВСЕ +1д4», Holy Aura «прем все»).
     function modifierAbility(value){
-        return RECOVERY_ALIAS[matchNorm(value)]||null;
+        var v=matchNorm(value);if(/^(?:все|всё|любая|любой|любые|all|any)$/.test(v))return 'all';
+        return RECOVERY_ALIAS[v]||null;
     }
+    function abilityShort(a){return a==='all'?'ВСЕ':RECOVERY_ABILITIES[a].short;}
     function cleanModifierFormula(value){
         return String(value||'').replace(/\s+/g,'').replace(/[ДдD]/g,'d');
     }
@@ -315,40 +319,40 @@ var AD5EffectTurns = (function () {
         m=/^(?:макс(?:имум)?\.?\s*(?:хитов|хиты|хп|hp)|max\s*hp)\s*([+-])?\s*(\d{1,4})$/i.exec(text)||/^([+-])?\s*(\d{1,4})\s+(?:макс(?:имум)?\.?\s*(?:хитов|хиты|хп|hp)|max\s*hp)$/i.exec(text);
         if(m){var hpv=(m[1]==='-'?-1:1)*Number(m[2]);if(hpv)return {type:'maxhp',value:hpv,positive:hpv>0,label:'Макс. хиты '+(hpv>0?'+':'')+hpv};}
         m=/^(прем|преим|преимущество|adv|advantage)\s+([a-zа-я]+)$/i.exec(text);
-        if(m&&(ability=modifierAbility(m[2])))return {type:'saveMode',ability:ability,mode:'adv',positive:true,label:'ПРЕМ '+RECOVERY_ABILITIES[ability].short};
+        if(m&&(ability=modifierAbility(m[2])))return {type:'saveMode',ability:ability,mode:'adv',positive:true,label:'ПРЕМ '+abilityShort(ability)};
         m=/^(пом|помеха|dis|disadv|disadvantage)\s+([a-zа-я]+)$/i.exec(text);
-        if(m&&(ability=modifierAbility(m[2])))return {type:'saveMode',ability:ability,mode:'dis',positive:false,label:'ПОМ '+RECOVERY_ABILITIES[ability].short};
+        if(m&&(ability=modifierAbility(m[2])))return {type:'saveMode',ability:ability,mode:'dis',positive:false,label:'ПОМ '+abilityShort(ability)};
 
         // Legacy syntax «+2 МДР» remains a saving-throw modifier.
         m=/^([+-])\s*([^\s]+)\s+([a-zа-я]+)$/i.exec(text);
         if(m&&(ability=modifierAbility(m[3]))&&(spec=modifierFormulaSpec(m[1]+m[2]))){
-            return {type:'save',ability:ability,value:spec.value,formula:spec.dynamic?spec.formula:null,sign:spec.sign,dynamic:spec.dynamic,positive:spec.positive,label:modifierLabel('Спас '+RECOVERY_ABILITIES[ability].short,spec)};
+            return {type:'save',ability:ability,value:spec.value,formula:spec.dynamic?spec.formula:null,sign:spec.sign,dynamic:spec.dynamic,positive:spec.positive,label:modifierLabel('Спас '+abilityShort(ability),spec)};
         }
         m=/^([a-zа-я]+)\s+([+-])\s*([^\s]+)$/i.exec(text);
         if(m&&(ability=modifierAbility(m[1]))&&(spec=modifierFormulaSpec(m[2]+m[3]))){
-            return {type:'save',ability:ability,value:spec.value,formula:spec.dynamic?spec.formula:null,sign:spec.sign,dynamic:spec.dynamic,positive:spec.positive,label:modifierLabel('Спас '+RECOVERY_ABILITIES[ability].short,spec)};
+            return {type:'save',ability:ability,value:spec.value,formula:spec.dynamic?spec.formula:null,sign:spec.sign,dynamic:spec.dynamic,positive:spec.positive,label:modifierLabel('Спас '+abilityShort(ability),spec)};
         }
 
         // Explicit saving throw syntax: «Спас МДР +1д4» / «+1д4 Спас МДР».
         m=/^(?:спас|спасбросок|save)\s+([a-zа-я]+)\s*([+-])?\s*(.+)$/i.exec(text);
         if(m&&/[0-9dд)]\s+(?=[0-9(])/i.test(m[3]))return null;
         if(m&&(ability=modifierAbility(m[1]))&&(spec=modifierFormulaSpec((m[2]||'+')+m[3]))){
-            return {type:'save',ability:ability,value:spec.value,formula:spec.dynamic?spec.formula:null,sign:spec.sign,dynamic:spec.dynamic,positive:spec.positive,label:modifierLabel('Спас '+RECOVERY_ABILITIES[ability].short,spec)};
+            return {type:'save',ability:ability,value:spec.value,formula:spec.dynamic?spec.formula:null,sign:spec.sign,dynamic:spec.dynamic,positive:spec.positive,label:modifierLabel('Спас '+abilityShort(ability),spec)};
         }
         m=/^([+-])?\s*([^\s]+)\s+(?:спас|спасбросок|save)\s+([a-zа-я]+)$/i.exec(text);
         if(m&&(ability=modifierAbility(m[3]))&&(spec=modifierFormulaSpec((m[1]||'+')+m[2]))){
-            return {type:'save',ability:ability,value:spec.value,formula:spec.dynamic?spec.formula:null,sign:spec.sign,dynamic:spec.dynamic,positive:spec.positive,label:modifierLabel('Спас '+RECOVERY_ABILITIES[ability].short,spec)};
+            return {type:'save',ability:ability,value:spec.value,formula:spec.dynamic?spec.formula:null,sign:spec.sign,dynamic:spec.dynamic,positive:spec.positive,label:modifierLabel('Спас '+abilityShort(ability),spec)};
         }
 
         // Ability-check syntax: «Проверка СИЛ +1д4» / «+1д4 Проверка СИЛ».
         m=/^(?:проверка|пров|check)\s+([a-zа-я]+)\s*([+-])?\s*(.+)$/i.exec(text);
         if(m&&/[0-9dд)]\s+(?=[0-9(])/i.test(m[3]))return null;
         if(m&&(ability=modifierAbility(m[1]))&&(spec=modifierFormulaSpec((m[2]||'+')+m[3]))){
-            return {type:'check',ability:ability,value:spec.value,formula:spec.dynamic?spec.formula:null,sign:spec.sign,dynamic:spec.dynamic,positive:spec.positive,label:modifierLabel('Проверка '+RECOVERY_ABILITIES[ability].short,spec)};
+            return {type:'check',ability:ability,value:spec.value,formula:spec.dynamic?spec.formula:null,sign:spec.sign,dynamic:spec.dynamic,positive:spec.positive,label:modifierLabel('Проверка '+abilityShort(ability),spec)};
         }
         m=/^([+-])?\s*([^\s]+)\s+(?:проверка|пров|check)\s+([a-zа-я]+)$/i.exec(text);
         if(m&&(ability=modifierAbility(m[3]))&&(spec=modifierFormulaSpec((m[1]||'+')+m[2]))){
-            return {type:'check',ability:ability,value:spec.value,formula:spec.dynamic?spec.formula:null,sign:spec.sign,dynamic:spec.dynamic,positive:spec.positive,label:modifierLabel('Проверка '+RECOVERY_ABILITIES[ability].short,spec)};
+            return {type:'check',ability:ability,value:spec.value,formula:spec.dynamic?spec.formula:null,sign:spec.sign,dynamic:spec.dynamic,positive:spec.positive,label:modifierLabel('Проверка '+abilityShort(ability),spec)};
         }
 
         function metricName(raw){
@@ -822,8 +826,12 @@ var AD5EffectTurns = (function () {
         var map={
             'АТАКА ПО ЦЕЛИ':'АТАКА ПО ЦЕЛИ','ПОПАДАНИЕ':'ПОПАДАНИЕ','ПРОМАХ':'ПРОМАХ',
             'ПОПАДАНИЕ ПО ЦЕЛИ':'ПОПАДАНИЕ ПО ЦЕЛИ','ПОПАДАНИЕ ИСТОЧНИКА ПО ЦЕЛИ':'ПОПАДАНИЕ ИСТОЧНИКА ПО ЦЕЛИ',
-            'ПОЛУЧЕН УРОН':'ПОЛУЧЕН УРОН','ЦЕЛЬ УМЕРЛА':'ЦЕЛЬ УМЕРЛА','НАЧАЛО ХОДА':'НАЧАЛО ХОДА','КОНЕЦ ХОДА':'КОНЕЦ ХОДА'
+            'ПОЛУЧЕН УРОН':'ПОЛУЧЕН УРОН','ЦЕЛЬ УМЕРЛА':'ЦЕЛЬ УМЕРЛА','НАЧАЛО ХОДА':'НАЧАЛО ХОДА','КОНЕЦ ХОДА':'КОНЕЦ ХОДА',
+            // 1.6.6: the bearer's own rolls.
+            'ЦЕЛЬ АТАКОВАЛА':'ЦЕЛЬ АТАКОВАЛА','АТАКА ИСТОЧНИКА ПО ЦЕЛИ':'АТАКА ИСТОЧНИКА ПО ЦЕЛИ',
+            'СПАСБРОСОК':'СПАСБРОСОК','СПАСБРОСОК ЦЕЛИ':'СПАСБРОСОК','ПРОВЕРКА':'ПРОВЕРКА','ПРОВЕРКА ЦЕЛИ':'ПРОВЕРКА','ПРОВЕРКА ХАРАКТЕРИСТИКИ':'ПРОВЕРКА'
         };
+        if(map[t])return map[t];
         return map[t]||'';
     }
     function разобратьПокаУсловия(raw){
@@ -870,6 +878,11 @@ var AD5EffectTurns = (function () {
     function разобратьУсловныйЭффект(raw){
         var t=matchNorm(raw);
         if(/^(?:прем|преимущество)\s+атакам\s+по\s+цели$/.test(t))return {тип:'премАтакамПоЦели',raw:raw};
+        // 1.6.6: Blur/Holy Aura/Foresight, True Strike, Vicious Mockery.
+        if(/^(?:пом|помеха)\s+атакам\s+по\s+цели$/.test(t))return {тип:'помАтакамПоЦели',raw:raw};
+        if(/^(?:прем|преимущество)\s+атакам\s+источника\s+по\s+цели$/.test(t))return {тип:'премАтакамИсточникаПоЦели',raw:raw};
+        if(/^(?:пом|помеха)\s+атакам\s+цели$/.test(t))return {тип:'помАтакамЦели',raw:raw};
+        if(/^(?:прем|преимущество)\s+атакам\s+цели$/.test(t))return {тип:'премАтакамЦели',raw:raw};
         if(/^(?:пом|помеха)\s+атакам\s+цели\s+не\s+по\s+источнику$/.test(t))return {тип:'помАтакамЦелиНеПоИсточнику',raw:raw};
         if(/^(?:невидимость\s+не\s+дает\s+защиту|игнор\s+защиты\s+невидимости)$/.test(t))return {тип:'игнорЗащитыНевидимости',raw:raw};
         return null;
@@ -1087,6 +1100,9 @@ var AD5EffectTurns = (function () {
         if(rule.событие==='ПОПАДАНИЕ ПО ЦЕЛИ')return тип==='ПОПАДАНИЕ'&&to===target;
         if(rule.событие==='ПОПАДАНИЕ ИСТОЧНИКА ПО ЦЕЛИ')return тип==='ПОПАДАНИЕ'&&from===src&&to===target;
         if(rule.событие==='ПОЛУЧЕН УРОН')return тип==='ПОЛУЧЕН УРОН'&&to===target;
+        if(rule.событие==='ЦЕЛЬ АТАКОВАЛА')return (тип==='ПОПАДАНИЕ'||тип==='ПРОМАХ')&&from===target;
+        if(rule.событие==='АТАКА ИСТОЧНИКА ПО ЦЕЛИ')return (тип==='ПОПАДАНИЕ'||тип==='ПРОМАХ')&&from===src&&to===target;
+        if(rule.событие==='СПАСБРОСОК'||rule.событие==='ПРОВЕРКА')return тип===rule.событие&&from===target;
         if(rule.событие==='ЦЕЛЬ УМЕРЛА')return тип==='ЦЕЛЬ УМЕРЛА'&&to===target;
         return тип===rule.событие;
     }
@@ -1132,15 +1148,25 @@ var AD5EffectTurns = (function () {
         var concentrationsEnded=завершитьКонцентрацииПослеУсловий(концентрацииКЗавершению);
         return {changed:changed,removed:removed,concentrationsEnded:concentrationsEnded};
     }
+    // 1.6.6: AutoDamage/Condition Engine report the bearer's own saving throws and ability
+    // checks so «РАСХ: СПАСБРОСОК 1» / «РАСХ: ПРОВЕРКА 1» (Resistance, Guidance) are spent.
+    function rollUsed(tokenOrId,kind){
+        var id=String(tokenOrId&&tokenOrId.id||tokenOrId||'');if(!id||!root().tokens[id])return null;
+        return обработатьУсловноеСобытие(kind==='check'?'ПРОВЕРКА':'СПАСБРОСОК',{источникТокенId:id,цельТокенId:id});
+    }
     function условноеПравилоАтаки(sourceToken,targetToken){
         var out={advantage:[],disadvantage:[],ignoreTargetInvisible:false};if(!sourceToken||!targetToken)return out;
         var targetRec=snapshot(targetToken.id),sourceRec=snapshot(sourceToken.id);
         function each(rec,ownerToken,fn){if(!rec||!rec.effects)return;Object.keys(rec.effects).forEach(function(k){var e=rec.effects[k];if(!e||!e.условный||!профильПокаАктивен(e,ownerToken))return;(e.условный.эффекты||[]).forEach(function(x){fn(x,e,k);});});}
         each(targetRec,targetToken,function(x,e){
             if(x.тип==='премАтакамПоЦели')out.advantage.push(e.label||'Условный эффект');
+            if(x.тип==='помАтакамПоЦели')out.disadvantage.push(e.label||'Условный эффект');
+            if(x.тип==='премАтакамИсточникаПоЦели'&&String(e.source&&e.source.sourceToken||'')===String(sourceToken.id))out.advantage.push(e.label||'Условный эффект');
             if(x.тип==='игнорЗащитыНевидимости')out.ignoreTargetInvisible=true;
         });
         each(sourceRec,sourceToken,function(x,e){
+            if(x.тип==='помАтакамЦели')out.disadvantage.push(e.label||'Условный эффект');
+            if(x.тип==='премАтакамЦели')out.advantage.push(e.label||'Условный эффект');
             if(x.тип==='помАтакамЦелиНеПоИсточнику'){
                 var required=String(e.source&&e.source.sourceToken||'');if(required&&String(targetToken.id)!==required)out.disadvantage.push(e.label||'Условный эффект');
             }
@@ -1640,7 +1666,11 @@ var AD5EffectTurns = (function () {
             }else if(m.type==='damage'){
                 var d={formula:String(m.formula||'0'),sign:Number(m.sign)<0?-1:1,label:e.label||m.label||'Урон'};
                 out.damage.push(d);if(m.positive===false)out.damageDebuff.push(d);else out.damageBuff.push(d);
-            }else if(m.type==='save'&&m.ability){
+            }else if((m.type==='save'||m.type==='check'||m.type==='saveMode')&&m.ability==='all'){
+                Object.keys(abilities).forEach(function(a){applyRow(Object.assign({},m,{ability:a}));});
+            }else applyRow(m);
+            function applyRow(m){
+            if(m.type==='save'&&m.ability){
                 if(m.dynamic&&m.formula){if(!out.saveRolls[m.ability])out.saveRolls[m.ability]=[];out.saveRolls[m.ability].push(dynamicRow());}
                 else if(m.positive===false)out.saveDebuffs[m.ability]=(out.saveDebuffs[m.ability]||0)+(Number(m.value)||0);
                 else out.saveBuffs[m.ability]=(out.saveBuffs[m.ability]||0)+(Number(m.value)||0);
@@ -1651,6 +1681,7 @@ var AD5EffectTurns = (function () {
             }else if(m.type==='saveMode'&&m.ability){
                 if(m.mode==='adv')out.advantage[m.ability]=1;
                 if(m.mode==='dis')out.disadvantage[m.ability]=(out.disadvantage[m.ability]||0)+1;
+            }
             }
         });
         out.attack=out.attackBuff+out.attackDebuff;out.ac=out.acBuff+out.acDebuff;
@@ -1795,6 +1826,7 @@ var AD5EffectTurns = (function () {
         return adv===dis?'normal':adv?'adv':'dis';
     }
     function recoveryRollTotal(token,recovery,e){
+        var usedId=token&&token.id;setTimeout(function(){try{rollUsed(usedId,recovery.check?'check':'save');}catch(ignoreRollUsed){}},0);
         var condition=recovery.check?conditionCheckRule(token,recovery.ability,{recovery:true}):conditionSaveRule(token,recovery.ability),bonus=recoveryBonus(token,recovery);
         if(condition.autoFail)return {die:0,die2:null,bonus:bonus,total:Number(recovery.dc)-1,mode:'condition',autoFailCondition:true,conditionLabels:condition.labels||[],check:!!recovery.check};
         var mode=recoveryMode(token,recovery,e,condition),d1=typeof randomInteger==='function'?randomInteger(20):(Math.floor(Math.random()*20)+1),d2=null,die=d1;
@@ -2405,7 +2437,7 @@ var AD5EffectTurns = (function () {
         rollModifierFormula:rollModifierFormula,
         rollModifiers:rollModifierRows,
         conditionalProfile:условныйПрофиль,
-        conditionalAttackRule:условноеПравилоАтаки,
+        conditionalAttackRule:условноеПравилоАтаки,rollUsed:rollUsed,
         hitPayloadProfiles:разобратьHitPayloads,
         hitPayloadsForAttack:hitPayloadsForAttack,
         commitHitPayloads:commitHitPayloads,
