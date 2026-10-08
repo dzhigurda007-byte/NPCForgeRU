@@ -2,7 +2,8 @@
 if(typeof AD5Concentration!=='undefined'&&AD5Concentration) {
     log('AD5Concentration: duplicate module skipped; keep one installed copy.');
 } else {
-/* AD5 Concentration 1.2.12
+/* AD5 Concentration 1.2.13
+ * 1.2.13: длительность «Пока не рассеяно» (формулировка dnd.su) — как «до рассеивания».
  * 1.2.12: Effect Turns «концентрация -1д6» (Synaptic Static) changes concentration saves.
  * 1.2.11: checkDc(token, dc, reason) — a concentration save with a fixed DC (AD5 Areas «КОНЦЕНТРАЦИЯ:» zones).
  * 1.2.10: counts the caster's turns under each concentration (elapsed(id)) for Phases «РОСТ».
@@ -20,7 +21,7 @@ if(typeof AD5Concentration!=='undefined'&&AD5Concentration) {
  */
 var AD5Concentration=(function(){
     'use strict';
-    var VERSION='1.2.12',SCRIPT='AD5 Concentration',SEQ=0;
+    var VERSION='1.2.13',SCRIPT='AD5 Concentration',SEQ=0;
     var FALLBACK_MARKERS=['overdrive','aura','stopwatch','white-tower'];
     var ACTION_NAME=Array(21).join('\u200b')+'AD5 · Снять концентрацию',ACTION_CMD='!ad5conc endselected',runtimeTurnKey='';
 
@@ -42,7 +43,7 @@ var AD5Concentration=(function(){
     function rangeConcentration(value){var t=norm(value).replace(/[.,;:()\[\]{}]/g,' ');return rangeConcentrationTurns(value)!==null||/(?:^|\s)кон(?:\s|$)/i.test(t)||/(?:^|\s)concentration(?:\s|$)/i.test(t);}
     function durationToTurns(value){
         var t=norm(value);if(!t)return null;
-        if(/(?:until\s+dispelled|до\s+рассеивания|permanent|постоян)/i.test(t))return null;
+        if(/(?:until\s+dispelled|до\s+рассеивания|пока\s+не\s+рассеян|permanent|постоян)/i.test(t))return null;
         var m=/(\d+(?:[.,]\d+)?)\s*(rounds?|turns?|раунд(?:а|ов)?|ход(?:а|ов)?|seconds?|secs?|сек(?:унда|унды|унд)?|minutes?|mins?|мин(?:ута|уты|ут)?|hours?|hrs?|час(?:а|ов)?|days?|дн(?:я|ей)?)/i.exec(t);
         if(!m)return null;
         var n=Number(m[1].replace(',','.'));if(!Number.isFinite(n)||n<=0)return null;var u=norm(m[2]);

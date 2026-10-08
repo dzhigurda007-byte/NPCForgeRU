@@ -3,7 +3,8 @@ if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
     log('AD5EffectTurns: duplicate module skipped; keep one installed copy.');
 } else {
 /*
-AD5 Effect Turns 1.6.16
+AD5 Effect Turns 1.6.17
+1.6.17: Warding Bond label follows the official translation («Охраняющая связь»); the old word stays an alias.
 1.6.16: modifiers «прем/пом атака …», «при движении 1d8 звук» (Booming Blade), «теряет сопр …», «урон по цели … раз в ход», «при окончании ТЕЛ15 истощение», «концентрация -1д6», «инициатива +1д8», «полёт 0», «при уроне прем атака», «переносится 60» (!ad5fx transfer); conditions «ограничен», «покрыт кислотой» / «ожог кислотой» (periodic with type), «разлом реальности» (d10 at turn start), «связь сущностей» (tetherPartners); «ПОПАД: 12 раз» counted payloads; «ПОПАДСОСЕД».
 1.6.15: a condition with a formula and an explicit damage type deals periodic damage («опутан 1д6 колющий ПРОВЕРКА СИЛ14» — Ensnaring Strike, Evard's Black Tentacles); recovery effects deal it at the end of the bearer's turn.
 1.6.14: modifiers «магическое оружие», «имм <состояние>», «прем/пом спас против <состояние|заклинаний>», «увёртливость против заклинаний», «макс хиты не снижаются», «регенерация N», «оживление N», «размер ±1» (токен ×2 / ×½), «полёт N» (падение по окончании); conditions «без действия» (маркер stopwatch) and «слабоумие»; ПОПАДЗАМЕНА / ПОПАДПРОМАХ.
@@ -63,7 +64,7 @@ var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5
 // silently shadow every newer fix.
 var AD5EffectTurns = (function () {
     'use strict';
-    var VERSION='1.6.16', SCRIPT='AD5 Effect Turns';
+    var VERSION='1.6.17', SCRIPT='AD5 Effect Turns';
     var runtimeLastGroup=Object.create(null);
     var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
     var markerCacheRaw=null, markerCacheByName=Object.create(null);
@@ -127,7 +128,7 @@ var AD5EffectTurns = (function () {
         dodging:{marker:'all-for-one',label:'Уклонение',aliases:['уклонение','уклоняется','dodge','dodging']},
         disengaging:{marker:'flying-flag',label:'Отход',aliases:['отход','отходит','disengage','disengaging']},
         // 1.6.4: Warding Bond — the effect's source token takes the same damage as its bearer.
-        warding_bond:{marker:'three-leaves',label:'Охранная связь',aliases:['охранная связь','warding bond','связь урона']},
+        warding_bond:{marker:'three-leaves',label:'Охраняющая связь',aliases:['охранная связь','охраняющая связь','warding bond','связь урона']},
         // Death Ward: first drop to 0 HP from damage leaves 1 HP instead (Condition Engine).
         death_ward:{marker:'trophy',label:'Защита от смерти',aliases:['защита от смерти','death ward']},
         mirror_image:{marker:'sentry-gun',label:'Зеркальные образы',aliases:['зеркальные образы','отражения','mirror image']},

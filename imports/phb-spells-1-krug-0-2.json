@@ -38,7 +38,8 @@
   "components": {
    "v": false,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "небольшое количество грима, наносимое на лицо при накладывании этого заклинания"
   },
   "concentration": true,
   "description": "ЗАКЛ\nПримечание: преимущество на проверки Харизмы против одного не враждебного существа; после окончания оно понимает, что на него влияли.",
@@ -62,7 +63,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "омела, лист клевера и дубинка или боевой посох"
   },
   "description": "ЗАКЛ\nПримечание: атаки этим оружием используют Мудрость и кость урона d8 — поправьте строку атаки в листе на время действия.\nДубинка 10",
   "automation": "partial",
@@ -131,7 +133,8 @@
   "components": {
    "v": false,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "кусок овечьей шерсти"
   },
   "description": "ЗАКЛ\nПримечание: звук или образ размером до 5-фт куба; распознаётся проверкой Интеллекта (Анализ) против СЛ заклинаний.",
   "automation": "partial",
@@ -178,7 +181,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "кусочек фосфора, гнилушка или светлячок"
   },
   "concentration": true,
   "description": "ЗАКЛ\nПримечание: до четырёх огоньков дают тусклый свет; перемещайте их вручную.",
@@ -202,7 +206,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "два магнетита"
   },
   "description": "ЗАКЛ\nПримечание: правило Арвенора — при починке предметов (магических и обычных) тратится +200% материалов за каждый тир.",
   "automation": "partial",
@@ -225,7 +230,8 @@
   "components": {
    "v": true,
    "s": false,
-   "m": true
+   "m": true,
+   "material": "светлячок или фосфоресцирующий мох"
   },
   "description": "ЗАКЛ\nПримечание: предмет излучает яркий свет 20 фт и тусклый ещё 20 фт.",
   "automation": "partial",
@@ -248,7 +254,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "кусочек медной проволоки"
   },
   "description": "ЗАКЛ\nПримечание: шёпот, который слышит только цель; она может ответить шёпотом.",
   "automation": "partial",
@@ -271,7 +278,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "крошечный плащ"
   },
   "concentration": true,
   "description": "ЗАКЛ\nПримечание: куб добавляется к одному спасброску и расходуется.\nспас ВСЕ +1д4 10\nРАСХ: СПАСБРОСОК 1",
@@ -445,7 +453,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "кусок овечьей шерсти"
   },
   "concentration": true,
   "description": "ЗАКЛ\nПримечание: беззвучная иллюзия; распознаётся проверкой Анализа.",
@@ -469,7 +478,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "капля святой воды"
   },
   "concentration": true,
   "description": "ЗАКЛ\nПримечание: на каждый круг выше 1-го — ещё одна цель.\nатака +1д4 10, спас ВСЕ +1д4 10",
@@ -582,7 +592,7 @@
    "Гневная кара"
   ],
   "level": 1,
-  "school": "Очарование",
+  "school": "Воплощение",
   "castingTime": "1 бонусное действие",
   "range": "На себя",
   "target": "на себя",
@@ -692,7 +702,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "чашка воды"
   },
   "damage": "5",
   "damageType": "временное хп",
@@ -720,7 +731,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "кусочек выделанной кожи"
   },
   "description": "ЗАКЛ\nПримечание: КД 13 + ЛОВ без доспеха; эффект заканчивается, если атрибут ad5_armor_worn персонажа больше 0.\nAD5ЭФФ: {\"kind\":\"armor\",\"armorAttribute\":\"ad5_armor_worn\",\"base\":13,\"duration\":4800}",
   "automation": "full",
@@ -743,7 +755,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "кусочек пищи"
   },
   "save": "WIS",
   "saveSuccess": "Нет эффекта",
@@ -768,7 +781,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "маленькие пирожные и перо, которым нужно махать в воздухе"
   },
   "concentration": true,
   "save": "WIS",
@@ -780,9 +794,10 @@
  },
  {
   "id": "phb-protection-from-evil-and-good",
-  "name": "Защита от добра и зла",
+  "name": "Защита от зла и добра",
   "aliases": [
    "Protection from Evil and Good",
+   "Защита от зла и добра",
    "Защита от добра и зла"
   ],
   "level": 1,
@@ -794,36 +809,13 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "святая вода или порошок серебра и железа, расходуемые заклинанием"
   },
   "concentration": true,
   "description": "ЗАКЛ\nAD5ЭФФ: {\"kind\":\"protection\",\"duration\":100}",
   "automation": "full",
   "classes": "Жрец, Паладин, Колдун, Волшебник",
-  "source": "PHB"
- },
- {
-  "id": "phb-illusory-script",
-  "name": "Иллюзорный текст",
-  "aliases": [
-   "Illusory Script",
-   "Иллюзорный текст"
-  ],
-  "level": 1,
-  "school": "Иллюзия",
-  "castingTime": "1 минута",
-  "range": "Касание",
-  "target": "лист бумаги",
-  "duration": "10 дней",
-  "components": {
-   "v": false,
-   "s": true,
-   "m": true
-  },
-  "ritual": true,
-  "description": "ЗАКЛ\nПримечание: текст читают только выбранные существа.",
-  "automation": "partial",
-  "classes": "Бард, Колдун, Волшебник",
   "source": "PHB"
  },
  {
@@ -905,6 +897,32 @@
   "source": "PHB"
  },
  {
+  "id": "phb-illusory-script",
+  "name": "Невидимое письмо",
+  "aliases": [
+   "Illusory Script",
+   "Невидимое письмо",
+   "Иллюзорный текст"
+  ],
+  "level": 1,
+  "school": "Иллюзия",
+  "castingTime": "1 минута",
+  "range": "Касание",
+  "target": "лист бумаги",
+  "duration": "10 дней",
+  "components": {
+   "v": false,
+   "s": true,
+   "m": true,
+   "material": "свинцовые чернила, стоящие как минимум 10 зм, расходуемые заклинанием"
+  },
+  "ritual": true,
+  "description": "ЗАКЛ\nПримечание: текст читают только выбранные существа.",
+  "automation": "partial",
+  "classes": "Бард, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
   "id": "phb-unseen-servant",
   "name": "Невидимый слуга",
   "aliases": [
@@ -920,7 +938,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "часть тетивы и кусочек дерева"
   },
   "ritual": true,
   "description": "ЗАКЛ\nПримечание: невидимый слуга выполняет простые поручения.",
@@ -1068,7 +1087,8 @@
   "components": {
    "v": true,
    "s": false,
-   "m": true
+   "m": true,
+   "material": "небольшое перо или кусочек пуха"
   },
   "description": "ЗАКЛ\nПримечание: реакция AD5: падающие союзники в пределах 60 фт не получают урона от падения.",
   "automation": "full",
@@ -1100,30 +1120,6 @@
   "source": "PHB"
  },
  {
-  "id": "phb-tenser-s-floating-disk",
-  "name": "Парящий диск Тензера",
-  "aliases": [
-   "Tenser's Floating Disk",
-   "Парящий диск Тензера"
-  ],
-  "level": 1,
-  "school": "Вызов",
-  "castingTime": "1 действие",
-  "range": "30 фт",
-  "target": "диск",
-  "duration": "1 час",
-  "components": {
-   "v": true,
-   "s": true,
-   "m": true
-  },
-  "ritual": true,
-  "description": "ЗАКЛ\nПримечание: диск несёт до 500 фунтов и следует за вами.",
-  "automation": "partial",
-  "classes": "Волшебник",
-  "source": "PHB"
- },
- {
   "id": "phb-find-familiar",
   "name": "Поиск фамильяра",
   "aliases": [
@@ -1139,7 +1135,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "стоящие 10 зм уголь, благовония и травы, сжигаемые в огне в латунной жаровне"
   },
   "ritual": true,
   "description": "ЗАКЛ\nПримечание: призыв фамильяра — токен ведётся штатно.",
@@ -1163,7 +1160,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "щепотка сажи и соли"
   },
   "ritual": true,
   "description": "ЗАКЛ\nПримечание: понимание любого услышанного или прочитанного языка.",
@@ -1187,7 +1185,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "капля крови"
   },
   "concentration": true,
   "save": "CHA",
@@ -1262,7 +1261,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "задняя лапка кузнечика"
   },
   "description": "ЗАКЛ\nПримечание: дальность прыжков утраивается.",
   "automation": "partial",
@@ -1285,7 +1285,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "небольшое количество алкоголя или дистиллированного спирта"
   },
   "damage": "1d4+4",
   "damageType": "временное хп",
@@ -1367,7 +1368,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "щепотка порошка или песка, окрашенного в красный, желтый и синий цвет"
   },
   "description": "ЗАКЛ\nПримечание: существа с наименьшими хитами слепнут первыми, пока хватает суммы.\nМУЛЬТИ: ПУЛ\nПУЛ: 6d10\nПУЛВЫШЕ: +2д10 ЗА КРУГ\nПУЛЭФФ: ослеплён 1",
   "automation": "full",
@@ -1390,12 +1392,39 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "окаменевший глаз тритона"
   },
   "concentration": true,
   "description": "ЗАКЛ\nПримечание: характеристика для помехи на проверки выбирается при нажатии; переносится кнопкой управления.\nВАРИАНТ: Сила\nAD5ЭФФ: {\"kind\":\"mark\",\"formula\":\"1d6\",\"type\":\"некротическая энергия\",\"checkAbility\":\"strength\",\"duration\":600}\nВАРИАНТ: Ловкость\nAD5ЭФФ: {\"kind\":\"mark\",\"formula\":\"1d6\",\"type\":\"некротическая энергия\",\"checkAbility\":\"dexterity\",\"duration\":600}\nВАРИАНТ: Телосложение\nAD5ЭФФ: {\"kind\":\"mark\",\"formula\":\"1d6\",\"type\":\"некротическая энергия\",\"checkAbility\":\"constitution\",\"duration\":600}\nВАРИАНТ: Интеллект\nAD5ЭФФ: {\"kind\":\"mark\",\"formula\":\"1d6\",\"type\":\"некротическая энергия\",\"checkAbility\":\"intelligence\",\"duration\":600}\nВАРИАНТ: Мудрость\nAD5ЭФФ: {\"kind\":\"mark\",\"formula\":\"1d6\",\"type\":\"некротическая энергия\",\"checkAbility\":\"wisdom\",\"duration\":600}\nВАРИАНТ: Харизма\nAD5ЭФФ: {\"kind\":\"mark\",\"formula\":\"1d6\",\"type\":\"некротическая энергия\",\"checkAbility\":\"charisma\",\"duration\":600}",
   "automation": "full",
   "classes": "Колдун",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-alarm",
+  "name": "Сигнал тревоги",
+  "aliases": [
+   "Alarm",
+   "Сигнал тревоги",
+   "Тревога"
+  ],
+  "level": 1,
+  "school": "Ограждение",
+  "castingTime": "1 минута",
+  "range": "30 фт",
+  "target": "20 фт куб",
+  "duration": "8 часов",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true,
+   "material": "колокольчик и серебряная проволочка"
+  },
+  "ritual": true,
+  "description": "ЗАКЛ\nПримечание: сигнализация (звуковая или мысленная) при пересечении области.",
+  "automation": "partial",
+  "classes": "Следопыт, Волшебник",
   "source": "PHB"
  },
  {
@@ -1414,7 +1443,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "кусок масла или свиного сала"
   },
   "save": "DEX",
   "saveSuccess": "Нет эффекта",
@@ -1439,7 +1469,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "щепотка земли"
   },
   "description": "ЗАКЛ\nПримечание: на каждый круг выше 1-го — ещё одна цель.\nскорость +10 600",
   "automation": "full",
@@ -1462,7 +1493,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "капля воды, если вода создаётся, или несколько песчинок, если вода уничтожается"
   },
   "description": "ЗАКЛ\nПримечание: до 10 галлонов воды; на каждый круг выше 1-го — ещё 10 галлонов.",
   "automation": "partial",
@@ -1470,27 +1502,29 @@
   "source": "PHB"
  },
  {
-  "id": "phb-alarm",
-  "name": "Тревога",
+  "id": "phb-tenser-s-floating-disk",
+  "name": "Тензеров парящий диск",
   "aliases": [
-   "Alarm",
-   "Тревога"
+   "Tenser's Floating Disk",
+   "Тензеров парящий диск",
+   "Парящий диск Тензера"
   ],
   "level": 1,
-  "school": "Ограждение",
-  "castingTime": "1 минута",
+  "school": "Вызов",
+  "castingTime": "1 действие",
   "range": "30 фт",
-  "target": "20 фт куб",
-  "duration": "8 часов",
+  "target": "диск",
+  "duration": "1 час",
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "капля ртути"
   },
   "ritual": true,
-  "description": "ЗАКЛ\nПримечание: сигнализация (звуковая или мысленная) при пересечении области.",
+  "description": "ЗАКЛ\nПримечание: диск несёт до 500 фунтов и следует за вами.",
   "automation": "partial",
-  "classes": "Следопыт, Волшебник",
+  "classes": "Волшебник",
   "source": "PHB"
  },
  {
@@ -1533,7 +1567,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "маленькое серебряное зеркало"
   },
   "description": "ЗАКЛ\nубежище {DC} 10",
   "automation": "full",
@@ -1556,7 +1591,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "щепотка мелкого песка, лепестки розы или сверчок"
   },
   "description": "ЗАКЛ\nПримечание: засыпают существа с наименьшими хитами; урон или действие союзника будит.\nМУЛЬТИ: ПУЛ\nПУЛ: 5d8\nПУЛВЫШЕ: +2д8 ЗА КРУГ\nПУЛЭФФ: без сознания 10",
   "automation": "full",
@@ -1579,7 +1615,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "ветка омелы"
   },
   "description": "ЗАКЛ\nПримечание: правило Арвенора — при поедании ягоды к20: 1 — сильное расстройство, после 5 минут снова голодны; 2–10 — безвкусны; 11–15 — нет эффекта; 16–19 — сыты, +1 воля; 20 — сыты и бодры, 1к4 временных хитов.",
   "automation": "partial",
@@ -1625,7 +1662,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "небольшой пергамент со святыми письменами"
   },
   "concentration": true,
   "description": "ЗАКЛ\nкд 2 100",
@@ -1649,7 +1687,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "пепел от сожжённого листа омелы и еловая ветка"
   },
   "concentration": true,
   "description": "ЗАКЛ\nПримечание: +10 к проверкам Скрытности союзников рядом — вручную.",
@@ -1658,26 +1697,32 @@
   "source": "PHB"
  },
  {
-  "id": "phb-rope-trick",
-  "name": "Верёвочный фокус",
+  "id": "phb-spiritual-weapon",
+  "name": "Божественное оружие",
   "aliases": [
-   "Rope Trick",
-   "Верёвочный фокус"
+   "Spiritual Weapon",
+   "Божественное оружие",
+   "Духовное оружие"
   ],
   "level": 2,
-  "school": "Преобразование",
-  "castingTime": "1 действие",
-  "range": "Касание",
-  "target": "верёвка",
-  "duration": "1 час",
+  "school": "Воплощение",
+  "castingTime": "1 бонусное действие",
+  "range": "60 фт",
+  "target": "1 существо",
+  "duration": "1 минута",
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": false
   },
-  "description": "ЗАКЛ\nПримечание: вход в межпространство на 8 существ.",
+  "attack": "Melee",
+  "damage": "1d8",
+  "damageType": "силовое поле",
+  "addAbilityMod": true,
+  "higherText": "Урон +1d8 за каждые два круга выше 2-го.",
+  "description": "ЗАКЛ\nПримечание: атака бонусным действием каждый ход повторным нажатием; оружие — отдельный токен (вручную).",
   "automation": "partial",
-  "classes": "Волшебник",
+  "classes": "Жрец",
   "source": "PHB"
  },
  {
@@ -1692,11 +1737,12 @@
   "castingTime": "1 действие",
   "range": "Касание",
   "target": "1 предмет",
-  "duration": "До рассеивания",
+  "duration": "Пока не рассеяно",
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "порошок рубина на 50 зм, расходуемый заклинанием"
   },
   "description": "ЗАКЛ\nПримечание: неугасимое пламя, светит как факел.",
   "automation": "partial",
@@ -1743,7 +1789,8 @@
   "components": {
    "v": true,
    "s": false,
-   "m": true
+   "m": true,
+   "material": "язык змеи и либо кусочек медовых сот, либо капля сладкого масла"
   },
   "concentration": true,
   "save": "WIS",
@@ -1765,16 +1812,68 @@
   "castingTime": "1 минута",
   "range": "30 фт",
   "target": "1 предмет",
-  "duration": "До рассеивания",
+  "duration": "Пока не рассеяно",
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "кусочек медовых сот и порошок нефрита, стоящий как минимум 10 зм, расходуемые заклинанием"
   },
   "ritual": true,
   "description": "ЗАКЛ\nПримечание: сообщение звучит при заданном условии.",
   "automation": "partial",
   "classes": "Бард, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-arcane-lock",
+  "name": "Волшебный замок",
+  "aliases": [
+   "Arcane Lock",
+   "Волшебный замок",
+   "Магический замок"
+  ],
+  "level": 2,
+  "school": "Ограждение",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "дверь, окно или сундук",
+  "duration": "Пока не рассеяно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true,
+   "material": "золотая пыль, стоящая как минимум 25 зм, расходуемая заклинанием"
+  },
+  "description": "ЗАКЛ\nПримечание: запирает проход; СЛ взлома +10 для чужих.",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-phantasmal-force",
+  "name": "Воображаемая сила",
+  "aliases": [
+   "Phantasmal Force",
+   "Воображаемая сила",
+   "Иллюзорная сила"
+  ],
+  "level": 2,
+  "school": "Иллюзия",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "1 существо",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true,
+   "material": "кусок овечьей шерсти"
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: спасбросок Интеллекта; иллюзия может наносить 1d6 психического урона в ход — вручную.",
+  "automation": "partial",
+  "classes": "Бард, Чародей, Волшебник",
   "source": "PHB"
  },
  {
@@ -1793,12 +1892,43 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "особые палочки, костяшки или фигурки с отметинами, стоящие как минимум 25 зм"
   },
   "ritual": true,
   "description": "ЗАКЛ\nПримечание: знамение о действии в ближайшие 30 минут.",
   "automation": "partial",
   "classes": "Жрец",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-flame-blade",
+  "name": "Горящий клинок",
+  "aliases": [
+   "Flame Blade",
+   "Горящий клинок",
+   "Пылающий клинок"
+  ],
+  "level": 2,
+  "school": "Воплощение",
+  "castingTime": "1 бонусное действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true,
+   "material": "лист сумаха"
+  },
+  "concentration": true,
+  "attack": "Melee",
+  "damage": "3d6",
+  "damageType": "огонь",
+  "higherText": "Урон +1d6 за каждые два круга выше 2-го.",
+  "description": "ЗАКЛ\nПримечание: рукопашная атака заклинанием; повторяйте нажатием в каждом ходу.",
+  "automation": "full",
+  "classes": "Друид",
   "source": "PHB"
  },
  {
@@ -1817,7 +1947,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "пригоршня дубовой коры"
   },
   "concentration": true,
   "description": "ЗАКЛ\nПримечание: КД цели не может быть ниже 16 — поправьте КД вручную, если он ниже.\nДубовая кора 600",
@@ -1826,56 +1957,54 @@
   "source": "PHB"
  },
  {
-  "id": "phb-spiritual-weapon",
-  "name": "Духовное оружие",
+  "id": "phb-beast-sense",
+  "name": "Животные чувства",
   "aliases": [
-   "Spiritual Weapon",
-   "Духовное оружие"
+   "Beast Sense",
+   "Животные чувства",
+   "Чувства зверя"
   ],
   "level": 2,
-  "school": "Воплощение",
-  "castingTime": "1 бонусное действие",
-  "range": "60 фт",
-  "target": "1 существо",
-  "duration": "1 минута",
+  "school": "Прорицание",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "1 согласный зверь",
+  "duration": "Концентрация, до 1 часа",
   "components": {
-   "v": true,
+   "v": false,
    "s": true,
    "m": false
   },
-  "attack": "Melee",
-  "damage": "1d8",
-  "damageType": "силовое поле",
-  "addAbilityMod": true,
-  "higherText": "Урон +1d8 за каждые два круга выше 2-го.",
-  "description": "ЗАКЛ\nПримечание: атака бонусным действием каждый ход повторным нажатием; оружие — отдельный токен (вручную).",
+  "concentration": true,
+  "ritual": true,
+  "description": "ЗАКЛ\nПримечание: вы видите и слышите через чувства зверя.",
   "automation": "partial",
-  "classes": "Жрец",
+  "classes": "Друид, Следопыт",
   "source": "PHB"
  },
  {
-  "id": "phb-enthrall",
-  "name": "Завораживание",
+  "id": "phb-cordon-of-arrows",
+  "name": "Завеса стрел",
   "aliases": [
-   "Enthrall",
-   "Завораживание"
+   "Cordon of Arrows",
+   "Завеса стрел",
+   "Кордон стрел"
   ],
   "level": 2,
-  "school": "Очарование",
+  "school": "Преобразование",
   "castingTime": "1 действие",
-  "range": "60 фт",
-  "target": "существа в 60 фт",
-  "duration": "1 минута",
+  "range": "5 фт",
+  "target": "4 боеприпаса",
+  "duration": "8 часов",
   "components": {
    "v": true,
    "s": true,
-   "m": false
+   "m": true,
+   "material": "как минимум четыре стрелы или арбалетных болта"
   },
-  "save": "WIS",
-  "saveSuccess": "Нет эффекта",
-  "description": "ЗАКЛ\nПримечание: помеха на проверки Внимательности против других существ — вручную.\nПРВ: Завораживание 10; УСП: нет эффекта",
+  "description": "ЗАКЛ\nПримечание: боеприпасы атакуют входящих в 30 фт (1d6 колющего, спас ЛОВ) — вручную.",
   "automation": "partial",
-  "classes": "Бард, Колдун",
+  "classes": "Следопыт",
   "source": "PHB"
  },
  {
@@ -1902,53 +2031,6 @@
   "source": "PHB"
  },
  {
-  "id": "phb-mirror-image",
-  "name": "Зеркальные образы",
-  "aliases": [
-   "Mirror Image",
-   "Зеркальные образы"
-  ],
-  "level": 2,
-  "school": "Иллюзия",
-  "castingTime": "1 действие",
-  "range": "На себя",
-  "target": "на себя",
-  "duration": "1 минута",
-  "components": {
-   "v": true,
-   "s": true,
-   "m": false
-  },
-  "description": "ЗАКЛ\nзеркальные образы 10",
-  "automation": "full",
-  "classes": "Чародей, Колдун, Волшебник",
-  "source": "PHB"
- },
- {
-  "id": "phb-phantasmal-force",
-  "name": "Иллюзорная сила",
-  "aliases": [
-   "Phantasmal Force",
-   "Иллюзорная сила"
-  ],
-  "level": 2,
-  "school": "Иллюзия",
-  "castingTime": "1 действие",
-  "range": "60 фт",
-  "target": "1 существо",
-  "duration": "Концентрация, до 1 минуты",
-  "components": {
-   "v": true,
-   "s": true,
-   "m": true
-  },
-  "concentration": true,
-  "description": "ЗАКЛ\nПримечание: спасбросок Интеллекта; иллюзия может наносить 1d6 психического урона в ход — вручную.",
-  "automation": "partial",
-  "classes": "Бард, Чародей, Волшебник",
-  "source": "PHB"
- },
- {
   "id": "phb-branding-smite",
   "name": "Клеймящая кара",
   "aliases": [
@@ -1970,29 +2052,6 @@
   "description": "ЗАКЛ\nПримечание: цель светится и не может стать невидимой; на каждый круг выше 2-го урон +1d6.\nПОПАД: разовый\nПОПАДУСЛ: оружие\nПОПАДУРОН: 2d6 излучение\nПОПАДЭФФ: клеймо 10",
   "automation": "full",
   "classes": "Паладин",
-  "source": "PHB"
- },
- {
-  "id": "phb-cordon-of-arrows",
-  "name": "Кордон стрел",
-  "aliases": [
-   "Cordon of Arrows",
-   "Кордон стрел"
-  ],
-  "level": 2,
-  "school": "Преобразование",
-  "castingTime": "1 действие",
-  "range": "5 фт",
-  "target": "4 боеприпаса",
-  "duration": "8 часов",
-  "components": {
-   "v": true,
-   "s": true,
-   "m": true
-  },
-  "description": "ЗАКЛ\nПримечание: боеприпасы атакуют входящих в 30 фт (1d6 колющего, спас ЛОВ) — вручную.",
-  "automation": "partial",
-  "classes": "Следопыт",
   "source": "PHB"
  },
  {
@@ -2037,7 +2096,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "либо маленькая кожаная петля, либо кусочек золотой проволоки, согнутый в форме кубка с длинной ножкой"
   },
   "concentration": true,
   "description": "ЗАКЛ\nПримечание: цель парит до 20 фт над землёй; несогласная — спасбросок Телосложения.",
@@ -2061,7 +2121,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "несколько семечек лунносемянника и кусочек опалесцирующего полевого шпата"
   },
   "concentration": true,
   "save": "CON",
@@ -2099,53 +2160,6 @@
   "description": "ЗАКЛ\nПримечание: атаки оружием, использующие Силу, наносят половину урона — вручную.\nЛуч слабости ТЕЛ{DC} 10",
   "automation": "partial",
   "classes": "Колдун, Волшебник",
-  "source": "PHB"
- },
- {
-  "id": "phb-arcanist-s-magic-aura",
-  "name": "Магическая аура Нистула",
-  "aliases": [
-   "Arcanist's Magic Aura",
-   "Магическая аура Нистула",
-   "Nystul's Magic Aura"
-  ],
-  "level": 2,
-  "school": "Иллюзия",
-  "castingTime": "1 действие",
-  "range": "Касание",
-  "target": "1 существо или предмет",
-  "duration": "24 часа",
-  "components": {
-   "v": true,
-   "s": true,
-   "m": true
-  },
-  "description": "ЗАКЛ\nПримечание: ложная магическая аура или маскировка от прорицаний.",
-  "automation": "partial",
-  "classes": "Волшебник",
-  "source": "PHB"
- },
- {
-  "id": "phb-arcane-lock",
-  "name": "Магический замок",
-  "aliases": [
-   "Arcane Lock",
-   "Магический замок"
-  ],
-  "level": 2,
-  "school": "Ограждение",
-  "castingTime": "1 действие",
-  "range": "Касание",
-  "target": "дверь, окно или сундук",
-  "duration": "До рассеивания",
-  "components": {
-   "v": true,
-   "s": true,
-   "m": true
-  },
-  "description": "ЗАКЛ\nПримечание: запирает проход; СЛ взлома +10 для чужих.",
-  "automation": "partial",
-  "classes": "Волшебник",
   "source": "PHB"
  },
  {
@@ -2197,9 +2211,10 @@
  },
  {
   "id": "phb-prayer-of-healing",
-  "name": "Молитва лечения",
+  "name": "Молебен лечения",
   "aliases": [
    "Prayer of Healing",
+   "Молебен лечения",
    "Молитва лечения"
   ],
   "level": 2,
@@ -2239,12 +2254,39 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "щепотка соли и по одной медной монетке на каждый глаз трупа, которые должны оставаться там все время, пока активно заклинание"
   },
   "ritual": true,
   "description": "ЗАКЛ\nПримечание: тело не разлагается и не может стать нежитью.",
   "automation": "partial",
   "classes": "Жрец, Волшебник",
+  "source": "PHB"
+ },
+ {
+  "id": "phb-arcanist-s-magic-aura",
+  "name": "Нистулова ложная аура",
+  "aliases": [
+   "Arcanist's Magic Aura",
+   "Нистулова ложная аура",
+   "Магическая аура Нистула",
+   "Nystul's Magic Aura"
+  ],
+  "level": 2,
+  "school": "Иллюзия",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "1 существо или предмет",
+  "duration": "24 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true,
+   "material": "небольшой лоскут шелка"
+  },
+  "description": "ЗАКЛ\nПримечание: ложная магическая аура или маскировка от прорицаний.",
+  "automation": "partial",
+  "classes": "Волшебник",
   "source": "PHB"
  },
  {
@@ -2263,7 +2305,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "осколок стекла"
   },
   "concentration": true,
   "damage": "4d4",
@@ -2292,7 +2335,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "медная монетка"
   },
   "concentration": true,
   "description": "ЗАКЛ\nПримечание: чтение поверхностных мыслей; глубже — спасбросок Мудрости.",
@@ -2324,10 +2368,35 @@
   "source": "PHB"
  },
  {
+  "id": "phb-mirror-image",
+  "name": "Отражения",
+  "aliases": [
+   "Mirror Image",
+   "Отражения",
+   "Зеркальные образы"
+  ],
+  "level": 2,
+  "school": "Иллюзия",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "1 минута",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "description": "ЗАКЛ\nзеркальные образы 10",
+  "automation": "full",
+  "classes": "Чародей, Колдун, Волшебник",
+  "source": "PHB"
+ },
+ {
   "id": "phb-warding-bond",
-  "name": "Охранная связь",
+  "name": "Охраняющая связь",
   "aliases": [
    "Warding Bond",
+   "Охраняющая связь",
    "Охранная связь"
   ],
   "level": 2,
@@ -2339,7 +2408,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "пара платиновых колец, каждое из которых стоит как минимум 50 зм, которые вы с целью должны носить всю длительность заклинания"
   },
   "description": "ЗАКЛ\nПримечание: связь рвётся на расстоянии больше 60 фт или когда у вас 0 хитов (вручную).\nохранная связь 600, сопр все 600, кд 1 600, спас ВСЕ +1 600",
   "automation": "full",
@@ -2371,9 +2441,10 @@
  },
  {
   "id": "phb-spider-climb",
-  "name": "Паучье лазание",
+  "name": "Паук",
   "aliases": [
    "Spider Climb",
+   "Паук",
    "Паучье лазание"
   ],
   "level": 2,
@@ -2409,7 +2480,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "полоска белой ткани"
   },
   "description": "ЗАКЛ\nПримечание: на каждый круг выше 2-го максимум и текущие хиты +5 дополнительно — поправьте число.\nмакс хиты +5 999",
   "automation": "full",
@@ -2432,7 +2504,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "кусочек меха ищейки"
   },
   "ritual": true,
   "description": "ЗАКЛ\nПримечание: направление и расстояние до вида в пределах 5 миль.",
@@ -2479,7 +2552,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "раздвоенная веточка"
   },
   "concentration": true,
   "description": "ЗАКЛ\nПримечание: направление к предмету в пределах 1000 фт.",
@@ -2526,7 +2600,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "семя гороха"
   },
   "concentration": true,
   "save": "STR",
@@ -2538,9 +2613,10 @@
  },
  {
   "id": "phb-animal-messenger",
-  "name": "Посыльное животное",
+  "name": "Почтовое животное",
   "aliases": [
    "Animal Messenger",
+   "Почтовое животное",
    "Посыльное животное"
   ],
   "level": 2,
@@ -2552,40 +2628,13 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "кусочек пищи"
   },
   "ritual": true,
   "description": "ЗАКЛ\nПримечание: зверь доставляет сообщение.",
   "automation": "partial",
   "classes": "Бард, Друид, Следопыт",
-  "source": "PHB"
- },
- {
-  "id": "phb-flame-blade",
-  "name": "Пылающий клинок",
-  "aliases": [
-   "Flame Blade",
-   "Пылающий клинок"
-  ],
-  "level": 2,
-  "school": "Воплощение",
-  "castingTime": "1 бонусное действие",
-  "range": "На себя",
-  "target": "на себя",
-  "duration": "Концентрация, до 10 минут",
-  "components": {
-   "v": true,
-   "s": true,
-   "m": true
-  },
-  "concentration": true,
-  "attack": "Melee",
-  "damage": "3d6",
-  "damageType": "огонь",
-  "higherText": "Урон +1d6 за каждые два круга выше 2-го.",
-  "description": "ЗАКЛ\nПримечание: рукопашная атака заклинанием; повторяйте нажатием в каждом ходу.",
-  "automation": "full",
-  "classes": "Друид",
   "source": "PHB"
  },
  {
@@ -2604,7 +2653,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "кусок сала, щепотка серы и толченого железа"
   },
   "concentration": true,
   "save": "DEX",
@@ -2659,7 +2709,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "кусок железа и пламя"
   },
   "concentration": true,
   "damage": "2d8",
@@ -2673,6 +2724,32 @@
   "source": "PHB",
   "save": "CON",
   "saveSuccess": "Полный урон"
+ },
+ {
+  "id": "phb-enthrall",
+  "name": "Речь златоуста",
+  "aliases": [
+   "Enthrall",
+   "Речь златоуста",
+   "Завораживание"
+  ],
+  "level": 2,
+  "school": "Очарование",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "существа в 60 фт",
+  "duration": "1 минута",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "save": "WIS",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: помеха на проверки Внимательности против других существ — вручную.\nПРВ: Завораживание 10; УСП: нет эффекта",
+  "automation": "partial",
+  "classes": "Бард, Колдун",
+  "source": "PHB"
  },
  {
   "id": "phb-alter-self",
@@ -2720,6 +2797,32 @@
   "description": "ЗАКЛ\nПримечание: правило Арвенора — требует концентрации; в зоне нельзя творить заклинания с вербальным компонентом (автоматически), существа внутри оглохли — отыгрыш.\nТИШИНА\nИММ: звук",
   "automation": "full",
   "classes": "Бард, Жрец, Следопыт",
+  "source": "PHB",
+  "ritual": true
+ },
+ {
+  "id": "phb-rope-trick",
+  "name": "Трюк с верёвкой",
+  "aliases": [
+   "Rope Trick",
+   "Трюк с верёвкой",
+   "Верёвочный фокус"
+  ],
+  "level": 2,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "верёвка",
+  "duration": "1 час",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true,
+   "material": "экстракт зерна и петля из пергамента"
+  },
+  "description": "ЗАКЛ\nПримечание: вход в межпространство на 8 существ.",
+  "automation": "partial",
+  "classes": "Волшебник",
   "source": "PHB"
  },
  {
@@ -2761,7 +2864,8 @@
   "components": {
    "v": true,
    "s": false,
-   "m": true
+   "m": true,
+   "material": "мех летучей мыши и либо капля дегтя, либо кусочек угля"
   },
   "concentration": true,
   "description": "ЗАКЛ\nПримечание: магическая тьма: обычное тёмное зрение не помогает.",
@@ -2785,7 +2889,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "щепотка сушеной морковки или агат"
   },
   "description": "ЗАКЛ\nПримечание: тёмное зрение 60 фт.",
   "automation": "partial",
@@ -2808,7 +2913,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "щепотка толченого железа"
   },
   "concentration": true,
   "save": "CON",
@@ -2834,7 +2940,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "мех или перо Зверя"
   },
   "concentration": true,
   "description": "ЗАКЛ\nПримечание: преимущество на проверки одной характеристики; для Телосложения — 2d6 временных хитов (вручную). На каждый круг выше 2-го — ещё одна цель.\nУлучшение характеристики 600",
@@ -2869,31 +2976,6 @@
   "source": "PHB"
  },
  {
-  "id": "phb-beast-sense",
-  "name": "Чувства зверя",
-  "aliases": [
-   "Beast Sense",
-   "Чувства зверя"
-  ],
-  "level": 2,
-  "school": "Прорицание",
-  "castingTime": "1 действие",
-  "range": "Касание",
-  "target": "1 согласный зверь",
-  "duration": "Концентрация, до 1 часа",
-  "components": {
-   "v": false,
-   "s": true,
-   "m": false
-  },
-  "concentration": true,
-  "ritual": true,
-  "description": "ЗАКЛ\nПримечание: вы видите и слышите через чувства зверя.",
-  "automation": "partial",
-  "classes": "Друид, Следопыт",
-  "source": "PHB"
- },
- {
   "id": "phb-spike-growth",
   "name": "Шипы",
   "aliases": [
@@ -2909,7 +2991,8 @@
   "components": {
    "v": true,
    "s": true,
-   "m": true
+   "m": true,
+   "material": "семь острых шипов или семь заострённых веточек"
   },
   "concentration": true,
   "damage": "2d4",
