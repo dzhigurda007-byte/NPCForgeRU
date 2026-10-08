@@ -4,7 +4,7 @@ if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
 } else {
 /*
 AD5 Effect Turns 1.6.16
-1.6.16: modifiers «прем/пом атака …», «при движении 1d8 звук» (Booming Blade), «теряет сопр …», «урон по цели … раз в ход», «при окончании ТЕЛ15 истощение», «концентрация -1д6», «инициатива +1д8» (Turn Tracker entry), «полёт 0» (descend 60 ft per turn), «при уроне прем атака», «переносится 60» (!ad5fx transfer, button); conditions «ограничен» (marker strong), «покрыт кислотой» (periodic with type), «разлом реальности» (d10 table at turn start).
+1.6.16: modifiers «прем/пом атака …», «при движении 1d8 звук» (Booming Blade), «теряет сопр …», «урон по цели … раз в ход», «при окончании ТЕЛ15 истощение», «концентрация -1д6», «инициатива +1д8», «полёт 0», «при уроне прем атака», «переносится 60» (!ad5fx transfer); conditions «ограничен», «покрыт кислотой» / «ожог кислотой» (periodic with type), «разлом реальности» (d10 at turn start), «связь сущностей» (tetherPartners); «ПОПАД: 12 раз» counted payloads; «ПОПАДСОСЕД».
 1.6.15: a condition with a formula and an explicit damage type deals periodic damage («опутан 1д6 колющий ПРОВЕРКА СИЛ14» — Ensnaring Strike, Evard's Black Tentacles); recovery effects deal it at the end of the bearer's turn.
 1.6.14: modifiers «магическое оружие», «имм <состояние>», «прем/пом спас против <состояние|заклинаний>», «увёртливость против заклинаний», «макс хиты не снижаются», «регенерация N», «оживление N», «размер ±1» (токен ×2 / ×½), «полёт N» (падение по окончании); conditions «без действия» (маркер stopwatch) and «слабоумие»; ПОПАДЗАМЕНА / ПОПАДПРОМАХ.
 1.6.13: «ОБЛАСТИ: N» (Areas grouped placement) is not an effect.

@@ -3,7 +3,10 @@ if(typeof AD5Reactions!=='undefined'&&AD5Reactions) {
     log('AD5Reactions: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Reactions v1.6.11 — Generic Resource Binding / Countershot / Sheet First
+ * AD5 Reactions v1.6.12 — Generic Resource Binding / Countershot / Sheet First
+ * 1.6.12: РЕЗ «СОПРОТИВЛЕНИЕ ТИПУ кислота/холод/…» — half of the triggering damage of that type, then
+ *         resistance and +1d6 on the next melee hit (Absorb Elements); РЕЗ «СДВИГ ИСТОЧНИКА» — the attack or
+ *         spell fails and its source is banished until the end of its next turn (Temporal Shunt).
  * 1.6.11: a teleport (Movement 2.3.8, «телепорт N фт») never opens movement reactions.
  * 1.6.10: Disengage («Отход», Condition Engine 1.2.12): no opportunity attacks against the mover;
  *         custom «выход» reactions are skipped too unless the description says «ОТХОД НЕ ЗАЩИЩАЕТ».
@@ -40,7 +43,7 @@ if(typeof AD5Reactions!=='undefined'&&AD5Reactions) {
 var AD5Reactions = (function(){
     'use strict';
 
-    var VERSION='1.6.11', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
+    var VERSION='1.6.12', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
     var opportunityPending=Object.create(null);
     var runtimePending=Object.create(null), seq=0, recentMove=Object.create(null), lastAreaCheck=null, movementHookRegistered=false, featherCollecting=Object.create(null), reactionRowCache=Object.create(null);
     // 1.4.2 Fast Fall: cache Feather Fall card discovery per character.
@@ -272,6 +275,10 @@ var AD5Reactions = (function(){
         if(/пом(?:еха|\s+атак)|disadvantage/.test(v)&&/атак/.test(v))return {type:'attack_dis',label:'ПОМ атаке'};
         if(/прем(?:ущество)?/.test(v)&&/атак/.test(v)||/advantage/.test(v)&&/attack/.test(v))return {type:'attack_adv',label:'ПРЕМ атаке'};
         if(/переброс/.test(v)&&/атак/.test(v)||/reroll/.test(v)&&/attack/.test(v))return {type:'attack_reroll',label:'Переброс атаки'};
+        // 1.6.12: «СОПРОТИВЛЕНИЕ ТИПУ кислота/холод/огонь» (Absorb Elements) and «СДВИГ ИСТОЧНИКА» (Temporal Shunt).
+        m=/(?:сопротивлени\S*|сопр\S*)\s+типу\s*(.*)$/i.exec(source);
+        if(m){var rtypes=String(m[1]||'').split(/\s*[\/,]\s*/).map(function(x){var ty=null;try{ty=AD5._test.effectType(x);}catch(ignoreType){}return ty;}).filter(Boolean);return {type:'resist_trigger',types:rtypes,label:'Сопротивление типу урона'};}
+        if(/сдвиг\s+источника|изгна\S*\s+источник/.test(v))return {type:'shunt',label:'Сдвиг источника'};
         if(/урон\s*0|damage\s*0/.test(v))return {type:'damage_zero',label:'Урон 0'};
         m=/(?:урон|damage)\s*-\s*([^,;]+)/i.exec(source);if(m){var formula=cleanFormula(m[1]);if(/^[0-9d+*\/().-]+$/i.test(formula)&&/\d/.test(formula))return {type:'damage_reduce',formula:formula,label:'Урон -'+formula.replace(/d/g,'д')};}
         if(/отмен(?:ить|а).*заклин|counterspell|cancel\s*spell/.test(v))return {type:'cancel_spell',label:'Отменить заклинание'};
@@ -634,8 +641,10 @@ var AD5Reactions = (function(){
                 if(result.type==='countershot_mode'&&src&&sideOf(t)===sideOf(src))return;
                 // Damage-changing reactions belong to the pre-commit damage window;
                 // execute/counterattack-style reactions belong to post-commit damage.
-                if(ev.type==='damage_pending'&&['damage_zero','damage_reduce'].indexOf(result.type)<0)return;
-                if(ev.type==='damage'&&['damage_zero','damage_reduce'].indexOf(result.type)>=0)return;
+                if(ev.type==='damage_pending'&&['damage_zero','damage_reduce','resist_trigger'].indexOf(result.type)<0)return;
+                if(ev.type==='damage'&&['damage_zero','damage_reduce','resist_trigger'].indexOf(result.type)>=0)return;
+                if(result.type==='resist_trigger'&&!(ev.damageByType||[]).some(function(x){return Number(x.amount)>0&&(!result.types||!result.types.length||result.types.indexOf(x.type)>=0);}))return;
+                if(result.type==='shunt'&&['hit','spell_cast','spell'].indexOf(ev.type)<0)return;
                 // AC reactions are personal unless explicitly authored otherwise.
                 if((r.effect==='shield'||result.type==='ac_bonus'||result.type==='ac_bonus_pb')&&(ev.type!=='hit'||!ev.targetTokenId||t.id!==String(ev.targetTokenId)))return;
                 if(src&&t.id===src.id&&r.subject!=='source'&&ev.type!=='damage')return;
@@ -1481,7 +1490,7 @@ var AD5Reactions = (function(){
         resolveEvent(ev,finalGenericResult(ev));return false;
     }
     function openGeneric(type,data,done){
-        data=data||{};var ev={id:'G'+Date.now().toString(36)+(++seq).toString(36),type:type,sourceTokenId:String(data.sourceTokenId||''),sourceSide:String(data.sourceSide||''),targetTokenId:String(data.targetTokenId||''),tokenId:String(data.tokenId||''),playerId:String(data.playerId||''),actionName:String(data.actionName||type),effects:data.effects||[],attackClass:String(data.attackClass||''),attackDistance:Number(data.attackDistance)||0,attackTotal:Number(data.attackTotal)||0,naturalDie:Number(data.naturalDie)||0,critical:!!data.critical,damageAmount:Number(data.damageAmount)||0,historyKey:String(data.historyKey||''),spellName:String(data.spellName||''),spellLevel:data.spellLevel,spellCastLevel:data.spellCastLevel,spellBaseLevel:data.spellBaseLevel,created:Date.now(),done:typeof done==='function'?done:function(){},resolved:false,genericAggregate:null};
+        data=data||{};var ev={id:'G'+Date.now().toString(36)+(++seq).toString(36),type:type,sourceTokenId:String(data.sourceTokenId||''),sourceSide:String(data.sourceSide||''),targetTokenId:String(data.targetTokenId||''),tokenId:String(data.tokenId||''),playerId:String(data.playerId||''),actionName:String(data.actionName||type),effects:data.effects||[],attackClass:String(data.attackClass||''),attackDistance:Number(data.attackDistance)||0,attackTotal:Number(data.attackTotal)||0,naturalDie:Number(data.naturalDie)||0,critical:!!data.critical,damageAmount:Number(data.damageAmount)||0,damageByType:Array.isArray(data.damageByType)?data.damageByType:[],historyKey:String(data.historyKey||''),spellName:String(data.spellName||''),spellLevel:data.spellLevel,spellCastLevel:data.spellCastLevel,spellBaseLevel:data.spellBaseLevel,created:Date.now(),done:typeof done==='function'?done:function(){},resolved:false,genericAggregate:null};
         var q=sortGeneric(candidatesFor(ev));
         // Counterspell/Reflection have their own ordered spell-defense queue; do
         // not offer them a second time in the generic spell-cast queue.
@@ -1902,6 +1911,18 @@ var AD5Reactions = (function(){
         if(type==='attack_reroll')return {cancelled:false,reactionUsed:true,reactionName:r.name,reactorTokenId:token.id,rerollAttack:true};
         if(type==='damage_zero')return {cancelled:false,reactionUsed:true,reactionName:r.name,reactorTokenId:token.id,damageRule:{mode:'zero'}};
         if(type==='damage_reduce')return {cancelled:false,reactionUsed:true,reactionName:r.name,reactorTokenId:token.id,damageRule:{mode:'reduce',formula:result.formula,value:rollReductionFormula(result.formula)}};
+        if(type==='resist_trigger'){
+            var hits=(ev.damageByType||[]).filter(function(x){return Number(x.amount)>0&&(!result.types||!result.types.length||result.types.indexOf(x.type)>=0);}),cut=0,first=hits[0]&&hits[0].type;
+            hits.forEach(function(x){cut+=Math.floor(Number(x.amount)/2);});
+            if(first&&typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.applyCondition==='function'){var tid=token.id;setTimeout(function(){var live=getObj('graphic',tid);if(live){try{AD5EffectTurns.applyCondition(live,'сопр '+first+' 1\nПОПАД: разовый\nПОПАДУСЛ: рукопашное оружие\nПОПАДУРОН: 1d6 '+first,{actionName:r.name,sourceToken:tid});}catch(e){whisperReactionDecision(live,esc(e.message||e));}}},0);}
+            return {cancelled:false,reactionUsed:true,reactionName:r.name,reactorTokenId:token.id,damageRule:{mode:'reduce',formula:'сопротивление '+(first||''),value:cut}};
+        }
+        if(type==='shunt'){
+            var srcTok=getObj('graphic',String(ev.sourceTokenId||''));
+            if(srcTok&&typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.applyCondition==='function'){var sid=srcTok.id,rid=token.id;setTimeout(function(){var live=getObj('graphic',sid);if(live){try{AD5EffectTurns.applyCondition(live,'изгнан 2',{actionName:r.name,sourceToken:rid});}catch(e){}}},200);}
+            if(ev.type==='hit')return {cancelled:false,reactionUsed:true,reactionName:r.name,reactorTokenId:token.id,cancelledHit:true};
+            return {cancelled:true,reactionUsed:true,reactionName:r.name,reactorTokenId:token.id,reactorName:token.get('name')||token.id};
+        }
         if(type==='cancel_spell')return {cancelled:true,reactionUsed:true,reactionName:r.name,reactorTokenId:token.id,reactorName:token.get('name')||token.id};
         if(type==='reflect_spell')return {cancelled:false,reflected:true,reactionUsed:true,reactionName:r.name,reactorTokenId:token.id,reflectorTokenId:token.id,reactorName:token.get('name')||token.id};
         executeReaction(ev,cand);return {cancelled:false,reactionUsed:true,reactionName:r.name,reactorTokenId:token.id,executed:true};
