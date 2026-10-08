@@ -1,0 +1,2739 @@
+[
+ {
+  "id": "tce-sword-burst",
+  "name": "Взрыв клинков",
+  "aliases": [
+   "Sword Burst",
+   "Взрыв клинков"
+  ],
+  "level": 0,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "5 фт",
+  "target": "каждое существо в 5 фт вокруг заклинателя",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "save": "DEX",
+  "saveSuccess": "Нет урона",
+  "damage": "1d6",
+  "damageType": "силовое поле",
+  "progression": "Cantrip Dice",
+  "description": "ЗАКЛ\nВКР круг 5 фт\nПРВ: полный урон; УСП: нет урона",
+  "automation": "full",
+  "classes": "Чародей, Колдун, Волшебник",
+  "source": "Tasha's Cauldron of Everything"
+ },
+ {
+  "id": "xge-storm-sphere-bolt",
+  "name": "Грозовая сфера: молния",
+  "aliases": [
+   "Storm Sphere Bolt",
+   "Грозовая сфера: молния"
+  ],
+  "level": 0,
+  "school": "Воплощение",
+  "castingTime": "1 бонусное действие",
+  "range": "60 фт от сферы",
+  "target": "1 существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": false,
+   "s": false,
+   "m": false
+  },
+  "attack": "Ranged",
+  "damage": "4d6",
+  "damageType": "электричество",
+  "description": "ЗАКЛ\nПримечание: дарованное действие «Грозовой сферы».",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "tce-booming-blade",
+  "name": "Громовой клинок",
+  "aliases": [
+   "Booming Blade",
+   "Громовой клинок"
+  ],
+  "level": 0,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "1 существо в 5 фт",
+  "duration": "1 раунд",
+  "components": {
+   "v": false,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: нажмите заклинание, затем атакуйте рукопашным оружием; если цель до начала вашего следующего хода сама переместится — 1d8 звуком. С 5 уровня +1d8 звуком при попадании и +1d8 при движении (поправьте).\nПОПАД: разовый\nПОПАДУСЛ: рукопашное оружие\nПОПАДЭФФ: при движении 1d8 звук 2",
+  "automation": "full",
+  "classes": "Чародей, Колдун, Волшебник",
+  "source": "Tasha's Cauldron of Everything"
+ },
+ {
+  "id": "ftd-draconic-transformation-breath",
+  "name": "Драконье превращение: выдох",
+  "aliases": [
+   "Draconic Transformation Breath",
+   "Драконье превращение: выдох"
+  ],
+  "level": 0,
+  "school": "Преобразование",
+  "castingTime": "1 бонусное действие",
+  "range": "На себя",
+  "target": "60 фт конус",
+  "duration": "Мгновенно",
+  "components": {
+   "v": false,
+   "s": false,
+   "m": false
+  },
+  "save": "DEX",
+  "saveSuccess": "Половина урона",
+  "damage": "6d8",
+  "damageType": "силовое поле",
+  "description": "ЗАКЛ\nПримечание: дарованное действие «Драконьего превращения».\nПРВ: полный урон; УСП: половина урона",
+  "automation": "full",
+  "classes": "Друид, Чародей, Колдун, Волшебник",
+  "source": "Fizban's Treasury of Dragons"
+ },
+ {
+  "id": "xge-dragon-s-breath-acid",
+  "name": "Дыхание дракона: выдох (кислота)",
+  "aliases": [
+   "Dragon's Breath acid",
+   "Дыхание дракона: выдох (кислота)"
+  ],
+  "level": 0,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "15 фт конус",
+  "duration": "Мгновенно",
+  "components": {
+   "v": false,
+   "s": false,
+   "m": false
+  },
+  "save": "DEX",
+  "saveSuccess": "Половина урона",
+  "damage": "3d6",
+  "damageType": "кислота",
+  "description": "ЗАКЛ\nПримечание: дарованное действие «Дыхания дракона» — исчезает с концом заклинания.\nПРВ: полный урон; УСП: половина урона",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-dragon-s-breath-fire",
+  "name": "Дыхание дракона: выдох (огонь)",
+  "aliases": [
+   "Dragon's Breath fire",
+   "Дыхание дракона: выдох (огонь)"
+  ],
+  "level": 0,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "15 фт конус",
+  "duration": "Мгновенно",
+  "components": {
+   "v": false,
+   "s": false,
+   "m": false
+  },
+  "save": "DEX",
+  "saveSuccess": "Половина урона",
+  "damage": "3d6",
+  "damageType": "огонь",
+  "description": "ЗАКЛ\nПримечание: дарованное действие «Дыхания дракона» — исчезает с концом заклинания.\nПРВ: полный урон; УСП: половина урона",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-dragon-s-breath-cold",
+  "name": "Дыхание дракона: выдох (холод)",
+  "aliases": [
+   "Dragon's Breath cold",
+   "Дыхание дракона: выдох (холод)"
+  ],
+  "level": 0,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "15 фт конус",
+  "duration": "Мгновенно",
+  "components": {
+   "v": false,
+   "s": false,
+   "m": false
+  },
+  "save": "DEX",
+  "saveSuccess": "Половина урона",
+  "damage": "3d6",
+  "damageType": "холод",
+  "description": "ЗАКЛ\nПримечание: дарованное действие «Дыхания дракона» — исчезает с концом заклинания.\nПРВ: полный урон; УСП: половина урона",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-dragon-s-breath-lightning",
+  "name": "Дыхание дракона: выдох (электричество)",
+  "aliases": [
+   "Dragon's Breath lightning",
+   "Дыхание дракона: выдох (электричество)"
+  ],
+  "level": 0,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "15 фт конус",
+  "duration": "Мгновенно",
+  "components": {
+   "v": false,
+   "s": false,
+   "m": false
+  },
+  "save": "DEX",
+  "saveSuccess": "Половина урона",
+  "damage": "3d6",
+  "damageType": "электричество",
+  "description": "ЗАКЛ\nПримечание: дарованное действие «Дыхания дракона» — исчезает с концом заклинания.\nПРВ: полный урон; УСП: половина урона",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-dragon-s-breath-poison",
+  "name": "Дыхание дракона: выдох (яд)",
+  "aliases": [
+   "Dragon's Breath poison",
+   "Дыхание дракона: выдох (яд)"
+  ],
+  "level": 0,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "15 фт конус",
+  "duration": "Мгновенно",
+  "components": {
+   "v": false,
+   "s": false,
+   "m": false
+  },
+  "save": "DEX",
+  "saveSuccess": "Половина урона",
+  "damage": "3d6",
+  "damageType": "яд",
+  "description": "ЗАКЛ\nПримечание: дарованное действие «Дыхания дракона» — исчезает с концом заклинания.\nПРВ: полный урон; УСП: половина урона",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-infestation",
+  "name": "Заражение насекомыми",
+  "aliases": [
+   "Infestation",
+   "Заражение насекомыми"
+  ],
+  "level": 0,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "1 существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "save": "CON",
+  "saveSuccess": "Нет урона",
+  "damage": "1d6",
+  "damageType": "яд",
+  "progression": "Cantrip Dice",
+  "description": "ЗАКЛ\nПримечание: при провале цель сдвигается на 5 фт в случайную сторону — вручную.\nПРВ: полный урон; УСП: нет урона",
+  "automation": "partial",
+  "classes": "Друид, Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "egw-sapping-sting",
+  "name": "Иссушающее жало",
+  "aliases": [
+   "Sapping Sting",
+   "Иссушающее жало"
+  ],
+  "level": 0,
+  "school": "Некромантия",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "1 существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "save": "CON",
+  "saveSuccess": "Нет урона",
+  "damage": "1d4",
+  "damageType": "некротическая энергия",
+  "progression": "Cantrip Dice",
+  "description": "ЗАКЛ\nПРВ: полный урон, сбит с ног; УСП: нет урона",
+  "automation": "full",
+  "classes": "Волшебник",
+  "source": "Explorer's Guide to Wildemount"
+ },
+ {
+  "id": "tce-green-flame-blade",
+  "name": "Клинок зелёного пламени",
+  "aliases": [
+   "Green-Flame Blade",
+   "Клинок зелёного пламени"
+  ],
+  "level": 0,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "1 существо в 5 фт",
+  "duration": "Мгновенно",
+  "components": {
+   "v": false,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: нажмите заклинание, затем атакуйте рукопашным оружием; при попадании выберите второе существо в 5 фт от цели. С 5 уровня +1d8 огнём по цели и +1d8 соседу (поправьте).\nПОПАД: разовый\nПОПАДУСЛ: рукопашное оружие\nПОПАДСОСЕД: 5 фт, МОД огонь",
+  "automation": "full",
+  "classes": "Чародей, Колдун, Волшебник",
+  "source": "Tasha's Cauldron of Everything"
+ },
+ {
+  "id": "xge-crown-of-stars-mote",
+  "name": "Корона звёзд: звезда",
+  "aliases": [
+   "Crown of Stars Mote",
+   "Корона звёзд: звезда"
+  ],
+  "level": 0,
+  "school": "Воплощение",
+  "castingTime": "1 бонусное действие",
+  "range": "120 фт",
+  "target": "1 существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": false,
+   "s": false,
+   "m": false
+  },
+  "attack": "Ranged",
+  "damage": "4d12",
+  "damageType": "излучение",
+  "description": "ЗАКЛ\nПримечание: дарованное действие «Короны звёзд».",
+  "automation": "full",
+  "classes": "Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-melf-s-minute-meteor",
+  "name": "Крошечные метеоры Мелфа: метеор",
+  "aliases": [
+   "Melf's Minute Meteor",
+   "Крошечные метеоры Мелфа: метеор"
+  ],
+  "level": 0,
+  "school": "Воплощение",
+  "castingTime": "1 бонусное действие",
+  "range": "120 фт",
+  "target": "5 фт круг",
+  "duration": "Мгновенно",
+  "components": {
+   "v": false,
+   "s": false,
+   "m": false
+  },
+  "save": "DEX",
+  "saveSuccess": "Половина урона",
+  "damage": "2d6",
+  "damageType": "огонь",
+  "description": "ЗАКЛ\nПримечание: дарованное действие «Крошечных метеоров Мелфа».\nПРВ: полный урон; УСП: половина урона",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "tce-lightning-lure",
+  "name": "Молниевое притяжение",
+  "aliases": [
+   "Lightning Lure",
+   "Молниевое притяжение"
+  ],
+  "level": 0,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "1 существо в 15 фт",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "save": "STR",
+  "saveSuccess": "Нет урона",
+  "damage": "1d8",
+  "damageType": "электричество",
+  "progression": "Cantrip Dice",
+  "description": "ЗАКЛ\nПримечание: притяжение на 10 фт — вручную; урон только если цель после притяжения в 5 фт от вас.\nПРВ: полный урон; УСП: нет урона",
+  "automation": "partial",
+  "classes": "Чародей, Колдун, Волшебник",
+  "source": "Tasha's Cauldron of Everything"
+ },
+ {
+  "id": "xge-investiture-of-wind-action",
+  "name": "Облачение ветра: действие",
+  "aliases": [
+   "Investiture of Wind Action",
+   "Облачение ветра: действие"
+  ],
+  "level": 0,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "15 фт куб",
+  "duration": "Мгновенно",
+  "components": {
+   "v": false,
+   "s": false,
+   "m": false
+  },
+  "save": "CON",
+  "saveSuccess": "Половина урона",
+  "damage": "2d10",
+  "damageType": "дробящий",
+  "description": "ЗАКЛ\nПримечание: дарованное действие «Облачения ветра».\nПРВ: полный урон; УСП: половина урона",
+  "automation": "full",
+  "classes": "Друид, Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-investiture-of-stone-action",
+  "name": "Облачение камня: действие",
+  "aliases": [
+   "Investiture of Stone Action",
+   "Облачение камня: действие"
+  ],
+  "level": 0,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "15 фт вокруг заклинателя",
+  "duration": "Мгновенно",
+  "components": {
+   "v": false,
+   "s": false,
+   "m": false
+  },
+  "save": "DEX",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: дарованное действие «Облачения камня».\nВКР круг 15 фт\nПРВ: сбит с ног; УСП: нет эффекта",
+  "automation": "full",
+  "classes": "Друид, Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-investiture-of-ice-action",
+  "name": "Облачение льда: действие",
+  "aliases": [
+   "Investiture of Ice Action",
+   "Облачение льда: действие"
+  ],
+  "level": 0,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "15 фт конус",
+  "duration": "Мгновенно",
+  "components": {
+   "v": false,
+   "s": false,
+   "m": false
+  },
+  "save": "CON",
+  "saveSuccess": "Половина урона",
+  "damage": "4d6",
+  "damageType": "холод",
+  "description": "ЗАКЛ\nПримечание: дарованное действие «Облачения льда».\nПРВ: полный урон, замедление 15 1; УСП: половина урона",
+  "automation": "full",
+  "classes": "Друид, Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-investiture-of-flame-action",
+  "name": "Облачение пламени: действие",
+  "aliases": [
+   "Investiture of Flame Action",
+   "Облачение пламени: действие"
+  ],
+  "level": 0,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "линия 5/15/5 фт",
+  "duration": "Мгновенно",
+  "components": {
+   "v": false,
+   "s": false,
+   "m": false
+  },
+  "save": "DEX",
+  "saveSuccess": "Половина урона",
+  "damage": "4d8",
+  "damageType": "огонь",
+  "description": "ЗАКЛ\nПримечание: дарованное действие «Облачения пламени».\nПРВ: полный урон; УСП: половина урона",
+  "automation": "full",
+  "classes": "Друид, Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-frostbite",
+  "name": "Обморожение",
+  "aliases": [
+   "Frostbite",
+   "Обморожение"
+  ],
+  "level": 0,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "1 существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "save": "CON",
+  "saveSuccess": "Нет урона",
+  "damage": "1d6",
+  "damageType": "холод",
+  "progression": "Cantrip Dice",
+  "description": "ЗАКЛ\nПримечание: помеха на следующую атаку оружием до конца следующего хода цели.\nПРВ: полный урон, пом атака оружием 1; УСП: нет урона",
+  "automation": "full",
+  "classes": "Друид, Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "tce-mind-sliver",
+  "name": "Осколок разума",
+  "aliases": [
+   "Mind Sliver",
+   "Осколок разума"
+  ],
+  "level": 0,
+  "school": "Очарование",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "1 существо",
+  "duration": "1 раунд",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "save": "INT",
+  "saveSuccess": "Нет урона",
+  "damage": "1d6",
+  "damageType": "психический",
+  "progression": "Cantrip Dice",
+  "description": "ЗАКЛ\nПРВ: полный урон, спас ВСЕ -1д4 1; УСП: нет урона\nРАСХ: СПАСБРОСОК 1",
+  "automation": "full",
+  "classes": "Чародей, Колдун, Волшебник",
+  "source": "Tasha's Cauldron of Everything"
+ },
+ {
+  "id": "xge-primal-savagery",
+  "name": "Первобытная дикость",
+  "aliases": [
+   "Primal Savagery",
+   "Первобытная дикость"
+  ],
+  "level": 0,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "1 существо в досягаемости",
+  "duration": "Мгновенно",
+  "components": {
+   "v": false,
+   "s": true,
+   "m": false
+  },
+  "attack": "Melee",
+  "damage": "1d10",
+  "damageType": "кислота",
+  "progression": "Cantrip Dice",
+  "description": "ЗАКЛ",
+  "automation": "full",
+  "classes": "Друид",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-toll-the-dead",
+  "name": "Похоронный звон",
+  "aliases": [
+   "Toll the Dead",
+   "Похоронный звон"
+  ],
+  "level": 0,
+  "school": "Некромантия",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "1 существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "save": "WIS",
+  "saveSuccess": "Нет урона",
+  "damage": "1d8",
+  "damageType": "некротическая энергия",
+  "damage2": "1d12",
+  "damageType2": "некротическая энергия",
+  "progression": "Cantrip Dice",
+  "description": "ЗАКЛ\nПримечание: d12, если у цели не полные хиты; с ростом уровня кости растут (5/11/17) — поправьте вторую кость вручную.\nУРОН ЕСЛИ РАНЕН: Урон2 вместо Урон1\nПРВ: полный урон; УСП: нет урона",
+  "automation": "full",
+  "classes": "Жрец, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-thunderclap",
+  "name": "Раскат грома",
+  "aliases": [
+   "Thunderclap",
+   "Раскат грома"
+  ],
+  "level": 0,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "5 фт",
+  "target": "каждое существо в 5 фт вокруг заклинателя",
+  "duration": "Мгновенно",
+  "components": {
+   "v": false,
+   "s": true,
+   "m": false
+  },
+  "save": "CON",
+  "saveSuccess": "Нет урона",
+  "damage": "1d6",
+  "damageType": "звук",
+  "progression": "Cantrip Dice",
+  "description": "ЗАКЛ\nВКР круг 5 фт\nПРВ: полный урон; УСП: нет урона",
+  "automation": "full",
+  "classes": "Бард, Друид, Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-holy-weapon-burst",
+  "name": "Священное оружие: вспышка",
+  "aliases": [
+   "Holy Weapon Burst",
+   "Священное оружие: вспышка"
+  ],
+  "level": 0,
+  "school": "Воплощение",
+  "castingTime": "1 бонусное действие",
+  "range": "На себя",
+  "target": "существа в 30 фт вокруг",
+  "duration": "Мгновенно",
+  "components": {
+   "v": false,
+   "s": false,
+   "m": false
+  },
+  "save": "CON",
+  "saveSuccess": "Половина урона",
+  "damage": "4d8",
+  "damageType": "излучение",
+  "description": "ЗАКЛ\nПримечание: дарованное действие «Священного оружия»; заклинание заканчивается. Существа по выбору — исключите союзников вручную.\nВКР круг 30 фт\nЗАВЕРШАЕТ КОНЦЕНТРАЦИЮ\nПРВ: полный урон, ослеплён ТЕЛ{DC} 10; УСП: половина урона",
+  "automation": "full",
+  "classes": "Жрец, Паладин",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-word-of-radiance",
+  "name": "Слово сияния",
+  "aliases": [
+   "Word of Radiance",
+   "Слово сияния"
+  ],
+  "level": 0,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "5 фт",
+  "target": "враждебные существа в 5 фт вокруг заклинателя",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": true
+  },
+  "save": "CON",
+  "saveSuccess": "Нет урона",
+  "damage": "1d6",
+  "damageType": "излучение",
+  "progression": "Cantrip Dice",
+  "description": "ЗАКЛ\nВКР круг 5 фт\nПРВ: полный урон; УСП: нет урона",
+  "automation": "full",
+  "classes": "Жрец",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-create-bonfire",
+  "name": "Сотворение костра",
+  "aliases": [
+   "Create Bonfire",
+   "Сотворение костра"
+  ],
+  "level": 0,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "5 фт куб, обл",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "save": "DEX",
+  "saveSuccess": "Нет урона",
+  "damage": "1d8",
+  "damageType": "огонь",
+  "progression": "Cantrip Dice",
+  "description": "ЗАКЛ\nПримечание: костёр поджигает горючие предметы — отыгрыш.\nКАСТ: ПРВ: Урон1, полный урон; УСП: нет урона. ВХОД: ПРВ: Урон1, полный урон; УСП: нет урона. ОБЛК: ПРВ: Урон1, полный урон; УСП: нет урона",
+  "automation": "full",
+  "classes": "Друид, Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-wall-of-light-beam",
+  "name": "Стена света: луч",
+  "aliases": [
+   "Wall of Light Beam",
+   "Стена света: луч"
+  ],
+  "level": 0,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "1 существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": false,
+   "s": false,
+   "m": false
+  },
+  "attack": "Ranged",
+  "damage": "4d8",
+  "damageType": "излучение",
+  "description": "ЗАКЛ\nПримечание: дарованное действие «Стены света».",
+  "automation": "full",
+  "classes": "Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-cause-fear",
+  "name": "Внушение страха",
+  "aliases": [
+   "Cause Fear",
+   "Внушение страха"
+  ],
+  "level": 1,
+  "school": "Некромантия",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "1 существо",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "concentration": true,
+  "save": "WIS",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: на каждый круг выше 1-го — ещё одна цель.\nТОЛЬКО ЕСЛИ: НЕ ТИП конструкт/нежить\nПРВ: испуган МДР{DC} 10; УСП: нет эффекта",
+  "automation": "full",
+  "classes": "Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "ai-jim-s-magic-missile",
+  "name": "Волшебная стрела Джима",
+  "aliases": [
+   "Jim's Magic Missile",
+   "Волшебная стрела Джима"
+  ],
+  "level": 1,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "до 3 целей",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: каждый снаряд — атака заклинанием; при 1 на d20 снаряд попадает в заклинателя.\nМУЛЬТИ: СНАРЯДЫ\nСНРКОЛ: 3\nСНРВЫШЕ: +1 ЗА КРУГ\nСНРПОП: АТАКА\nСНРУРОН: 2d4 силовое поле\nСНРПРОВАЛ1: в заклинателя",
+  "automation": "full",
+  "classes": "Волшебник",
+  "source": "Acquisitions Incorporated"
+ },
+ {
+  "id": "egw-gift-of-alacrity",
+  "name": "Дар проворства",
+  "aliases": [
+   "Gift of Alacrity",
+   "Дар проворства"
+  ],
+  "level": 1,
+  "school": "Прорицание",
+  "castingTime": "1 минута",
+  "range": "Касание",
+  "target": "1 согласное существо",
+  "duration": "8 часов",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: +1d8 добавляется к инициативе при входе в Турн-трекер.\nинициатива +1d8 999",
+  "automation": "full",
+  "classes": "Волшебник",
+  "source": "Explorer's Guide to Wildemount"
+ },
+ {
+  "id": "xge-earth-tremor",
+  "name": "Дрожь земли",
+  "aliases": [
+   "Earth Tremor",
+   "Дрожь земли"
+  ],
+  "level": 1,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "10 фт",
+  "target": "каждое существо в 10 фт вокруг заклинателя",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "save": "DEX",
+  "saveSuccess": "Нет урона",
+  "damage": "1d6",
+  "damageType": "дробящий",
+  "higherDieCount": "1",
+  "higherDieType": "d6",
+  "higherText": "За каждый круг ячейки выше 1-го урон увеличивается на 1d6.",
+  "description": "ЗАКЛ\nПримечание: рыхлая земля становится трудной местностью — окружение, вручную.\nВКР круг 10 фт\nПРВ: полный урон, сбит с ног; УСП: нет урона",
+  "automation": "partial",
+  "classes": "Бард, Друид, Чародей, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "tce-tasha-s-caustic-brew",
+  "name": "Едкое варево Таши",
+  "aliases": [
+   "Tasha's Caustic Brew",
+   "Едкое варево Таши"
+  ],
+  "level": 1,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "линия 5/30/5 фт",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "DEX",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: кислота жжёт в начале каждого хода; существо (или сосед) действием счищает её — снимите эффект (!ad5fx clear). На каждый круг выше 1-го +2d4.\nПРВ: покрыт кислотой 2d4 кислота 10; УСП: нет эффекта",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "Tasha's Cauldron of Everything"
+ },
+ {
+  "id": "idr-frost-fingers",
+  "name": "Ледяные пальцы",
+  "aliases": [
+   "Frost Fingers",
+   "Ледяные пальцы"
+  ],
+  "level": 1,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "15 фт конус",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "save": "CON",
+  "saveSuccess": "Половина урона",
+  "damage": "2d8",
+  "damageType": "холод",
+  "higherDieCount": "1",
+  "higherDieType": "d8",
+  "higherText": "За каждый круг ячейки выше 1-го урон увеличивается на 1d8.",
+  "description": "ЗАКЛ\nПримечание: вода в области замерзает — отыгрыш.\nПРВ: полный урон; УСП: половина урона",
+  "automation": "full",
+  "classes": "Волшебник",
+  "source": "Icewind Dale: Rime of the Frostmaiden"
+ },
+ {
+  "id": "xge-catapult",
+  "name": "Праща",
+  "aliases": [
+   "Catapult",
+   "Праща"
+  ],
+  "level": 1,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "1 существо на пути предмета",
+  "duration": "Мгновенно",
+  "components": {
+   "v": false,
+   "s": true,
+   "m": false
+  },
+  "save": "DEX",
+  "saveSuccess": "Нет урона",
+  "damage": "3d8",
+  "damageType": "дробящий",
+  "higherDieCount": "1",
+  "higherDieType": "d8",
+  "higherText": "За каждый круг ячейки выше 1-го урон увеличивается на 1d8.",
+  "description": "ЗАКЛ\nПримечание: предмет весом 1–5 фунтов летит до 90 фт; вес больше на каждый круг — отыгрыш.\nПРВ: полный урон; УСП: нет урона",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-chaos-bolt",
+  "name": "Снаряд хаоса",
+  "aliases": [
+   "Chaos Bolt",
+   "Снаряд хаоса"
+  ],
+  "level": 1,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "1 существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "attack": "Ranged",
+  "damage": "2d8+1d6",
+  "damageType": "огонь",
+  "higherDieCount": "1",
+  "higherDieType": "d6",
+  "higherText": "За каждый круг ячейки выше 1-го урон увеличивается на 1d6.",
+  "description": "ЗАКЛ\nПримечание: тип урона по отдельному броску двух d8 (по правилам — по кубам урона); при дубле — кнопка «Перескок» на другое существо в 30 фт.\nТИП ПО КУБУ: d8: 1 кислота, 2 холод, 3 огонь, 4 силовое поле, 5 электричество, 6 яд, 7 психический, 8 звук\nПЕРЕСКОК: ДУБЛЬ, 30 фт",
+  "automation": "full",
+  "classes": "Чародей",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-zephyr-strike",
+  "name": "Удар зефира",
+  "aliases": [
+   "Zephyr Strike",
+   "Удар зефира"
+  ],
+  "level": 1,
+  "school": "Преобразование",
+  "castingTime": "1 бонусное действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: +30 фт скорости и движение без провоцирования — отыгрыш (решение кампании).\nпрем атака оружием 10\nРАСХ: ЦЕЛЬ АТАКОВАЛА 1\nПОПАД: разовый\nПОПАДУСЛ: оружие\nПОПАДУРОН: 1d8 силовое поле",
+  "automation": "partial",
+  "classes": "Следопыт",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "egw-magnify-gravity",
+  "name": "Усиление гравитации",
+  "aliases": [
+   "Magnify Gravity",
+   "Усиление гравитации"
+  ],
+  "level": 1,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "10 фт круг",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "save": "CON",
+  "saveSuccess": "Половина урона",
+  "damage": "2d8",
+  "damageType": "силовое поле",
+  "higherDieCount": "1",
+  "higherDieType": "d8",
+  "higherText": "За каждый круг ячейки выше 1-го урон увеличивается на 1d8.",
+  "description": "ЗАКЛ\nПримечание: скорость вдвое меньше до конца следующего хода; поднимать предметы тяжелее — отыгрыш.\nПРВ: полный урон, замедление 15 1; УСП: половина урона",
+  "automation": "full",
+  "classes": "Волшебник",
+  "source": "Explorer's Guide to Wildemount"
+ },
+ {
+  "id": "bmt-spray-of-cards",
+  "name": "Веер карт",
+  "aliases": [
+   "Spray of Cards",
+   "Веер карт"
+  ],
+  "level": 2,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "15 фт конус",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "save": "DEX",
+  "saveSuccess": "Нет эффекта",
+  "damage": "2d10",
+  "damageType": "силовое поле",
+  "higherDieCount": "1",
+  "higherDieType": "d10",
+  "higherText": "За каждый круг ячейки выше 2-го урон увеличивается на 1d10.",
+  "description": "ЗАКЛ\nПРВ: полный урон, ослеплён 1; УСП: нет эффекта",
+  "automation": "full",
+  "classes": "Бард, Чародей, Колдун, Волшебник",
+  "source": "The Book of Many Things"
+ },
+ {
+  "id": "xge-dragon-s-breath",
+  "name": "Дыхание дракона",
+  "aliases": [
+   "Dragon's Breath",
+   "Дыхание дракона"
+  ],
+  "level": 2,
+  "school": "Преобразование",
+  "castingTime": "1 бонусное действие",
+  "range": "Касание",
+  "target": "1 согласное существо",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: цель получает действие «выдох» (в книге заклинаний, без ячейки) до конца концентрации; на каждый круг выше 2-го выдох +1d6 (поправьте).\nВАРИАНТ: Кислота\nДАРУЕТ: xge-dragon-s-breath-acid\nВАРИАНТ: Холод\nДАРУЕТ: xge-dragon-s-breath-cold\nВАРИАНТ: Огонь\nДАРУЕТ: xge-dragon-s-breath-fire\nВАРИАНТ: Электричество\nДАРУЕТ: xge-dragon-s-breath-lightning\nВАРИАНТ: Яд\nДАРУЕТ: xge-dragon-s-breath-poison",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-aganazzar-s-scorcher",
+  "name": "Испепеление Аганаццара",
+  "aliases": [
+   "Aganazzar's Scorcher",
+   "Испепеление Аганаццара"
+  ],
+  "level": 2,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "линия 5/30/5 фт",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "save": "DEX",
+  "saveSuccess": "Половина урона",
+  "damage": "3d8",
+  "damageType": "огонь",
+  "higherDieCount": "1",
+  "higherDieType": "d8",
+  "higherText": "За каждый круг ячейки выше 2-го урон увеличивается на 1d8.",
+  "description": "ЗАКЛ\nПРВ: полный урон; УСП: половина урона",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-healing-spirit",
+  "name": "Лечащий дух",
+  "aliases": [
+   "Healing Spirit",
+   "Лечащий дух"
+  ],
+  "level": 2,
+  "school": "Вызов",
+  "castingTime": "1 бонусное действие",
+  "range": "60 фт",
+  "target": "5 фт куб, обл",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "damage": "1d6",
+  "damageType": "лечение",
+  "higherDieCount": "1",
+  "higherDieType": "d6",
+  "higherText": "За каждый круг ячейки выше 2-го лечение увеличивается на 1d6.",
+  "description": "ЗАКЛ\nПримечание: лечит при входе и в начале хода внутри; всего 1 + модификатор заклинательной характеристики раз. Дух перемещается бонусным действием — двигайте шаблон.\nЛИМИТ: 1+МОД\nВХОД: Урон1. ОБЛН: Урон1",
+  "automation": "full",
+  "classes": "Друид, Следопыт",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-earthbind",
+  "name": "Привязь к земле",
+  "aliases": [
+   "Earthbind",
+   "Привязь к земле"
+  ],
+  "level": 2,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "300 фт",
+  "target": "1 существо",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "concentration": true,
+  "save": "STR",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: летящая цель опускается на 60 фт в начале каждого своего хода, пока не приземлится.\nПРВ: полёт 0 10; УСП: нет эффекта",
+  "automation": "full",
+  "classes": "Друид, Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "ftd-rime-s-binding-ice",
+  "name": "Сковывающий лёд Райма",
+  "aliases": [
+   "Rime's Binding Ice",
+   "Сковывающий лёд Райма"
+  ],
+  "level": 2,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "30 фт конус",
+  "duration": "Мгновенно",
+  "components": {
+   "v": false,
+   "s": true,
+   "m": true
+  },
+  "save": "CON",
+  "saveSuccess": "Половина урона",
+  "damage": "3d8",
+  "damageType": "холод",
+  "higherDieCount": "1",
+  "higherDieType": "d8",
+  "higherText": "За каждый круг ячейки выше 2-го урон увеличивается на 1d8.",
+  "description": "ЗАКЛ\nПримечание: скорость 0 на 1 минуту или пока существо (или другое рядом) не потратит действие на лёд.\nПРВ: полный урон, замедление 30 10; УСП: половина урона",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "Fizban's Treasury of Dragons"
+ },
+ {
+  "id": "xge-snilloc-s-snowball-swarm",
+  "name": "Снежки Снилока",
+  "aliases": [
+   "Snilloc's Snowball Swarm",
+   "Снежки Снилока"
+  ],
+  "level": 2,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "90 фт",
+  "target": "5 фт круг",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "save": "DEX",
+  "saveSuccess": "Половина урона",
+  "damage": "3d6",
+  "damageType": "холод",
+  "higherDieCount": "1",
+  "higherDieType": "d6",
+  "higherText": "За каждый круг ячейки выше 2-го урон увеличивается на 1d6.",
+  "description": "ЗАКЛ\nПРВ: полный урон; УСП: половина урона",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "scc-wither-and-bloom",
+  "name": "Увядание и цветение",
+  "aliases": [
+   "Wither and Bloom",
+   "Увядание и цветение"
+  ],
+  "level": 2,
+  "school": "Некромантия",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "10 фт круг",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "save": "CON",
+  "saveSuccess": "Половина урона",
+  "damage": "2d6",
+  "damageType": "некротическая энергия",
+  "higherDieCount": "1",
+  "higherDieType": "d6",
+  "higherText": "За каждый круг ячейки выше 2-го урон увеличивается на 1d6.",
+  "description": "ЗАКЛ\nПримечание: урон — существам по вашему выбору (исключите союзников вручную); одно существо тратит кость хитов и лечится на бросок + ваш модификатор (кнопка).\nКОСТИ ХИТОВ: 1, МОД\nПРВ: полный урон; УСП: половина урона",
+  "automation": "full",
+  "classes": "Друид, Чародей, Волшебник",
+  "source": "Strixhaven: A Curriculum of Chaos"
+ },
+ {
+  "id": "tce-tasha-s-mind-whip",
+  "name": "Хлыст разума Таши",
+  "aliases": [
+   "Tasha's Mind Whip",
+   "Хлыст разума Таши"
+  ],
+  "level": 2,
+  "school": "Очарование",
+  "castingTime": "1 действие",
+  "range": "90 фт",
+  "target": "1 существо",
+  "duration": "1 раунд",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "save": "INT",
+  "saveSuccess": "Половина урона",
+  "damage": "3d6",
+  "damageType": "психический",
+  "description": "ЗАКЛ\nПримечание: в свой ход цель выбирает только одно: перемещение, действие или бонусное действие; на каждый круг выше 2-го — ещё одна цель.\nПРВ: полный урон, реакции 0 1, ограничен 1; УСП: половина урона",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "Tasha's Cauldron of Everything"
+ },
+ {
+  "id": "xge-mind-spike",
+  "name": "Шип разума",
+  "aliases": [
+   "Mind Spike",
+   "Шип разума"
+  ],
+  "level": 2,
+  "school": "Прорицание",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "1 существо",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": false,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "save": "WIS",
+  "saveSuccess": "Половина урона",
+  "damage": "3d8",
+  "damageType": "психический",
+  "higherDieCount": "1",
+  "higherDieType": "d8",
+  "higherText": "За каждый круг ячейки выше 2-го урон увеличивается на 1d8.",
+  "description": "ЗАКЛ\nПримечание: при провале вы знаете, где цель, пока длится заклинание — отыгрыш.\nПРВ: полный урон; УСП: половина урона",
+  "automation": "full",
+  "classes": "Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "tce-spirit-shroud",
+  "name": "Духовный покров",
+  "aliases": [
+   "Spirit Shroud",
+   "Духовный покров"
+  ],
+  "level": 3,
+  "school": "Некромантия",
+  "castingTime": "1 бонусное действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: урон и запрет лечения — только по целям в 10 фт от вас; замедление врагов в 10 фт — отыгрыш (решение кампании). За каждые 2 круга выше 3-го +1d8.\nВАРИАНТ: Излучение\nПОПАД: постоянный\nПОПАДУСЛ: атака\nПОПАДУРОН: 1d8 излучение\nПОПАДЭФФ: без лечения 1\nВАРИАНТ: Некротическая энергия\nПОПАД: постоянный\nПОПАДУСЛ: атака\nПОПАДУРОН: 1d8 некротическая энергия\nПОПАДЭФФ: без лечения 1\nВАРИАНТ: Холод\nПОПАД: постоянный\nПОПАДУСЛ: атака\nПОПАДУРОН: 1d8 холод\nПОПАДЭФФ: без лечения 1",
+  "automation": "partial",
+  "classes": "Жрец, Колдун, Паладин, Волшебник",
+  "source": "Tasha's Cauldron of Everything"
+ },
+ {
+  "id": "xge-erupting-earth",
+  "name": "Извержение земли",
+  "aliases": [
+   "Erupting Earth",
+   "Извержение земли"
+  ],
+  "level": 3,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "20 фт куб",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "save": "DEX",
+  "saveSuccess": "Половина урона",
+  "damage": "3d12",
+  "damageType": "дробящий",
+  "higherDieCount": "1",
+  "higherDieType": "d12",
+  "higherText": "За каждый круг ячейки выше 3-го урон увеличивается на 1d12.",
+  "description": "ЗАКЛ\nПримечание: трудная местность держится, пока её не расчистят (здесь 100 ходов заклинателя).\nСЛЕД: 100, ЦЕНА ДВИЖЕНИЯ 2\nПРВ: полный урон; УСП: половина урона",
+  "automation": "full",
+  "classes": "Друид, Чародей, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "egw-pulse-wave",
+  "name": "Импульсная волна",
+  "aliases": [
+   "Pulse Wave",
+   "Импульсная волна"
+  ],
+  "level": 3,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "30 фт конус",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "save": "CON",
+  "saveSuccess": "Половина урона",
+  "damage": "6d6",
+  "damageType": "силовое поле",
+  "higherDieCount": "1",
+  "higherDieType": "d6",
+  "higherText": "За каждый круг ячейки выше 3-го урон увеличивается на 1d6.",
+  "description": "ЗАКЛ\nПримечание: толчок или притяжение на 15 фт — вручную (решение кампании).\nПРВ: полный урон; УСП: половина урона",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "Explorer's Guide to Wildemount"
+ },
+ {
+  "id": "tce-intellect-fortress",
+  "name": "Крепость разума",
+  "aliases": [
+   "Intellect Fortress",
+   "Крепость разума"
+  ],
+  "level": 3,
+  "school": "Ограждение",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "1 существо",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: на каждый круг выше 3-го — ещё одна цель.\nсопр психический 600, прем ИНТ 600, прем МДР 600, прем ХАР 600",
+  "automation": "full",
+  "classes": "Бард, Чародей, Колдун, Волшебник",
+  "source": "Tasha's Cauldron of Everything"
+ },
+ {
+  "id": "xge-melf-s-minute-meteors",
+  "name": "Крошечные метеоры Мелфа",
+  "aliases": [
+   "Melf's Minute Meteors",
+   "Крошечные метеоры Мелфа"
+  ],
+  "level": 3,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: 6 метеоров; при сотворении и бонусным действием — 1–2 метеора (каждый — отдельное нажатие). На каждый круг выше 3-го +2 метеора (поправьте ЗАРЯДЫ).\nДАРУЕТ: xge-melf-s-minute-meteor, ЗАРЯДЫ 6",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "ai-motivational-speech",
+  "name": "Мотивирующая речь",
+  "aliases": [
+   "Motivational Speech",
+   "Мотивирующая речь"
+  ],
+  "level": 3,
+  "school": "Очарование",
+  "castingTime": "1 минута",
+  "range": "60 фт",
+  "target": "до 5 существ",
+  "duration": "1 час",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "damage": "5",
+  "damageType": "временное хп",
+  "higherBonus": "5",
+  "higherText": "Временные хиты +5 за каждый круг выше 3-го.",
+  "description": "ЗАКЛ\nПримечание: после получения урона цель получает преимущество на следующую атаку.\nпрем МДР 600, при уроне прем атака 600",
+  "automation": "full",
+  "classes": "Бард",
+  "source": "Acquisitions Incorporated"
+ },
+ {
+  "id": "xge-flame-arrows",
+  "name": "Огненные стрелы",
+  "aliases": [
+   "Flame Arrows",
+   "Огненные стрелы"
+  ],
+  "level": 3,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "Касание",
+  "target": "колчан (12 боеприпасов)",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: каждое попадание стрелой из колчана +1d6 огнём, всего 12; на каждый круг выше 3-го +2 боеприпаса (поправьте число).\nПОПАД: 12 раз\nПОПАДУСЛ: дальнобойное оружие\nПОПАДУРОН: 1d6 огонь",
+  "automation": "full",
+  "classes": "Друид, Следопыт, Чародей, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-life-transference",
+  "name": "Перенос жизни",
+  "aliases": [
+   "Life Transference",
+   "Перенос жизни"
+  ],
+  "level": 3,
+  "school": "Некромантия",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "1 существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: вы получаете урон, который нельзя уменьшить, цель лечится на удвоенную сумму. На каждый круг выше 3-го +1d8 к цене (поправьте формулу).\nЦЕНА: 4d8 некротическая энергия\nЛЕЧЕНИЕ ЦЕЛИ: ×2",
+  "automation": "full",
+  "classes": "Жрец, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-tidal-wave",
+  "name": "Приливная волна",
+  "aliases": [
+   "Tidal Wave",
+   "Приливная волна"
+  ],
+  "level": 3,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "линия 10/30/10 фт",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "save": "DEX",
+  "saveSuccess": "Половина урона",
+  "damage": "4d8",
+  "damageType": "дробящий",
+  "description": "ЗАКЛ\nПримечание: волна гасит открытое пламя — отыгрыш.\nПРВ: полный урон, сбит с ног; УСП: половина урона",
+  "automation": "full",
+  "classes": "Друид, Чародей, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "bmt-antagonize",
+  "name": "Провокация",
+  "aliases": [
+   "Antagonize",
+   "Провокация"
+  ],
+  "level": 3,
+  "school": "Очарование",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "1 существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "save": "WIS",
+  "saveSuccess": "Половина урона",
+  "damage": "4d4",
+  "damageType": "психический",
+  "higherDieCount": "1",
+  "higherDieType": "d4",
+  "higherText": "За каждый круг ячейки выше 3-го урон увеличивается на 1d4.",
+  "description": "ЗАКЛ\nПримечание: при провале цель реакцией атакует выбранное вами существо — отыгрыш (решение кампании).\nПРВ: полный урон; УСП: половина урона",
+  "automation": "partial",
+  "classes": "Бард, Чародей, Колдун, Волшебник",
+  "source": "The Book of Many Things"
+ },
+ {
+  "id": "xge-wall-of-water",
+  "name": "Стена воды",
+  "aliases": [
+   "Wall of Water",
+   "Стена воды"
+  ],
+  "level": 3,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "линия 1/30/10 фт, обл",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: дальние атаки сквозь стену с помехой, урон огнём сквозь неё вдвое меньше; холодом можно заморозить участок — вручную.\nЦЕНА ДВИЖЕНИЯ: 2",
+  "automation": "partial",
+  "classes": "Друид, Чародей, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-wall-of-sand",
+  "name": "Стена песка",
+  "aliases": [
+   "Wall of Sand",
+   "Стена песка"
+  ],
+  "level": 3,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "90 фт",
+  "target": "линия 10/30/10 фт, обл",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: стена закрывает обзор, существа внутри ослеплены — видимость, вручную.\nЦЕНА ДВИЖЕНИЯ: 3",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-thunder-step",
+  "name": "Шаг грома",
+  "aliases": [
+   "Thunder Step",
+   "Шаг грома"
+  ],
+  "level": 3,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "90 фт",
+  "target": "каждое существо в 10 фт от точки ухода",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "save": "CON",
+  "saveSuccess": "Половина урона",
+  "damage": "3d10",
+  "damageType": "звук",
+  "higherDieCount": "1",
+  "higherDieType": "d10",
+  "higherText": "За каждый круг ячейки выше 3-го урон увеличивается на 1d10.",
+  "description": "ЗАКЛ\nПримечание: после урона перенесите себя (и согласного союзника) — телепорт по решению кампании вручную.\nВКР круг 10 фт\nПРВ: полный урон; УСП: половина урона",
+  "automation": "partial",
+  "classes": "Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "egw-gravity-sinkhole",
+  "name": "Гравитационная воронка",
+  "aliases": [
+   "Gravity Sinkhole",
+   "Гравитационная воронка"
+  ],
+  "level": 4,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "20 фт круг",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "save": "CON",
+  "saveSuccess": "Половина урона",
+  "damage": "5d10",
+  "damageType": "силовое поле",
+  "higherDieCount": "1",
+  "higherDieType": "d10",
+  "higherText": "За каждый круг ячейки выше 4-го урон увеличивается на 1d10.",
+  "description": "ЗАКЛ\nПримечание: при провале притяжение к центру — вручную (решение кампании).\nПРВ: полный урон; УСП: половина урона",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "Explorer's Guide to Wildemount"
+ },
+ {
+  "id": "xge-storm-sphere",
+  "name": "Грозовая сфера",
+  "aliases": [
+   "Storm Sphere",
+   "Грозовая сфера"
+  ],
+  "level": 4,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "150 фт",
+  "target": "20 фт круг, обл",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "save": "STR",
+  "saveSuccess": "Нет урона",
+  "damage": "2d6",
+  "damageType": "дробящий",
+  "higherDieCount": "1",
+  "higherDieType": "d6",
+  "higherText": "За каждый круг ячейки выше 4-го урон увеличивается на 1d6.",
+  "description": "ЗАКЛ\nПримечание: бонусным действием — молния из сферы (в книге); по цели внутри сферы — с преимуществом (отметьте вручную).\nКАСТ: ПРВ: Урон1, полный урон; УСП: нет урона. ОБЛН: ПРВ: Урон1, полный урон; УСП: нет урона. ПАСС: труднопроходимая местность\nДАРУЕТ СЕБЕ: xge-storm-sphere-bolt",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-vitriolic-sphere",
+  "name": "Едкая сфера",
+  "aliases": [
+   "Vitriolic Sphere",
+   "Едкая сфера"
+  ],
+  "level": 4,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "150 фт",
+  "target": "20 фт круг",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "save": "DEX",
+  "saveSuccess": "Половина урона",
+  "damage": "10d4",
+  "damageType": "кислота",
+  "higherDieCount": "2",
+  "higherDieType": "d4",
+  "higherText": "За каждый круг ячейки выше 4-го урон увеличивается на 2d4.",
+  "description": "ЗАКЛ\nПримечание: при провале ещё 5d4 кислотой — в начале следующего хода цели (по правилам — в конце).\nПРВ: полный урон, ожог кислотой 5d4 кислота 1; УСП: половина урона",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-charm-monster",
+  "name": "Очарование чудовища",
+  "aliases": [
+   "Charm Monster",
+   "Очарование чудовища"
+  ],
+  "level": 4,
+  "school": "Очарование",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "1 существо",
+  "duration": "1 час",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "save": "WIS",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: преимущество на спасбросок, если вы или союзники сражаетесь с целью; на каждый круг выше 4-го — ещё одна цель.\nПРВ: очарован 600; УСП: нет эффекта",
+  "automation": "full",
+  "classes": "Бард, Друид, Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "ftd-raulothim-s-psychic-lance",
+  "name": "Психическое копьё Раулотима",
+  "aliases": [
+   "Raulothim's Psychic Lance",
+   "Психическое копьё Раулотима"
+  ],
+  "level": 4,
+  "school": "Очарование",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "1 существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "save": "INT",
+  "saveSuccess": "Половина урона",
+  "damage": "7d6",
+  "damageType": "психический",
+  "higherDieCount": "1",
+  "higherDieType": "d6",
+  "higherText": "За каждый круг ячейки выше 4-го урон увеличивается на 1d6.",
+  "description": "ЗАКЛ\nПримечание: цель можно назвать по имени, даже не видя её — отыгрыш.\nПРВ: полный урон, недееспособен 1; УСП: половина урона",
+  "automation": "full",
+  "classes": "Бард, Чародей, Колдун, Волшебник",
+  "source": "Fizban's Treasury of Dragons"
+ },
+ {
+  "id": "xge-elemental-bane",
+  "name": "Стихийная погибель",
+  "aliases": [
+   "Elemental Bane",
+   "Стихийная погибель"
+  ],
+  "level": 4,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "90 фт",
+  "target": "1 существо",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "save": "CON",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: на каждый круг выше 4-го — ещё одна цель.\nВАРИАНТ: Кислота\nПРВ: теряет сопр кислота 10, урон по цели 2d6 кислота раз в ход 10; УСП: нет эффекта\nВАРИАНТ: Холод\nПРВ: теряет сопр холод 10, урон по цели 2d6 холод раз в ход 10; УСП: нет эффекта\nВАРИАНТ: Огонь\nПРВ: теряет сопр огонь 10, урон по цели 2d6 огонь раз в ход 10; УСП: нет эффекта\nВАРИАНТ: Электричество\nПРВ: теряет сопр электричество 10, урон по цели 2d6 электричество раз в ход 10; УСП: нет эффекта\nВАРИАНТ: Звук\nПРВ: теряет сопр звук 10, урон по цели 2d6 звук раз в ход 10; УСП: нет эффекта",
+  "automation": "full",
+  "classes": "Друид, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-guardian-of-nature",
+  "name": "Страж природы",
+  "aliases": [
+   "Guardian of Nature",
+   "Страж природы"
+  ],
+  "level": 4,
+  "school": "Преобразование",
+  "castingTime": "1 бонусное действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: зверь: +10 фт скорости и тёмное зрение — отыгрыш; древо: 10 временных хитов и трудная местность вокруг — вручную.\nВАРИАНТ: Первобытный зверь\nпрем атака рукопашное оружие 10\nПОПАД: постоянный\nПОПАДУСЛ: рукопашное оружие\nПОПАДУРОН: 1d6 силовое поле\nВАРИАНТ: Великое древо\nпрем ТЕЛ 10, прем атака дальнобойное оружие 10, прем атака заклинание 10",
+  "automation": "partial",
+  "classes": "Друид, Следопыт",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-shadow-of-moil",
+  "name": "Тень Моила",
+  "aliases": [
+   "Shadow of Moil",
+   "Тень Моила"
+  ],
+  "level": 4,
+  "school": "Некромантия",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: атакующий в 10 фт при попадании получает 2d8 некротической энергией; тень делает вас сильно заслонённым — видимость, вручную.\nсопр излучение 10\nAD5ЭФФ: {\"kind\":\"retaliation\",\"noTemp\":true,\"anyAttack\":true,\"range\":10,\"formula\":\"2d8\",\"type\":\"некротическая энергия\",\"duration\":10}",
+  "automation": "full",
+  "classes": "Колдун",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-sickening-radiance",
+  "name": "Тошнотворное сияние",
+  "aliases": [
+   "Sickening Radiance",
+   "Тошнотворное сияние"
+  ],
+  "level": 4,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "30 фт круг, обл",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "save": "CON",
+  "saveSuccess": "Нет урона",
+  "damage": "4d10",
+  "damageType": "излучение",
+  "description": "ЗАКЛ\nПримечание: существа внутри светятся и не могут быть невидимыми — видимость, вручную.\nВХОД: ПРВ: Урон1, полный урон, истощение; УСП: нет эффекта. ОБЛН: ПРВ: Урон1, полный урон, истощение; УСП: нет эффекта",
+  "automation": "full",
+  "classes": "Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-enervation",
+  "name": "Обессиливание",
+  "aliases": [
+   "Enervation",
+   "Обессиливание"
+  ],
+  "level": 5,
+  "school": "Некромантия",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "1 существо",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "save": "DEX",
+  "saveSuccess": "Половина урона",
+  "damage": "4d8",
+  "damageType": "некротическая энергия",
+  "higherDieCount": "1",
+  "higherDieType": "d8",
+  "higherText": "За каждый круг ячейки выше 5-го урон увеличивается на 1d8.",
+  "description": "ЗАКЛ\nПримечание: при успехе заклинание заканчивается; при провале каждый ход кнопка «Повторить» (действие) — урон 4d8 без спасброска (отменяйте спасбросок вручную), вы лечитесь на половину.\nТОЛЬКО ЕСЛИ: НЕ ТИП конструкт/нежить\nВАМП 50%\nПОВТОР: действие\nПРВ: полный урон; УСП: половина урона",
+  "automation": "partial",
+  "classes": "Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-negative-energy-flood",
+  "name": "Поток негативной энергии",
+  "aliases": [
+   "Negative Energy Flood",
+   "Поток негативной энергии"
+  ],
+  "level": 5,
+  "school": "Некромантия",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "1 существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": true
+  },
+  "save": "CON",
+  "saveSuccess": "Половина урона",
+  "damage": "5d12",
+  "damageType": "некротическая энергия",
+  "description": "ЗАКЛ\nПримечание: нежить не делает спасбросок и получает временные хиты; убитый гуманоид восстаёт зомби — отыгрыш.\nЕСЛИ ТИП нежить: вр хп половина урона вместо урона\nПРВ: полный урон; УСП: половина урона",
+  "automation": "full",
+  "classes": "Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-dawn",
+  "name": "Рассвет",
+  "aliases": [
+   "Dawn",
+   "Рассвет"
+  ],
+  "level": 5,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "30 фт цилиндр, обл",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "CON",
+  "saveSuccess": "Половина урона",
+  "damage": "4d10",
+  "damageType": "излучение",
+  "description": "ЗАКЛ\nПримечание: бонусным действием цилиндр перемещается на 60 фт — двигайте шаблон.\nКАСТ: ПРВ: Урон1, полный урон; УСП: Урон1, половина урона. КНЦИ: ПРВ: Урон1, полный урон; УСП: Урон1, половина урона",
+  "automation": "full",
+  "classes": "Жрец, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-immolation",
+  "name": "Самовозгорание",
+  "aliases": [
+   "Immolation",
+   "Самовозгорание"
+  ],
+  "level": 5,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "90 фт",
+  "target": "1 существо",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "concentration": true,
+  "save": "DEX",
+  "saveSuccess": "Половина урона",
+  "damage": "8d6",
+  "damageType": "огонь",
+  "description": "ЗАКЛ\nПримечание: горящая цель светится; погибшая сгорает дотла.\nПРВ: полный урон, горение 4d6 ЛОВ{DC}; УСП: половина урона",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-holy-weapon",
+  "name": "Священное оружие",
+  "aliases": [
+   "Holy Weapon",
+   "Священное оружие"
+  ],
+  "level": 5,
+  "school": "Воплощение",
+  "castingTime": "1 бонусное действие",
+  "range": "Касание",
+  "target": "оружие",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: владелец оружия бонусным действием может завершить заклинание вспышкой (в книге заклинаний).\nПОПАД: постоянный\nПОПАДУСЛ: оружие\nПОПАДУРОН: 2d8 излучение\nДАРУЕТ: xge-holy-weapon-burst, ЗАРЯДЫ 1",
+  "automation": "full",
+  "classes": "Жрец, Паладин",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-synaptic-static",
+  "name": "Синаптический разряд",
+  "aliases": [
+   "Synaptic Static",
+   "Синаптический разряд"
+  ],
+  "level": 5,
+  "school": "Очарование",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "20 фт круг",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "save": "INT",
+  "saveSuccess": "Половина урона",
+  "damage": "8d6",
+  "damageType": "психический",
+  "description": "ЗАКЛ\nПримечание: спасбросок Интеллекта в конце каждого хода снимает штрафы — снимите эффекты вручную при успехе.\nТОЛЬКО ЕСЛИ: ИНТ не меньше 3\nПРВ: полный урон, атака -1д6 10, проверка ВСЕ -1д6 10, концентрация -1д6 10; УСП: половина урона",
+  "automation": "full",
+  "classes": "Бард, Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-wall-of-light",
+  "name": "Стена света",
+  "aliases": [
+   "Wall of Light",
+   "Стена света"
+  ],
+  "level": 5,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "линия 5/60/10 фт, обл",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "CON",
+  "saveSuccess": "Половина урона",
+  "damage": "4d8",
+  "damageType": "излучение",
+  "description": "ЗАКЛ\nПримечание: действием — луч из стены (в книге заклинаний); после каждого луча стена короче на 10 фт — укоротите шаблон вручную.\nКАСТ: ПРВ: Урон1, полный урон, ослеплён 10; УСП: Урон1, половина урона. ОБЛК: ПРВ: Урон1, полный урон, ослеплён 10; УСП: Урон1, половина урона\nДАРУЕТ СЕБЕ: xge-wall-of-light-beam",
+  "automation": "full",
+  "classes": "Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-steel-wind-strike",
+  "name": "Удар стального ветра",
+  "aliases": [
+   "Steel Wind Strike",
+   "Удар стального ветра"
+  ],
+  "level": 5,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "30 фт",
+  "target": "до 5 существ",
+  "duration": "Мгновенно",
+  "components": {
+   "v": false,
+   "s": true,
+   "m": true
+  },
+  "description": "ЗАКЛ\nПримечание: рукопашная атака заклинанием по каждой цели; после — телепорт к одной из них вручную (решение кампании).\nМУЛЬТИ: СНАРЯДЫ\nСНРКОЛ: 5\nСНРПОП: АТАКА\nСНРУРОН: 6d10 силовое поле\nСНРРАЗНЫЕ: да",
+  "automation": "full",
+  "classes": "Следопыт, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "egw-gravity-fissure",
+  "name": "Гравитационный разлом",
+  "aliases": [
+   "Gravity Fissure",
+   "Гравитационный разлом"
+  ],
+  "level": 6,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "линия 25/100/5 фт",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "save": "CON",
+  "saveSuccess": "Половина урона",
+  "damage": "8d8",
+  "damageType": "силовое поле",
+  "higherDieCount": "1",
+  "higherDieType": "d8",
+  "higherText": "За каждый круг ячейки выше 6-го урон увеличивается на 1d8.",
+  "description": "ЗАКЛ\nПримечание: шаблон шириной 25 фт охватывает линию и существ в 10 фт от неё; притяжение к линии — вручную (решение кампании).\nПРВ: полный урон; УСП: половина урона",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "Explorer's Guide to Wildemount"
+ },
+ {
+  "id": "xge-primordial-ward",
+  "name": "Изначальный оберег",
+  "aliases": [
+   "Primordial Ward",
+   "Изначальный оберег"
+  ],
+  "level": 6,
+  "school": "Ограждение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": false,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: реакцией при уроне одного из этих типов сопротивление к нему становится иммунитетом до конца хода, затем заклинание заканчивается — вручную.\nсопр кислота/холод/огонь/электричество/звук 10",
+  "automation": "partial",
+  "classes": "Друид",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-mental-prison",
+  "name": "Ментальная тюрьма",
+  "aliases": [
+   "Mental Prison",
+   "Ментальная тюрьма"
+  ],
+  "level": 6,
+  "school": "Иллюзия",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "5 фт круг, обл",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": false,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "save": "INT",
+  "saveSuccess": "Полный урон",
+  "damage": "5d10",
+  "damageType": "психический",
+  "damage2": "10d10",
+  "damageType2": "психический",
+  "description": "ЗАКЛ\nПримечание: поставьте область на цель. При успехе спасброска снимите область; цель, покинувшая её, получает 10d10 и заклинание заканчивается.\nКАСТ: ПРВ: Урон1, полный урон, опутан; УСП: Урон1, полный урон\nВЫХОД: ПРВ: Урон2, полный урон; УСП: Урон2, полный урон",
+  "automation": "partial",
+  "classes": "Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-investiture-of-wind",
+  "name": "Облачение ветра",
+  "aliases": [
+   "Investiture of Wind",
+   "Облачение ветра"
+  ],
+  "level": 6,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: помеха дальнобойным атакам оружием по вам (здесь — всем атакам); толчок 10 фт — вручную. Действие облачения — в книге заклинаний.\nполёт 60 100\nУСЛЭФ: ПОМ АТАКАМ ПО ЦЕЛИ\nДАРУЕТ: xge-investiture-of-wind-action",
+  "automation": "partial",
+  "classes": "Друид, Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-investiture-of-stone",
+  "name": "Облачение камня",
+  "aliases": [
+   "Investiture of Stone",
+   "Облачение камня"
+  ],
+  "level": 6,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: движение сквозь камень и землю — отыгрыш. Действие облачения — в книге заклинаний.\nсопр немаг оружие 100\nДАРУЕТ: xge-investiture-of-stone-action",
+  "automation": "full",
+  "classes": "Друид, Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-investiture-of-ice",
+  "name": "Облачение льда",
+  "aliases": [
+   "Investiture of Ice",
+   "Облачение льда"
+  ],
+  "level": 6,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: земля в 10 фт вокруг — трудная местность для других — вручную. Действие облачения — в книге заклинаний.\nимм холод 100, сопр огонь 100\nДАРУЕТ: xge-investiture-of-ice-action",
+  "automation": "partial",
+  "classes": "Друид, Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-investiture-of-flame",
+  "name": "Облачение пламени",
+  "aliases": [
+   "Investiture of Flame",
+   "Облачение пламени"
+  ],
+  "level": 6,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: существа, заканчивающие ход в 5 фт от вас или впервые подходящие, получают 1d10 огнём — вручную; яркий свет 30 фт. Действие облачения — в книге заклинаний.\nимм огонь 100, сопр холод 100\nДАРУЕТ: xge-investiture-of-flame-action",
+  "automation": "partial",
+  "classes": "Друид, Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "ftd-fizban-s-platinum-shield",
+  "name": "Платиновый щит Физбана",
+  "aliases": [
+   "Fizban's Platinum Shield",
+   "Платиновый щит Физбана"
+  ],
+  "level": 6,
+  "school": "Ограждение",
+  "castingTime": "1 бонусное действие",
+  "range": "60 фт",
+  "target": "1 существо",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: половинное укрытие дано как +2 КД; бонусным действием щит переносится на другое существо (кнопка «Перенести»).\nсопр кислота/холод/огонь/электричество/яд 10, увёртливость 10, кд 2 10, переносится 60 10",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "Fizban's Treasury of Dragons"
+ },
+ {
+  "id": "tce-tasha-s-otherworldly-guise",
+  "name": "Потусторонний облик Таши",
+  "aliases": [
+   "Tasha's Otherworldly Guise",
+   "Потусторонний облик Таши"
+  ],
+  "level": 6,
+  "school": "Преобразование",
+  "castingTime": "1 бонусное действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: две атаки за действие Атака, характеристика заклинателя для атак оружием — отыгрыш.\nВАРИАНТ: Верхние планы\nимм излучение 10, имм некротическая энергия 10, имм очарован 10, полёт 40 10, кд 2 10, магическое оружие 10\nВАРИАНТ: Нижние планы\nимм огонь 10, имм яд 10, имм отравлен 10, полёт 40 10, кд 2 10, магическое оружие 10",
+  "automation": "partial",
+  "classes": "Чародей, Колдун, Волшебник",
+  "source": "Tasha's Cauldron of Everything"
+ },
+ {
+  "id": "xge-tenser-s-transformation",
+  "name": "Превращение Тензера",
+  "aliases": [
+   "Tenser's Transformation",
+   "Превращение Тензера"
+  ],
+  "level": 6,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "damage": "50",
+  "damageType": "временное хп",
+  "description": "ЗАКЛ\nПримечание: владение оружием и спасбросками СИЛ/ТЕЛ, вторая атака — отыгрыш; заклинания творить нельзя.\nпрем атака оружием 100, при окончании ТЕЛ15 истощение 100\nПОПАД: постоянный\nПОПАДУСЛ: оружие\nПОПАДУРОН: 2d12 силовое поле",
+  "automation": "full",
+  "selfApply": true,
+  "classes": "Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-whirlwind",
+  "name": "Вихрь",
+  "aliases": [
+   "Whirlwind",
+   "Вихрь"
+  ],
+  "level": 7,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "300 фт",
+  "target": "10 фт цилиндр, обл",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": true
+  },
+  "concentration": true,
+  "save": "DEX",
+  "saveSuccess": "Половина урона",
+  "damage": "10d6",
+  "damageType": "дробящий",
+  "description": "ЗАКЛ\nПримечание: опутывание по правилам — отдельный спасбросок Силы; вихрь перемещается действием на 30 фт и поднимает существ — двигайте шаблон вручную.\nВХОД: ПРВ: Урон1, полный урон, опутан СИЛ{DC}; УСП: Урон1, половина урона. ОБЛН: ПРВ: Урон1, полный урон, опутан СИЛ{DC}; УСП: Урон1, половина урона",
+  "automation": "partial",
+  "classes": "Друид, Чародей, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "ftd-draconic-transformation",
+  "name": "Драконье превращение",
+  "aliases": [
+   "Draconic Transformation",
+   "Драконье превращение"
+  ],
+  "level": 7,
+  "school": "Преобразование",
+  "castingTime": "1 бонусное действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nПримечание: слепое зрение 30 фт — отыгрыш; выдох — сразу при сотворении и бонусным действием в следующие ходы (кнопка в книге).\nполёт 60 10\nДАРУЕТ: ftd-draconic-transformation-breath",
+  "automation": "full",
+  "classes": "Друид, Чародей, Колдун, Волшебник",
+  "source": "Fizban's Treasury of Dragons"
+ },
+ {
+  "id": "xge-crown-of-stars",
+  "name": "Корона звёзд",
+  "aliases": [
+   "Crown of Stars",
+   "Корона звёзд"
+  ],
+  "level": 7,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "1 час",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: 7 звёзд; бонусным действием — атака одной звездой (в книге заклинаний), после каждой осталось на 1 меньше. На каждый круг выше 7-го +2 звезды (поправьте ЗАРЯДЫ).\nДАРУЕТ: xge-crown-of-stars-mote, ЗАРЯДЫ 7, ХОДЫ 600",
+  "automation": "full",
+  "classes": "Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "egw-tether-essence",
+  "name": "Связывание сущностей",
+  "aliases": [
+   "Tether Essence",
+   "Связывание сущностей"
+  ],
+  "level": 7,
+  "school": "Некромантия",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "до 2 существ",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "CON",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: по правилам связь возникает, только если оба провалили спасбросок (снимите эффект, если второй преуспел); урон и лечение одного достаются второму, при 0 хитов у одного — и у второго.\nПРВ: связь сущностей 600; УСП: нет эффекта",
+  "automation": "full",
+  "classes": "Волшебник",
+  "source": "Explorer's Guide to Wildemount"
+ },
+ {
+  "id": "xge-power-word-pain",
+  "name": "Слово силы: боль",
+  "aliases": [
+   "Power Word Pain",
+   "Слово силы: боль"
+  ],
+  "level": 7,
+  "school": "Очарование",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "1 существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": false
+  },
+  "description": "ЗАКЛ\nПримечание: только при 100 хитах и меньше; скорость не больше 10 фт и концентрация для заклинаний — отыгрыш; спасбросок Телосложения в конце хода снимает эффект.\nТОЛЬКО ЕСЛИ: НЕ ТИП конструкт/нежить\nХИТЫ<=100: пом атака ТЕЛ{DC}, пом СИЛ ТЕЛ{DC}, пом ЛОВ ТЕЛ{DC}, пом ИНТ ТЕЛ{DC}, пом МДР ТЕЛ{DC}, пом ХАР ТЕЛ{DC}",
+  "automation": "full",
+  "classes": "Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "egw-reality-break",
+  "name": "Разлом реальности",
+  "aliases": [
+   "Reality Break",
+   "Разлом реальности"
+  ],
+  "level": 8,
+  "school": "Вызов",
+  "castingTime": "1 действие",
+  "range": "60 фт",
+  "target": "1 существо",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "WIS",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: в начале хода цели бросается d10 по таблице заклинания (урон и состояния автоматически, телепорт — вручную); спасбросок Мудрости в конце хода снимает эффект.\nПРВ: разлом реальности МДР{DC} 10; УСП: нет эффекта",
+  "automation": "full",
+  "classes": "Волшебник",
+  "source": "Explorer's Guide to Wildemount"
+ },
+ {
+  "id": "xge-maddening-darkness",
+  "name": "Сводящая с ума тьма",
+  "aliases": [
+   "Maddening Darkness",
+   "Сводящая с ума тьма"
+  ],
+  "level": 8,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "150 фт",
+  "target": "60 фт круг, обл",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": false,
+   "m": true
+  },
+  "concentration": true,
+  "save": "WIS",
+  "saveSuccess": "Половина урона",
+  "damage": "8d8",
+  "damageType": "психический",
+  "description": "ЗАКЛ\nПримечание: магическая тьма — видимость, вручную.\nОБЛН: ПРВ: Урон1, полный урон; УСП: Урон1, половина урона",
+  "automation": "partial",
+  "classes": "Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "egw-dark-star",
+  "name": "Тёмная звезда",
+  "aliases": [
+   "Dark Star",
+   "Тёмная звезда"
+  ],
+  "level": 8,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "150 фт",
+  "target": "40 фт круг, обл",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "CON",
+  "saveSuccess": "Половина урона",
+  "damage": "8d10",
+  "damageType": "силовое поле",
+  "description": "ЗАКЛ\nПримечание: внутри магическая тьма и тишина (кроме мысленной связи) — видимость, вручную; существо, убитое заклинанием, распадается.\nСМЕРТЬ ПРИ 0\nВХОД: ПРВ: Урон1, полный урон; УСП: Урон1, половина урона. ОБЛН: ПРВ: Урон1, полный урон; УСП: Урон1, половина урона. ПАСС: труднопроходимая местность",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "Explorer's Guide to Wildemount"
+ },
+ {
+  "id": "xge-abi-dalzim-s-horrid-wilting",
+  "name": "Ужасное увядание Аби-Далзима",
+  "aliases": [
+   "Abi-Dalzim's Horrid Wilting",
+   "Ужасное увядание Аби-Далзима"
+  ],
+  "level": 8,
+  "school": "Некромантия",
+  "castingTime": "1 действие",
+  "range": "150 фт",
+  "target": "30 фт куб",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "save": "CON",
+  "saveSuccess": "Половина урона",
+  "damage": "12d8",
+  "damageType": "некротическая энергия",
+  "description": "ЗАКЛ\nПримечание: водные элементали тоже с помехой; немагические растения увядают — вручную.\nТОЛЬКО ЕСЛИ: НЕ ТИП конструкт/нежить\nЕСЛИ ТИП растение: пом спас\nПРВ: полный урон; УСП: половина урона",
+  "automation": "full",
+  "classes": "Чародей, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-mass-polymorph",
+  "name": "Массовый полиморф",
+  "aliases": [
+   "Mass Polymorph",
+   "Массовый полиморф"
+  ],
+  "level": 9,
+  "school": "Преобразование",
+  "castingTime": "1 действие",
+  "range": "120 фт",
+  "target": "до 10 существ",
+  "duration": "Концентрация, до 1 часа",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "save": "WIS",
+  "saveSuccess": "Нет эффекта",
+  "description": "ЗАКЛ\nПримечание: для каждой цели — отдельное нажатие (как Полиморф); новая форма — зверь с показателем опасности не выше уровня/ПО цели (или половины).\nПОЛИМОРФ",
+  "automation": "partial",
+  "classes": "Бард, Чародей, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "egw-ravenous-void",
+  "name": "Ненасытная пустота",
+  "aliases": [
+   "Ravenous Void",
+   "Ненасытная пустота"
+  ],
+  "level": 9,
+  "school": "Воплощение",
+  "castingTime": "1 действие",
+  "range": "1000 фт",
+  "target": "20 фт круг, обл",
+  "duration": "Концентрация, до 1 минуты",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "damage": "5d10",
+  "damageType": "силовое поле",
+  "description": "ЗАКЛ\nПримечание: существа в 100 фт притягиваются к центру — вручную (решение кампании); погибшие внутри уничтожаются.\nСМЕРТЬ ПРИ 0\nВХОД: Урон1, опутан. ОБЛН: Урон1, опутан. ПАСС: труднопроходимая местность",
+  "automation": "partial",
+  "classes": "Волшебник",
+  "source": "Explorer's Guide to Wildemount"
+ },
+ {
+  "id": "xge-invulnerability",
+  "name": "Неуязвимость",
+  "aliases": [
+   "Invulnerability",
+   "Неуязвимость"
+  ],
+  "level": 9,
+  "school": "Ограждение",
+  "castingTime": "1 действие",
+  "range": "На себя",
+  "target": "на себя",
+  "duration": "Концентрация, до 10 минут",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "concentration": true,
+  "description": "ЗАКЛ\nимм все 100",
+  "automation": "full",
+  "classes": "Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "xge-psychic-scream",
+  "name": "Психический крик",
+  "aliases": [
+   "Psychic Scream",
+   "Психический крик"
+  ],
+  "level": 9,
+  "school": "Очарование",
+  "castingTime": "1 действие",
+  "range": "90 фт",
+  "target": "до 10 существ",
+  "duration": "Мгновенно",
+  "components": {
+   "v": false,
+   "s": true,
+   "m": false
+  },
+  "save": "INT",
+  "saveSuccess": "Половина урона",
+  "damage": "14d6",
+  "damageType": "психический",
+  "description": "ЗАКЛ\nПримечание: убитая так цель гибнет зрелищно — отыгрыш.\nТОЛЬКО ЕСЛИ: ИНТ не меньше 3\nПРВ: полный урон, ошеломлён ИНТ{DC}; УСП: половина урона",
+  "automation": "full",
+  "classes": "Бард, Чародей, Колдун, Волшебник",
+  "source": "Xanathar's Guide to Everything"
+ },
+ {
+  "id": "egw-time-ravage",
+  "name": "Разрушение времени",
+  "aliases": [
+   "Time Ravage",
+   "Разрушение времени"
+  ],
+  "level": 9,
+  "school": "Некромантия",
+  "castingTime": "1 действие",
+  "range": "90 фт",
+  "target": "1 существо",
+  "duration": "Мгновенно",
+  "components": {
+   "v": true,
+   "s": true,
+   "m": true
+  },
+  "save": "CON",
+  "saveSuccess": "Половина урона",
+  "damage": "10d12",
+  "damageType": "некротическая энергия",
+  "description": "ЗАКЛ\nПримечание: при провале цель стареет на 30 лет — отыгрыш.\nПРВ: полный урон; УСП: половина урона",
+  "automation": "full",
+  "classes": "Волшебник",
+  "source": "Explorer's Guide to Wildemount"
+ }
+]

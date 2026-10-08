@@ -1,15 +1,16 @@
-/* AD5 Spell Effects 1.1.4 — card-driven combat profiles, Legacy 2014.
+/* AD5 Spell Effects 1.1.5 — card-driven combat profiles, Legacy 2014.
  * AD5ЭФФ: {"kind":"link",...} — one JSON profile per line.
  * No library lookup, eval, sheet migration, recurring scan, or add:attribute hook.
  * 1.1.1: link repeat remains turn-gated in initiative, but can be exercised outside Turn Tracker for testing/noncombat use.
  * 1.1.4: armor — a missing armorAttribute means no armour worn (Mage Armor on sheets without that field);
  *        retaliation {"noTemp":true} works without temporary HP (Fire Shield).
+ * 1.1.5: retaliation {"anyAttack":true,"range":10} — any attack hit from within the range (Shadow of Moil).
  * 1.1.3: mark effects own the Roll20 archery-target marker for their current target; transfer/end/undo restore it safely.
  */
 if(typeof AD5SpellEffects!=='undefined'&&AD5SpellEffects){log('AD5SpellEffects: duplicate skipped');}else{
 var AD5SpellEffects=(function(){
 'use strict';
-var VERSION='1.1.4',windows=Object.create(null),MARK_MARKER='archery-target';
+var VERSION='1.1.5',windows=Object.create(null),MARK_MARKER='archery-target';
 function root(){var r=state.AD5SpellEffects=state.AD5SpellEffects||{};r.effects=r.effects||{};r.turns=r.turns||{};r.actions=r.actions||{};r.bonus=r.bonus||{};r.markMarkerBase=r.markMarkerBase&&typeof r.markMarkerBase==='object'?r.markMarkerBase:{};r.sequence=Number(r.sequence)||0;r.clock=Number(r.clock)||0;return r;}
 function uid(prefix){return prefix+(++root().sequence).toString(36);}
 function clone(x){return x==null?x:JSON.parse(JSON.stringify(x));}
@@ -156,7 +157,11 @@ function manualTempChange(t,previous,current){
  // A decrease can be ordinary damage. An increase from the UI has no cast ID.
  if(current<=0||current>previous)AD5EffectTurns.setTempHpOwner(t.id,null);
 }
-function preHit(ctx){return records(ctx.target).filter(function(r){return r.kind==='retaliation'&&ctx.melee&&(r.noTemp||ownsTemp(r,token(ctx.target)));}).map(clone);}
+function preHit(ctx){return records(ctx.target).filter(function(r){
+  if(r.kind!=='retaliation'||!(r.noTemp||ownsTemp(r,token(ctx.target))))return false;
+  // 1.1.5: {"anyAttack":true,"range":10} — any attack within the range triggers (Shadow of Moil).
+  if(r.anyAttack){var rng=Number(r.range)||5,a=token(ctx.source),b=token(ctx.target);return !!(a&&b&&distance(a,b)<=rng);}
+  return ctx.melee;}).map(clone);}
 function hitCommitted(ctx){(ctx.retaliations||[]).forEach(function(r){if(token(ctx.source)&&token(r.source))damage(r,ctx.source,r.formula||String(r.amount||0));});}
 function markComponents(ctx,base){var out=[];records(ctx.target).forEach(function(r){if(r.kind!=='mark'||r.source!==ctx.source||r.attack!=='any'&&ctx.spell)return;var f=r.formula||'1d6',n=roll(f);if(ctx.critical){var dice=f.match(/\d*d\d+/gi)||[];if(dice.length)n+=roll(dice.join('+'));}var type=r.type||base;if(!type)return;out.push({amount:n,type:type,label:r.name,formula:f,index:90});});return out;}
 function side(t){return typeof AD5Sides!=='undefined'?AD5Sides.side(t):owners(t).length?'players':'npcs';}

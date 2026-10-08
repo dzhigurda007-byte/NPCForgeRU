@@ -2,7 +2,8 @@
 if(typeof AD5Concentration!=='undefined'&&AD5Concentration) {
     log('AD5Concentration: duplicate module skipped; keep one installed copy.');
 } else {
-/* AD5 Concentration 1.2.11
+/* AD5 Concentration 1.2.12
+ * 1.2.12: Effect Turns «концентрация -1д6» (Synaptic Static) changes concentration saves.
  * 1.2.11: checkDc(token, dc, reason) — a concentration save with a fixed DC (AD5 Areas «КОНЦЕНТРАЦИЯ:» zones).
  * 1.2.10: counts the caster's turns under each concentration (elapsed(id)) for Phases «РОСТ».
  * 1.2.9: NPC flag lookup memoized per event (performance).
@@ -19,7 +20,7 @@ if(typeof AD5Concentration!=='undefined'&&AD5Concentration) {
  */
 var AD5Concentration=(function(){
     'use strict';
-    var VERSION='1.2.11',SCRIPT='AD5 Concentration',SEQ=0;
+    var VERSION='1.2.12',SCRIPT='AD5 Concentration',SEQ=0;
     var FALLBACK_MARKERS=['overdrive','aura','stopwatch','white-tower'];
     var ACTION_NAME=Array(21).join('\u200b')+'AD5 · Снять концентрацию',ACTION_CMD='!ad5conc endselected',runtimeTurnKey='';
 
@@ -314,9 +315,12 @@ var AD5Concentration=(function(){
     function saveMods(token){
         var out={bonus:0,mode:'normal',condition:{autoFail:false,mode:'normal',labels:[]}};
         try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.saveModifierForToken==='function'){var fx=AD5EffectTurns.saveModifierForToken(token.id,'constitution')||{};out.bonus=Number(fx.bonus)||0;out.mode=['adv','dis'].indexOf(fx.mode)>=0?fx.mode:'normal';}}catch(ignore){}
+        // 1.2.12: «концентрация -1д6» (Synaptic Static) from Effect Turns.
+        try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.modifierRowsForToken==='function')AD5EffectTurns.modifierRowsForToken(token.id,'concentrationSave').forEach(function(row){var md=row.modifier,t=0,mm=/^(\d*)d(\d+)$/i.exec(md.formula);if(mm){for(var i=0;i<Number(mm[1]||1);i++)t+=d20Sides(Number(mm[2]));}else t=Number(md.formula)||0;out.bonus+=md.sign*t;});}catch(ignoreConcMod){}
         try{if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.saveRule==='function'){out.condition=AD5ConditionEngine.saveRule(token,'constitution')||out.condition;out.mode=combineModes(out.mode,out.condition.mode||'normal');}}catch(ignoreConditionEngine){}
         return out;
     }
+    function d20Sides(n){return typeof randomInteger==='function'?randomInteger(n):(Math.floor(Math.random()*n)+1);}
     function d20(){return typeof randomInteger==='function'?randomInteger(20):(Math.floor(Math.random()*20)+1);}
     function autoSave(token,dc){
         var base=saveBase(token),mods=saveMods(token),mode=['adv','dis'].indexOf(mods.mode)>=0?mods.mode:'normal';

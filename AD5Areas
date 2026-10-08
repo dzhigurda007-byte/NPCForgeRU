@@ -1,12 +1,14 @@
 /* Disable old Areas before installing this guarded module. */
 if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skipped.');}else{
-/* AD5 Areas 2.28.0 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
+/* AD5 Areas 2.29.0 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
  * 2.25.0: директивы описания — «ДРЕЙФ: 10» (область уходит от заклинателя в начале его хода:
  *          Смертельное облако, Испепеляющее облако), «КОЛЬЦО: 5» (круг действует только полосой
  *          шириной 5 фт у края: Клинковый барьер), «СТОРОНА: 10» (у линии/стены появляется полоса
  *          10 фт со стороны, противоположной заклинателю, с фазами КНЦТ/ОБЛК: Огненная стена),
  *          «ОДИН РАЗ» (несколько областей одного каста — «4×» — задевают существо один раз:
  *          Огненная буря, Метеоритный дождь).
+ * 2.29.0: «ЛИМИТ: 1+МОД» — область исчезает после N срабатываний фаз (МОД — модификатор заклинательной
+ *          характеристики заклинателя; Лечащий дух).
  * 2.28.0: «КОНЦЕНТРАЦИЯ: ТЕЛ» — в зоне сосредоточенное существо при входе и в начале хода делает спасбросок
  *          концентрации против СЛ заклинания (Метель, Землетрясение). «СЛЕД: 1, ЦЕНА ДВИЖЕНИЯ 2» — мгновенная
  *          область оставляет зону на N ходов заклинателя (Ледяная буря). «ТИШИНА» — в зоне нельзя творить заклинания
@@ -80,7 +82,7 @@ if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skip
  */
 var AD5Areas=(function(){
     'use strict';
-    var VERSION='2.28.0';
+    var VERSION='2.29.0';
     var resolutionSequence=0;
     function nextResolutionId(prefix){return String(prefix||'area')+':'+Date.now().toString(36)+':'+(++resolutionSequence);}
     function root(){
@@ -873,7 +875,7 @@ var AD5Areas=(function(){
     }
     function defenseDirectiveKind(label){
         var n=normalizeUserText(label||'').replace(/\./g,'').trim();
-        if(/^(?:дрейф|кольцо|сторона|антимагия|области|панели|вытеснение|прочность|при разрушении|защита от снарядов|цена движения|слой|вокруг|концентрация|след|тишина|постоянна после|ослабевает|раунд|гравитация)$/.test(n))return 'geometry';
+        if(/^(?:дрейф|кольцо|сторона|антимагия|области|панели|вытеснение|прочность|при разрушении|защита от снарядов|цена движения|слой|вокруг|концентрация|след|тишина|постоянна после|ослабевает|раунд|гравитация|лимит)$/.test(n))return 'geometry';
         if(/^(?:сопр|сопротивление|resist|resistance)$/.test(n))return 'resistance';
         if(/^(?:имм|иммунитет|immune|immunity)$/.test(n))return 'immunity';
         return 'other';
@@ -887,7 +889,7 @@ var AD5Areas=(function(){
             .replace(/&quot;/gi,'"').replace(/&amp;/gi,'&')
             // «ЗАЩИТА ОТ СНАРЯДОВ» is a flag line; give it a body so it scans like the other directives.
             .replace(/(^|[\n;.])([ \t]*(?:ЗАЩИТА\s+ОТ\s+СНАРЯДОВ|ТИШИНА))[ \t]*(?=\n|$)/gi,'$1$2: да');
-        var names='КАСТ|НАЧК|НАЧИ|НАЧТ|КНЦИ|КНЦТ|КОНИ|КОНТ|ОКОН|ОСВОБ|ВХОД|ВЫХОД|ОБЛН|ОБЛК|ПАСС|При\\s+входе|Каждый\\s+ход|МУВ|СОПР(?:ОТИВЛЕНИЕ)?|СОПРОТИВЛЕНИЕ|RESIST(?:ANCE)?|ИММ(?:УНИТЕТ)?|ИММУНИТЕТ|IMMUN(?:E|ITY)|ДРЕЙФ|КОЛЬЦО|СТОРОНА|АНТИМАГИЯ|ОБЛАСТИ|ПАНЕЛИ|ВЫТЕСНЕНИЕ|ПРОЧНОСТЬ|ПРИ\\s+РАЗРУШЕНИИ|ЗАЩИТА\\s+ОТ\\s+СНАРЯДОВ|ЦЕНА\\s+ДВИЖЕНИЯ|СЛОЙ|ВОКРУГ|КОНЦЕНТРАЦИЯ|СЛЕД|ТИШИНА|ПОСТОЯННА\\s+ПОСЛЕ|ОСЛАБЕВАЕТ|РАУНД|ГРАВИТАЦИЯ';
+        var names='КАСТ|НАЧК|НАЧИ|НАЧТ|КНЦИ|КНЦТ|КОНИ|КОНТ|ОКОН|ОСВОБ|ВХОД|ВЫХОД|ОБЛН|ОБЛК|ПАСС|При\\s+входе|Каждый\\s+ход|МУВ|СОПР(?:ОТИВЛЕНИЕ)?|СОПРОТИВЛЕНИЕ|RESIST(?:ANCE)?|ИММ(?:УНИТЕТ)?|ИММУНИТЕТ|IMMUN(?:E|ITY)|ДРЕЙФ|КОЛЬЦО|СТОРОНА|АНТИМАГИЯ|ОБЛАСТИ|ПАНЕЛИ|ВЫТЕСНЕНИЕ|ПРОЧНОСТЬ|ПРИ\\s+РАЗРУШЕНИИ|ЗАЩИТА\\s+ОТ\\s+СНАРЯДОВ|ЦЕНА\\s+ДВИЖЕНИЯ|СЛОЙ|ВОКРУГ|КОНЦЕНТРАЦИЯ|СЛЕД|ТИШИНА|ПОСТОЯННА\\s+ПОСЛЕ|ОСЛАБЕВАЕТ|РАУНД|ГРАВИТАЦИЯ|ЛИМИТ';
         var re=new RegExp('(^|[\\n;.])\\s*('+names+')\\s*[:：—–-]\\s*','ig'),m,marks=[];
         while((m=re.exec(text))){
             marks.push({
@@ -1675,6 +1677,7 @@ var AD5Areas=(function(){
         if(wall.permanentAfter)rec.permanentAfter=wall.permanentAfter;
         if(wall.decayDice)rec.decayDice=wall.decayDice;
         if(wall.rounds&&wall.rounds.length){rec.rounds=wall.rounds;rec.round=1;}
+        if(wall.limitRaw)rec.limit=areaLimit(wall.limitRaw,rec);
         if(wall.gravity)rec.gravity=wall.gravity>0?wall.gravity:(Number(rec.zHeight)||100);
         persistentDb()[a.id]=rec;
         stylePersistentPath(path);
@@ -1834,6 +1837,7 @@ var AD5Areas=(function(){
         var pa=directiveBody(value,'постоянна после');if(pa){var pam=/(\d{1,4})/.exec(pa);if(pam)out.permanentAfter=Number(pam[1]);}
         var dec=directiveBody(value,'ослабевает');if(dec){var dm=/(\d{1,2})/.exec(dec);out.decayDice=dm?Number(dm[1]):1;}
         out.rounds=roundSpecs(value);
+        var lim=directiveBody(value,'лимит');if(lim){out.limitRaw=lim;}
         var gr=directiveBody(value,'гравитация');if(gr!==null){var grm=/(\d{1,4})/.exec(gr);out.gravity=grm?Number(grm[1]):-1;}
         var cc=directiveBody(value,'концентрация');if(cc!==null){var ccm=/(\d{1,2})/.exec(cc);out.concCheck=ccm?Number(ccm[1]):'spell';}
         out.any=!!(out.eject||out.durability||out.breach||out.projectile||out.moveCost>1||out.layers.length||out.halo);
@@ -2235,6 +2239,17 @@ var AD5Areas=(function(){
     }
     // 2.28.0: «ГРАВИТАЦИЯ: 100» (Reverse Gravity) — creatures inside rise to that flight height; when the
     // area ends they fall (AD5 Height applies falling damage).
+    // «ЛИМИТ: 3» / «ЛИМИТ: 1+МОД» — МОД is the caster's spellcasting ability modifier.
+    function areaLimit(raw,rec){
+        var text=normalizeUserText(raw).replace(/\s+/g,''),mod=0;
+        if(/мод/.test(text)){
+            var cid=String(rec.snapshot&&rec.snapshot.actor||''),src=getObj('graphic',String(rec.source||''));if(!cid&&src)cid=String(src.get('represents')||'');
+            var sa=String(cid?(getAttrByName(cid,'spellcasting_ability')||''):''),am=/(strength|dexterity|constitution|intelligence|wisdom|charisma)/i.exec(sa);
+            mod=am?Number(getAttrByName(cid,am[1].toLowerCase()+'_mod'))||0:0;
+        }
+        var total=0;text.replace(/мод/g,String(mod)).split('+').forEach(function(x){total+=Number(x)||0;});
+        return Math.max(1,total);
+    }
     function liftOccupants(rec){
         if(typeof AD5Height==='undefined'||!AD5Height||typeof AD5Height.writeTokenBarNumber!=='function')return 0;var n=0;rec.lifted=rec.lifted||{};
         Object.keys(rec.occupancy||{}).forEach(function(id){if(!rec.occupancy[id])return;var t=getObj('graphic',id);if(!t)return;
@@ -2441,7 +2456,14 @@ var AD5Areas=(function(){
             // phase.run() returns undefined only when a conditional phase such as
             // «ЕСЛИ опутан» is intentionally not eligible. KAST/VHOD have no such
             // condition in the thorn-growth grammar, so count only actual dispatch.
-            return dispatched!==false&&dispatched!==undefined;
+            var fired=dispatched!==false&&dispatched!==undefined;
+            // 2.29.0: «ЛИМИТ: 1+МОД» — the area ends after N triggers (Healing Spirit).
+            if(fired&&rec.limit>0&&label!=='ВЫХОД'&&label!=='ПАСС'){
+                rec.uses=(Number(rec.uses)||0)+1;
+                if(rec.uses>=rec.limit){var limPath=getAreaPath(rec.id,rec),limRec=rec;tell(rec.owner,'<b>'+escape(rec.name||'Область')+'</b>: использовано '+rec.uses+' из '+rec.limit+' — область исчезает.');setTimeout(function(){if(persistentDb()[limRec.id])endPersistent(limRec,getAreaPath(limRec.id,limRec)||limPath);},200);}
+                else tell(rec.owner,'<b>'+escape(rec.name||'Область')+'</b>: использовано '+rec.uses+' из '+rec.limit+'.');
+            }
+            return fired;
         }
         catch(e){
             tell(rec.owner,'<b>'+escape(rec.name)+'</b> · '+escape(label)+': '+escape(e.message||e));
