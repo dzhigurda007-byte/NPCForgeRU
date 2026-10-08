@@ -9,7 +9,7 @@
   "level": 0,
   "school": "Вызов",
   "castingTime": "1 действие",
-  "range": "5 фт",
+  "range": "На себя",
   "target": "каждое существо в 5 фт вокруг заклинателя",
   "duration": "Мгновенно",
   "components": {
@@ -380,7 +380,7 @@
   "level": 0,
   "school": "Воплощение",
   "castingTime": "1 действие",
-  "range": "На себя",
+  "range": "15 фт",
   "target": "1 существо в 15 фт",
   "duration": "Мгновенно",
   "components": {
@@ -570,7 +570,7 @@
   "level": 0,
   "school": "Преобразование",
   "castingTime": "1 действие",
-  "range": "На себя",
+  "range": "5 фт",
   "target": "1 существо в досягаемости",
   "duration": "Мгновенно",
   "components": {
@@ -837,7 +837,7 @@
   "level": 1,
   "school": "Воплощение",
   "castingTime": "1 действие",
-  "range": "10 фт",
+  "range": "На себя",
   "target": "каждое существо в 10 фт вокруг заклинателя",
   "duration": "Мгновенно",
   "components": {

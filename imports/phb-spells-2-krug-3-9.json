@@ -3198,8 +3198,8 @@
   "level": 6,
   "school": "Некромантия",
   "castingTime": "1 действие",
-  "range": "На себя",
-  "target": "1 существо в 60 фт",
+  "range": "60 фт",
+  "target": "1 существо",
   "duration": "Концентрация, до 1 минуты",
   "components": {
    "v": true,
