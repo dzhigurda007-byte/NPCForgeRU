@@ -291,7 +291,7 @@
   "school": "Ограждение",
   "castingTime": "1 минута",
   "range": "10 фт",
-  "target": "10 фт цилиндр",
+  "target": "10/20 фт цилиндр",
   "duration": "1 час",
   "components": {
    "v": true,
@@ -386,7 +386,7 @@
   "school": "Вызов",
   "castingTime": "1 действие",
   "range": "150 фт",
-  "target": "40 фт цилиндр, обл, ЗАСХАЙ",
+  "target": "40/20 фт цилиндр, обл, ЗАСХАЙ",
   "duration": "Концентрация, до 1 минуты",
   "components": {
    "v": true,
@@ -2464,7 +2464,7 @@
   "school": "Вызов",
   "castingTime": "1 действие",
   "range": "150 фт",
-  "target": "40 фт цилиндр",
+  "target": "40/20 фт цилиндр",
   "duration": "Мгновенно",
   "components": {
    "v": true,
@@ -3711,7 +3711,7 @@
   "school": "Преобразование",
   "castingTime": "1 действие",
   "range": "100 фт",
-  "target": "50 фт цилиндр, обл",
+  "target": "50/100 фт цилиндр, обл",
   "duration": "Концентрация, до 1 минуты",
   "components": {
    "v": true,

@@ -2,7 +2,9 @@
 if(typeof AD5Concentration!=='undefined'&&AD5Concentration) {
     log('AD5Concentration: duplicate module skipped; keep one installed copy.');
 } else {
-/* AD5 Concentration 1.2.13
+/* AD5 Concentration 1.2.14
+ * 1.2.14: onDamage(token, урон, {instances:[…]}) — урон из нескольких отдельных источников (МУВ Шипов:
+ *         каждые 5 фт) проверяется отдельным спасброском на каждую часть, до первого провала.
  * 1.2.13: длительность «Пока не рассеяно» (формулировка dnd.su) — как «до рассеивания».
  * 1.2.12: Effect Turns «концентрация -1д6» (Synaptic Static) changes concentration saves.
  * 1.2.11: checkDc(token, dc, reason) — a concentration save with a fixed DC (AD5 Areas «КОНЦЕНТРАЦИЯ:» zones).
@@ -21,7 +23,7 @@ if(typeof AD5Concentration!=='undefined'&&AD5Concentration) {
  */
 var AD5Concentration=(function(){
     'use strict';
-    var VERSION='1.2.13',SCRIPT='AD5 Concentration',SEQ=0;
+    var VERSION='1.2.14',SCRIPT='AD5 Concentration',SEQ=0;
     var FALLBACK_MARKERS=['overdrive','aura','stopwatch','white-tower'];
     var ACTION_NAME=Array(21).join('\u200b')+'AD5 · Снять концентрацию',ACTION_CMD='!ad5conc endselected',runtimeTurnKey='';
 
@@ -352,6 +354,17 @@ var AD5Concentration=(function(){
         // for a concentration save. Polymorph deliberately does NOT use this skip.
         if(transformMode==='wildshape')return {skipped:true,reason:'wildshape'};
         if(incapacitated(token)){endById(rec.id,'заклинатель недееспособен или имеет 0 HP');return {success:false,automaticLoss:true};}
+        // 1.2.14: урон из нескольких отдельных источников (Шипы: каждые 5 фт) — отдельный спасбросок на каждый,
+        // до первого провала.
+        var parts=context&&Array.isArray(context.instances)?context.instances.map(Number).filter(function(x){return x>0;}):[];
+        if(parts.length>1){
+            var last=null;
+            for(var pi=0;pi<parts.length;pi++){
+                last=onDamage(token,parts[pi],{transformMode:transformMode||'none'});
+                if(!last||last.success===false||!currentForToken(token))break;
+            }
+            return last;
+        }
         var dc=Math.max(10,Math.floor(damage/2)),res=autoSave(token,dc),name=String(token.get('name')||rec.casterName||'Персонаж');
         notify('<b>Концентрация — '+esc(name)+':</b> '+res.total+' против СЛ '+dc+' — <b>'+(res.success?'УСПЕХ':'ПРОВАЛ')+'</b>.');
         gm(esc(name)+': '+(res.mode==='normal'?'d20 '+res.d1:(res.mode==='adv'?'ПРЕМ ':'ПОМ ')+res.d1+'/'+res.d2+' → '+res.die)+' + '+res.base+(res.modifier?(' '+(res.modifier>0?'+ ':'- ')+Math.abs(res.modifier)):'')+' = <b>'+res.total+'</b>, СЛ '+dc+' (урон '+damage+').');

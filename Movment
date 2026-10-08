@@ -3,7 +3,9 @@ if(typeof AD5Movement!=='undefined'&&AD5Movement) {
     log('AD5Movement: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Movement Engine v2.3.9
+ * AD5 Movement Engine v2.3.10
+ * 2.3.10: ТОЛЧ/ТЯГ и перенос захваченного сообщают AD5 Areas о перемещении (ВХОД/ВЫХОД/МУВ при
+ *         принудительном движении); ход по кругу с возвратом в исходную клетку — тоже перемещение.
  * 2.3.9: addMovementCost(txn, feet) — AD5 Areas «ЦЕНА ДВИЖЕНИЯ: N» charges extra speed for movement inside a zone.
  * 2.3.8: teleport — while the token has «телепорт N фт» (Effect Turns 1.6.10), its next
  *        manual move up to N ft is a teleport: no speed spent, no path (areas see only the
@@ -36,7 +38,7 @@ if(typeof AD5Movement!=='undefined'&&AD5Movement) {
 var AD5Movement=(function(){
     'use strict';
 
-    var VERSION='2.3.9',SCRIPT='AD5 Movement';
+    var VERSION='2.3.10',SCRIPT='AD5 Movement';
     var runtimeLastGroup=Object.create(null),suppressed=Object.create(null),recentMoveByToken=Object.create(null),pendingForced=Object.create(null),listeners=[];
 
     function root(){
@@ -409,6 +411,13 @@ var AD5Movement=(function(){
         var contact=(Math.abs(ux)*(shw+thw))+(Math.abs(uy)*(shh+thh));
         return Math.max(0,center-contact);
     }
+    // 2.3.10: изменение токена из API в Roll20 не вызывает change:graphic, поэтому о принудительном
+    // перемещении (ТОЛЧ/ТЯГ, перенос захваченного) AD5 Areas сообщаем сами: ВХОД/ВЫХОД и МУВ
+    // (урон Шипов за каждые 5 фт) срабатывают и при нём.
+    function notifyAreasForced(target,start,prevLastmove){
+        try{if(typeof AD5Areas!=='undefined'&&AD5Areas&&AD5Areas.movement&&typeof AD5Areas.movement.changed==='function')AD5Areas.movement.changed(target,{left:start.left,top:start.top,lastmove:prevLastmove});}
+        catch(areaError){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+':</b> области при принудительном перемещении — '+esc(areaError.message||areaError),null,{noarchive:true});}
+    }
     function forceMove(targetOrId,sourceOrId,feet,kind,meta){
         var target=typeof targetOrId==='string'?getObj('graphic',targetOrId):targetOrId,source=typeof sourceOrId==='string'?getObj('graphic',sourceOrId):sourceOrId;
         if(!target||!source)throw new Error('ТОЛЧ/ТЯГ: не найден токен источника или цели.');
@@ -432,8 +441,10 @@ var AD5Movement=(function(){
         // ordinary move watcher until the final grid/SOLID-adjusted cell is known.
         var envMove=null;
         try{if(typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.beginForcedMove==='function')envMove=AD5Environment.beginForcedMove(target);}catch(envBeginError){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' fall:</b> '+esc(envBeginError.message||envBeginError),null,{noarchive:true});}
+        var prevLastmove=String(target.get('lastmove')||'');
         try{target.set({left:plan.left,top:plan.top,lastmove:''});}
         catch(moveError){try{if(envMove&&typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.cancelForcedMove==='function')AD5Environment.cancelForcedMove(target,envMove);}catch(ignoreCancel){}throw moveError;}
+        notifyAreasForced(target,start,prevLastmove);
         setTimeout(function(){
             try{
                 var liveTarget=getObj('graphic',key);
@@ -460,8 +471,10 @@ var AD5Movement=(function(){
         var requested=routeDistance([start,dest],page),key=String(target.id),fm={kind:'carry',sourceTokenId:String(meta&&meta.sourceTokenId||''),requestedFeet:requested,actualFeet:requested,reason:String(meta&&meta.reason||'Grapple carry'),created:Date.now(),meta:clone(meta||{})};pendingForced[key]=fm;
         var envMove=null;
         try{if(typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.beginForcedMove==='function')envMove=AD5Environment.beginForcedMove(target);}catch(envBeginError){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' carry/fall:</b> '+esc(envBeginError.message||envBeginError),null,{noarchive:true});}
+        var prevLastmove=String(target.get('lastmove')||'');
         try{target.set({left:dest.left,top:dest.top,lastmove:''});}
         catch(moveError){try{if(envMove&&typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.cancelForcedMove==='function')AD5Environment.cancelForcedMove(target,envMove);}catch(ignoreCancel){}delete pendingForced[key];throw moveError;}
+        notifyAreasForced(target,start,prevLastmove);
         var finalPos={left:Number(target.get('left')),top:Number(target.get('top'))},actual=routeDistance([start,finalPos],page);
         setTimeout(function(){
             try{
@@ -485,7 +498,8 @@ var AD5Movement=(function(){
         try{if(typeof AD5Floors!=='undefined'&&AD5Floors&&typeof AD5Floors.isTeleporting==='function'&&AD5Floors.isTeleporting(token.id))return null;}catch(ignoreFloorTeleport){}
         if(isSuppressed(token.id)||!combatToken(token,partyPageId()))return null;
         var fromLeft=Number(prev&&prev.left!==undefined?prev.left:token.get('left')),fromTop=Number(prev&&prev.top!==undefined?prev.top:token.get('top'));
-        if(fromLeft===Number(token.get('left'))&&fromTop===Number(token.get('top')))return null;
+        // 2.3.10: ход по кругу с возвратом в исходную клетку — позиция та же, но lastmove новый.
+        if(fromLeft===Number(token.get('left'))&&fromTop===Number(token.get('top'))&&!(String(token.get('lastmove')||'')&&String(token.get('lastmove')||'')!==String(prev&&prev.lastmove||'')))return null;
         var toLeft=Number(token.get('left')),toTop=Number(token.get('top')),lastmove=String(token.get('lastmove')||'');
         var signature=[fromLeft,fromTop,toLeft,toTop,lastmove].join('|'),now=Date.now(),recent=recentMoveByToken[token.id];
         if(recent&&recent.signature===signature&&(now-recent.time)<350){

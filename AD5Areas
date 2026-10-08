@@ -1,6 +1,10 @@
 /* Disable old Areas before installing this guarded module. */
 if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skipped.');}else{
-/* AD5 Areas 2.29.1 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
+/* AD5 Areas 2.29.2 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
+ * 2.29.2: МУВ — ход по кругу с возвратом в исходную клетку засчитывается; на границе зоны допуск
+ *          0,5 фт (вход в зону не теряет первые 5 фт); movement.changed(token, prev) — Movement
+ *          сообщает о принудительном перемещении (ТОЛЧ/ТЯГ, перенос захваченного), API-изменения
+ *          токена в Roll20 событий не вызывают.
  * 2.29.1: кольцо «КОЛЬЦО» с ЗАСХАЙ/ЗАСЛОУ (Огненная стена кольцом) передаётся в окружение как полоса стены,
  *          а не сплошной круг: взгляд сквозь стену закрыт, внутри кольца видно. Зона жара у стены
  *          не наследует от стены ЗАСХАЙ/СОЛИД.
@@ -85,7 +89,7 @@ if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skip
  */
 var AD5Areas=(function(){
     'use strict';
-    var VERSION='2.29.1';
+    var VERSION='2.29.2';
     var resolutionSequence=0;
     function nextResolutionId(prefix){return String(prefix||'area')+':'+Date.now().toString(36)+':'+(++resolutionSequence);}
     function root(){
@@ -2575,7 +2579,8 @@ var AD5Areas=(function(){
         if(stackBestMove&&stackBestMove.id!==rec.id)return 0;
         var inside=routeInsideDistance(rec,path,points,pageObj,token);if(inside<=0)return 0;
         rec.moveProgress=rec.moveProgress&&typeof rec.moveProgress==='object'?rec.moveProgress:{};
-        var before=Number(rec.moveProgress[token.id])||0,total=before+inside,triggers=Math.floor((total+1e-7)/5),after=total-triggers*5;
+        // 2.29.2: допуск 0,5 фт — путь по сетке, задевший край зоны, теряет доли фута на выборке границы.
+        var before=Number(rec.moveProgress[token.id])||0,total=before+inside,triggers=Math.floor((total+0.5)/5),after=Math.max(0,total-triggers*5);
         if(after<0.0001)after=0;
         if(after>0)rec.moveProgress[token.id]=after;else delete rec.moveProgress[token.id];
         if(movementContext&&movementContext.movementTxn)recordMoveProgress(movementContext.movementTxn,rec.id,token.id,before,after);
@@ -2604,7 +2609,9 @@ var AD5Areas=(function(){
             return;
         }
         var oldLeft=prev&&prev.left!==undefined?prev.left:token.get('left'),oldTop=prev&&prev.top!==undefined?prev.top:token.get('top');
-        if(Number(oldLeft)===Number(token.get('left'))&&Number(oldTop)===Number(token.get('top')))return;
+        // 2.29.2: ход по кругу с возвратом в исходную клетку — позиция та же, но lastmove новый.
+        var samePlace=Number(oldLeft)===Number(token.get('left'))&&Number(oldTop)===Number(token.get('top'));
+        if(samePlace&&!(String(token.get('lastmove')||'')&&String(token.get('lastmove')||'')!==String(prev&&prev.lastmove||'')))return;
         var movementContext=null;
         try{
             if(typeof AD5Movement!=='undefined'&&AD5Movement&&typeof AD5Movement.beginGraphicMove==='function')movementContext=AD5Movement.beginGraphicMove(token,prev)||null;
@@ -3272,7 +3279,7 @@ var AD5Areas=(function(){
             try{bringCombatTokensFront(active);}catch(ignore){}
         }
     });
-    return {version:VERSION,silenceFor:silenceFor,antimagicFor:antimagicFor,afterDamage:afterDamage,projectileWallFor:projectileWallFor,isBrick:function(id){return !!(root().bricks&&root().bricks[String(id&&id.id||id||'')]);},reconcileSides:reconcileSides,ownsPath:function(id){return !!(db()[id]||persistentDb()[id]);},begin:begin,resolveFixed:resolveFixed,removeByConcentration:removeByConcentration,setAreaHeight:setAreaHeight,damageDefenseForToken:damageDefenseForToken,defense:{forToken:damageDefenseForToken,parse:parseAreaDamageDefense,label:damageDefenseLabel},environment:{sync:syncEnvironmentArea,unsync:unsyncEnvironmentArea,type:environmentType},movement:{undo:function(txn){return movementProgressChange(txn,false);},redo:function(txn){return movementProgressChange(txn,true);}},height:{tokenHeightFeet:tokenHeightFeet,areaHeightFeet:areaHeightFeet,verticalContains:verticalContains},_test:{turnTargets:turnTargets,persistentTurnChanged:persistentTurnChanged,setTerrainMarker:setTerrainMarker,casterBaseHeightFeet:casterBaseHeightFeet,resolvedAreaHeight:resolvedAreaHeight,contains:contains,containsAt:containsAt,shapePoints:shapePoints,collectDetailed:collectDetailed,areaExposureForToken:areaExposureForToken,areaEffectOrigin:areaEffectOrigin,lineSourceSign:lineSourceSign,localToWorld:localToWorld,worldToLocal:worldToLocal,coveragePolygon:coveragePolygon,coneCoveragePolygon:coneCoveragePolygon,lineCoveragePolygon:lineCoveragePolygon,replaceDraftWithCoverage:replaceDraftWithCoverage,isJumpgate:isJumpgate,pathV2Points:pathV2Points,pathDimensions:pathDimensions,pathLeft:pathLeft,pathTop:pathTop,sourceToken:sourceToken,characterIsNPC:characterIsNPC,characterIsPlayerControlled:characterIsPlayerControlled,difficultTerrain:difficultTerrain,parseAreaDamageDefense:parseAreaDamageDefense,stripAreaDamageDefenseDirectives:stripAreaDamageDefenseDirectives,damageDefenseForToken:damageDefenseForToken,parsePersistentRules:parsePersistentRules,movementRule:movementRule,combatToken:combatToken,bringCombatTokensFront:bringCombatTokensFront,npcGroupName:npcGroupName,casterTurnMatches:casterTurnMatches,routeEntersArea:routeEntersArea,routeExitsArea:routeExitsArea,routeBoundaryEvents:routeBoundaryEvents,routeInsideDistance:routeInsideDistance,auraAnchorBoundaryEvents:auraAnchorBoundaryEvents,auraShape:auraShape,chooseAuraSlot:chooseAuraSlot,activateAura:activateAura,ensureAuraOffAbility:ensureAuraOffAbility,removeAuraOffAbility:removeAuraOffAbility,getAreaPath:getAreaPath,processBoundaryEvents:processBoundaryEvents,boundaryAllowed:boundaryAllowed,setMembership:setMembership,seedMembership:seedMembership,isConcentrationAuraOwner:isConcentrationAuraOwner,concentrationAuraOwnerProtection:concentrationAuraOwnerProtection,ownerAllowedComponent:ownerAllowedComponent,areaStackKey:areaStackKey,sameAreaStack:sameAreaStack,stackPhasePower:stackPhasePower,compareStackPower:compareStackPower,stackSemanticText:stackSemanticText,stackPhaseSignature:stackPhaseSignature,strongestStackArea:strongestStackArea,stackOccupiedByOther:stackOccupiedByOther,triggerPersistent:triggerPersistent,reconcileTerrainMarker:reconcileTerrainMarker,reconcileTerrainPage:reconcileTerrainPage,terrainMarkerTag:terrainMarkerTag,hasTerrainMarker:hasTerrainMarker}};
+    return {version:VERSION,silenceFor:silenceFor,antimagicFor:antimagicFor,afterDamage:afterDamage,projectileWallFor:projectileWallFor,isBrick:function(id){return !!(root().bricks&&root().bricks[String(id&&id.id||id||'')]);},reconcileSides:reconcileSides,ownsPath:function(id){return !!(db()[id]||persistentDb()[id]);},begin:begin,resolveFixed:resolveFixed,removeByConcentration:removeByConcentration,setAreaHeight:setAreaHeight,damageDefenseForToken:damageDefenseForToken,defense:{forToken:damageDefenseForToken,parse:parseAreaDamageDefense,label:damageDefenseLabel},environment:{sync:syncEnvironmentArea,unsync:unsyncEnvironmentArea,type:environmentType},movement:{changed:function(token,prev){return movementChanged(token,prev||{});},undo:function(txn){return movementProgressChange(txn,false);},redo:function(txn){return movementProgressChange(txn,true);}},height:{tokenHeightFeet:tokenHeightFeet,areaHeightFeet:areaHeightFeet,verticalContains:verticalContains},_test:{turnTargets:turnTargets,persistentTurnChanged:persistentTurnChanged,setTerrainMarker:setTerrainMarker,casterBaseHeightFeet:casterBaseHeightFeet,resolvedAreaHeight:resolvedAreaHeight,contains:contains,containsAt:containsAt,shapePoints:shapePoints,collectDetailed:collectDetailed,areaExposureForToken:areaExposureForToken,areaEffectOrigin:areaEffectOrigin,lineSourceSign:lineSourceSign,localToWorld:localToWorld,worldToLocal:worldToLocal,coveragePolygon:coveragePolygon,coneCoveragePolygon:coneCoveragePolygon,lineCoveragePolygon:lineCoveragePolygon,replaceDraftWithCoverage:replaceDraftWithCoverage,isJumpgate:isJumpgate,pathV2Points:pathV2Points,pathDimensions:pathDimensions,pathLeft:pathLeft,pathTop:pathTop,sourceToken:sourceToken,characterIsNPC:characterIsNPC,characterIsPlayerControlled:characterIsPlayerControlled,difficultTerrain:difficultTerrain,parseAreaDamageDefense:parseAreaDamageDefense,stripAreaDamageDefenseDirectives:stripAreaDamageDefenseDirectives,damageDefenseForToken:damageDefenseForToken,parsePersistentRules:parsePersistentRules,movementRule:movementRule,combatToken:combatToken,bringCombatTokensFront:bringCombatTokensFront,npcGroupName:npcGroupName,casterTurnMatches:casterTurnMatches,routeEntersArea:routeEntersArea,routeExitsArea:routeExitsArea,routeBoundaryEvents:routeBoundaryEvents,routeInsideDistance:routeInsideDistance,auraAnchorBoundaryEvents:auraAnchorBoundaryEvents,auraShape:auraShape,chooseAuraSlot:chooseAuraSlot,activateAura:activateAura,ensureAuraOffAbility:ensureAuraOffAbility,removeAuraOffAbility:removeAuraOffAbility,getAreaPath:getAreaPath,processBoundaryEvents:processBoundaryEvents,boundaryAllowed:boundaryAllowed,setMembership:setMembership,seedMembership:seedMembership,isConcentrationAuraOwner:isConcentrationAuraOwner,concentrationAuraOwnerProtection:concentrationAuraOwnerProtection,ownerAllowedComponent:ownerAllowedComponent,areaStackKey:areaStackKey,sameAreaStack:sameAreaStack,stackPhasePower:stackPhasePower,compareStackPower:compareStackPower,stackSemanticText:stackSemanticText,stackPhaseSignature:stackPhaseSignature,strongestStackArea:strongestStackArea,stackOccupiedByOther:stackOccupiedByOther,triggerPersistent:triggerPersistent,reconcileTerrainMarker:reconcileTerrainMarker,reconcileTerrainPage:reconcileTerrainPage,terrainMarkerTag:terrainMarkerTag,hasTerrainMarker:hasTerrainMarker}};
 }());
 
 }

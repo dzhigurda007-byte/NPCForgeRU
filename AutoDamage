@@ -48,7 +48,7 @@ var AD5Background = (function(){
     return {put:put,isReady:function(){return ready;}};
 }());
 /*
-AutoDamage 4.3.160 / NPC Forge RU 2.7.4 — «шепот звезд».
+AutoDamage 4.3.161 / NPC Forge RU 2.7.4 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Обычная атака игрока -> Target AD5 на карте -> штатные запросы преимущества/помехи/доп. урона Roll20 -> бросок -> урон и крит. NPC/Transform сохраняют штатный Target Roll20. AutoFront заранее держит боевые токены на переднем плане. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -72,6 +72,7 @@ hp листа используется однократно как началь�
 Поле «Описание» способности является источником исходов спасброска. Элементы разделяются запятыми: ПРВ: ... для провала, УСП: ... для успеха. Таймеры и маркеры ведёт отдельный AD5 Effect Turns. Если УСП отсутствует, успешный спас автоматически означает 0 урона и 0 эффектов.
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
+4.3.161: «N фт цилиндр» без высоты распознаётся как область (Лунный луч). МУВ (Шипы) — каждые 5 фт бросаются отдельно; Концентрация получает список частей урона и проверяет каждую отдельно.
 4.3.160: Spells with «ВКР …» (an effect centred on the caster: Sword Burst, Thunderclap, Word of Radiance, Arms of Hadar) never open the Roll20 target picker — like exact «На себя» ranges, the caster's token is used.
 4.3.159: Supplement spells (imports/expansion-spells.json). Filters: clause «РАНЕН», «УРОН ЕСЛИ РАНЕН: Урон2 вместо Урон1» (Toll the Dead), «ЕСЛИ ТИП нежить: вр хп половина урона вместо урона» with an automatic failed save (Negative Energy Flood), item «без спас». Target modifiers «теряет сопр» and «урон по цели … раз в ход» (Elemental Bane); attack mode modifiers «прем/пом атака …» reach the attack roll. Projectiles «СНРРАЗНЫЕ: да», «СНРПРОВАЛ1: в заклинателя». «ПОПАДСОСЕД» button (Green-Flame Blade, !ad5 neighbor), «ТИП ПО КУБУ» + «ПЕРЕСКОК: ДУБЛЬ» (Chaos Bolt, !ad5 chain), «ЦЕНА» + «ЛЕЧЕНИЕ ЦЕЛИ» (Life Transference), «КОСТИ ХИТОВ» (Wither and Bloom, !ad5 hitdie), Tether Essence mirroring, «ДАРУЕТ: id, ЗАРЯДЫ N, ХОДЫ N» / «ДАРУЕТ СЕБЕ:» — temporary library actions (Spell Library grant/revoke) spent per use and removed when concentration ends; «ЗАВЕРШАЕТ КОНЦЕНТРАЦИЮ». Damage reactions receive damage by type (Absorb Elements).
 4.3.158: Partial spells → full automation. Spell-attack beams (СНРПОП: АТАКА, СНРКОЛ: УРОВЕНЬ 5/11/17); «ПРОМАХ: половина урона»; ПОПАДЗАМЕНА / ПОПАДПРОМАХ (Lightning Arrow); creature filters «ТОЛЬКО ЕСЛИ: ТИП зверь», «ЕСЛИ ТИП нежить: макс урон», «ЕСЛИ ИНТ не больше 3: …», «ЕСЛИ НЕ ИММ яд: …»; magic weapon damage types (маг руб/кол/дроб; Turn Effect «магическое оружие» converts weapon damage); size ±1d4 weapon damage; save context (прем спас против заклинаний/состояний, увёртливость, БЕЗ УКРЫТИЯ, слабоумие); condition immunities from buffs; «ПУЛ ЛЕЧЕНИЯ: N»; «СМЕРТЬ ПРИ 0»; max HP lock; «ПОВТОР: бонусное действие» (repeat button while concentration lasts, !ad5 repeat); casting blocked by feeblemind or a ТИШИНА zone (verbal); new Areas directives count as mechanics.
@@ -777,7 +778,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.160', diagnostics = [], debug = false;
+    var VERSION = '4.3.161', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -1086,6 +1087,14 @@ var AD5 = (function () {
         if(cyl){
             var cr=Number(cyl[1]),ch=Number(cyl[2]);
             out.area=markEnvironment({shape:'circle',size:cr,width:cr,length:cr,height:ch,volume:'cylinder',duration:duration});
+            return out;
+        }
+        // 4.3.161: «5 фт цилиндр» без высоты — цилиндр радиусом 5 фт, высота по росту заклинателя
+        // (раньше такая запись не распознавалась как область и открывала выбор цели — Лунный луч).
+        var cyl1=text.match(/(\d+(?:\.\d+)?)\s*(?:фт\.?|ft\.?)?\s*(?:цилиндр|cylinder)/i)||text.match(/(?:цилиндр|cylinder)\s*(\d+(?:\.\d+)?)\s*(?:фт\.?|ft\.?)?/i);
+        if(cyl1){
+            var cr1=Number(cyl1[1]);
+            out.area=markEnvironment({shape:'circle',size:cr1,width:cr1,length:cr1,height:null,volume:'cylinder',duration:duration});
             return out;
         }
 
@@ -6097,7 +6106,7 @@ var AD5 = (function () {
         try{
             if(typeof AD5Concentration!=='undefined'&&AD5Concentration){
                 if(typeof AD5Concentration.onStateChange==='function')AD5Concentration.onStateChange(t.token);
-                if(damageAmount>0&&typeof AD5Concentration.onDamage==='function')AD5Concentration.onDamage(t.token,damageAmount,{historyKey:key,sourceActor:p.actor||null,transformMode:transformDamagePlan?transformDamagePlan.mode:null,transformBreak:!!(transformDamagePlan&&transformDamagePlan.breaks),overflowDamage:transformOverflowApplied});
+                if(damageAmount>0&&typeof AD5Concentration.onDamage==='function')AD5Concentration.onDamage(t.token,damageAmount,{instances:damageInstancesFor(p,damageAmount),historyKey:key,sourceActor:p.actor||null,transformMode:transformDamagePlan?transformDamagePlan.mode:null,transformBreak:!!(transformDamagePlan&&transformDamagePlan.breaks),overflowDamage:transformOverflowApplied});
             }
         }catch(concentrationError){record('Концентрация: '+(concentrationError.message||concentrationError));gm('<b>Концентрация:</b> '+esc(concentrationError.message||concentrationError));}
         try{if(transformDamagePlan&&typeof AD5Transform!=='undefined'&&AD5Transform&&typeof AD5Transform.finishDamage==='function')transformFinish=AD5Transform.finishDamage(transformDamagePlan);}catch(transformFinishError){record('Transform finishDamage: '+(transformFinishError.message||transformFinishError));gm('<b>Трансформация:</b> '+esc(transformFinishError.message||transformFinishError));}
@@ -8725,10 +8734,22 @@ var AD5 = (function () {
         }
         return Array(count).fill('('+formula+')').join(' + ');
     }
+    // 4.3.161: урон из нескольких отдельных источников (МУВ: каждые 5 фт) — список частей итогового урона
+    // для Концентрации; части пропорциональны броскам и в сумме дают итоговый урон после защит.
+    function damageInstancesFor(p,total){
+        var raw=p&&Array.isArray(p.damageInstances)?p.damageInstances.map(Number).filter(function(x){return x>0;}):[];
+        if(raw.length<2||!(total>0))return null;
+        var sum=raw.reduce(function(a,b){return a+b;},0);if(!(sum>0))return null;
+        var out=raw.map(function(x){return Math.floor(x*total/sum);}),rest=total-out.reduce(function(a,b){return a+b;},0);
+        for(var i=0;rest>0&&i<out.length;i++,rest--)out[i]++;
+        return out.filter(function(x){return x>0;});
+    }
     function persistentAreaMovementTrigger(snapshot,rule,targetId,label,context){
         rule=persistentAreaMovementRule(snapshot,rule);
         var repeats=Math.max(1,Math.floor(Number(context&&context.moveRepeats)||1));
-        var pid=persistentAreaOwner(snapshot),t=target(targetId,pid),aggFormula=aggregateMovementFormula(rule.formula,repeats),amount=areaRollExpression(aggFormula,0);
+        // 4.3.161: каждые 5 фт — отдельный бросок урона; концентрация проверяется по каждому (Шипы).
+        var pid=persistentAreaOwner(snapshot),t=target(targetId,pid),moveRolls=[],amount=0;
+        for(var mr=0;mr<repeats;mr++){var one=Math.max(0,Number(areaRollExpression(rule.formula,0))||0);moveRolls.push(one);amount+=one;}
         var phaseName=String(snapshot.name||'Область')+' · '+String(label||'МУВ');
         if(repeats>1)phaseName+=' ×'+String(repeats);
         var f=Object.create(null);
@@ -8740,6 +8761,7 @@ var AD5 = (function () {
         var template=String(snapshot.rolltemplate||'dmg'),npcMessage=['npcatk','npcdmg','npcaction'].indexOf(template)>=0;
         var msg={type:'general',playerid:pid,who:snapshot.actorName||'AD5 Area',rolltemplate:template,content:'',inlinerolls:[]};
         var p={actor:snapshot.actor,sourceName:snapshot.actorName||'',npcMessage:npcMessage,name:phaseName,target:t.token.id,cid:t.cid,hit:true,ac:0,hasAttack:false,total:0,baseAttackTotal:0,globalAttack:0,tokenAttackBonus:0,sourceToken:snapshot.sourceToken||null,conditionSourceToken:snapshot.conditionSourceToken||null,concentrationId:snapshot.concentrationId||null,die:0,factor:1,time:Date.now(),batch:null,persistentArea:true,areaEffect:!!snapshot.areaEffect,phaseScope:(context&&context.phaseScope)?String(context.phaseScope):null,auraOwnerProtected:!!(context&&context.auraOwnerProtected),movementTxn:(context&&context.movementTxn)?String(context.movementTxn):null,areaResolutionId:(context&&context.areaResolutionId)?String(context.areaResolutionId):null};
+        if(moveRolls.length>1)p.damageInstances=moveRolls;
         finish(msg,f,p);
         return true;
     }
