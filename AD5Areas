@@ -1,6 +1,9 @@
 /* Disable old Areas before installing this guarded module. */
 if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skipped.');}else{
-/* AD5 Areas 2.29.0 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
+/* AD5 Areas 2.29.1 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
+ * 2.29.1: кольцо «КОЛЬЦО» с ЗАСХАЙ/ЗАСЛОУ (Огненная стена кольцом) передаётся в окружение как полоса стены,
+ *          а не сплошной круг: взгляд сквозь стену закрыт, внутри кольца видно. Зона жара у стены
+ *          не наследует от стены ЗАСХАЙ/СОЛИД.
  * 2.25.0: директивы описания — «ДРЕЙФ: 10» (область уходит от заклинателя в начале его хода:
  *          Смертельное облако, Испепеляющее облако), «КОЛЬЦО: 5» (круг действует только полосой
  *          шириной 5 фт у края: Клинковый барьер), «СТОРОНА: 10» (у линии/стены появляется полоса
@@ -82,7 +85,7 @@ if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skip
  */
 var AD5Areas=(function(){
     'use strict';
-    var VERSION='2.29.0';
+    var VERSION='2.29.1';
     var resolutionSequence=0;
     function nextResolutionId(prefix){return String(prefix||'area')+':'+Date.now().toString(36)+':'+(++resolutionSequence);}
     function root(){
@@ -1682,7 +1685,7 @@ var AD5Areas=(function(){
         persistentDb()[a.id]=rec;
         stylePersistentPath(path);
         var side=areaSideDirective(q.description);if(side&&side.feet>0)try{createSideStrip(rec,path,side.feet,side.dir);}catch(sideErr){tell(pid,'СТОРОНА: '+escape(sideErr.message||sideErr));}
-        if(environmentType(rec)==='solid'&&(rec.shape==='circle'||rec.shape==='square')&&Number(rec.ringPx)>0){var ringSolid=ringSolidPolygon(rec,path);if(ringSolid)rec.solidRingPath=ringSolid.id;}
+        if(/^(?:solid|zashigh|zaslow)$/.test(environmentType(rec))&&(rec.shape==='circle'||rec.shape==='square')&&Number(rec.ringPx)>0){var ringSolid=ringSolidPolygon(rec,path);if(ringSolid)rec.solidRingPath=ringSolid.id;}
         syncEnvironmentArea(rec,path);
         var passiveCount=seedMembership(rec,path);
         if(wall.layers.length){try{setupLayers(rec,path,wall.layers,pid);}catch(layerErr){tell(pid,'СЛОЙ: '+escape(layerErr.message||layerErr));}}
@@ -1740,7 +1743,7 @@ var AD5Areas=(function(){
         var r2=JSON.parse(JSON.stringify(rec));
         r2.id=strip.id;r2.pathType=pathObjectType(strip);r2.shape='square';r2.w=sw;r2.h=sh;r2.name=(rec.name||'Стена')+' — опасная сторона';
         r2.rules={phased:true,persistent:true,targetEnd:rec.rules.targetEnd||null,areaEnd:rec.rules.areaEnd||null,source:''};
-        r2.moveProgress={};r2.affected={};r2.occupancy={};r2.boundarySeen={};r2.sideOf=rec.id;delete r2.driftFeet;delete r2.ringPx;
+        r2.moveProgress={};r2.affected={};r2.occupancy={};r2.boundarySeen={};r2.sideOf=rec.id;delete r2.driftFeet;delete r2.ringPx;r2.environmentType='';delete r2.solidRingPath;
         persistentDb()[strip.id]=r2;stylePersistentPath(strip);strip.set({stroke:'#ff3300'});seedMembership(r2,strip);rec.sideStrip=strip.id;
         return r2;
     }
@@ -1759,6 +1762,8 @@ var AD5Areas=(function(){
         z.id=strip.id;z.pathType=pathObjectType(strip);z.shape='circle';z.w=2*r2;z.h=2*r2;z.name=(rec.name||'Стена')+' — опасная сторона ('+(outside?'снаружи':'внутри')+')';
         z.rules={phased:true,persistent:true,targetEnd:rec.rules.targetEnd||null,areaEnd:rec.rules.areaEnd||null,source:''};
         z.moveProgress={};z.affected={};z.occupancy={};z.boundarySeen={};z.sideOf=rec.id;delete z.driftFeet;
+        // 2.29.1: the heat beside a wall does not inherit the wall's ЗАСХАЙ/СОЛИД.
+        z.environmentType='';delete z.solidRingPath;
         if(hotInner>0)z.ringPx=hotOuter-hotInner;else delete z.ringPx;
         z.fixedGeometry=true;
         persistentDb()[strip.id]=z;stylePersistentPath(strip);strip.set({stroke:'#ff3300'});seedMembership(z,strip);rec.sideStrip=strip.id;
@@ -1848,7 +1853,7 @@ var AD5Areas=(function(){
         if(rec.layers)parts.push(layerStatus(rec)+' — проходящий сквозь стену проходит все слои; слой снимается ударом по токену стены или кнопкой'+layerButton(rec));
         else if(rec.brick){var b=getObj('graphic',rec.brick);if(b)parts.push('прочность: <b>'+escape(b.get('bar1_value'))+'</b> хитов (токен-кирпич в центре)');}
         if(rec.halo)parts.push('сияние вокруг стены');
-        if(rec.solidRingPath)parts.push('сплошная стена по кольцу');
+        if(rec.solidRingPath)parts.push(environmentType(rec)==='solid'?'сплошная стена по кольцу':'непрозрачная стена по кольцу');
         if(rec.breach)parts.push('при разрушении остаётся зона');
         if(rec.projectileWall)parts.push('дальние атаки оружием сквозь стену — промах');
         if(rec.moveCost>1)parts.push('движение внутри ×'+rec.moveCost);
