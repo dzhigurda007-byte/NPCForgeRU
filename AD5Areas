@@ -1,6 +1,8 @@
 /* Disable old Areas before installing this guarded module. */
 if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skipped.');}else{
-/* AD5 Areas 2.29.2 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
+/* AD5 Areas 2.30.0 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
+ * 2.30.0: шаблон «полукруг» (10 фт полукруг — взмах вокруг атакующего, центр в центре токена); атака по области
+ *          (бросок атаки по каждой цели) не задевает атакующего.
  * 2.29.2: МУВ — ход по кругу с возвратом в исходную клетку засчитывается; на границе зоны допуск
  *          0,5 фт (вход в зону не теряет первые 5 фт); movement.changed(token, prev) — Movement
  *          сообщает о принудительном перемещении (ТОЛЧ/ТЯГ, перенос захваченного), API-изменения
@@ -89,7 +91,7 @@ if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skip
  */
 var AD5Areas=(function(){
     'use strict';
-    var VERSION='2.29.2';
+    var VERSION='2.30.0';
     var resolutionSequence=0;
     function nextResolutionId(prefix){return String(prefix||'area')+':'+Date.now().toString(36)+':'+(++resolutionSequence);}
     function root(){
@@ -372,6 +374,8 @@ var AD5Areas=(function(){
             var out=[];for(var i=0;i<=64;i++){var a=i*Math.PI/32;out.push([i?'L':'M',w/2+w/2*Math.cos(a),h/2+h/2*Math.sin(a)]);}return out;
         }
         if(shape==='cone')return [['M',w/2,h],['L',0,0],['L',w,0],['L',w/2,h]];
+        // 2.30.0: полукруг — центр окружности в середине нижней кромки, дуга вверх (локальная −Y).
+        if(shape==='semicircle'){var sp=[['M',0,h]];for(var si=1;si<=32;si++){var sa=Math.PI+si*Math.PI/32;sp.push(['L',w/2+w/2*Math.cos(sa),h+h*Math.sin(sa)]);}sp.push(['L',0,h]);return sp;}
         return [['M',0,0],['L',w,0],['L',w,h],['L',0,h],['L',0,0]];
     }
     function isJumpgate(){var c=Campaign(),r='';try{r=String(c.get('release')||'').toLowerCase();}catch(ignoreRelease){}if(r==='jumpgate')return true;try{r=String(c.get('_release')||'').toLowerCase();}catch(ignoreLegacyRelease){}return r==='jumpgate';}
@@ -392,6 +396,7 @@ var AD5Areas=(function(){
     function pathV2Points(shape,w,h){
         if(shape==='circle')return [[0,0],[w,h]];
         if(shape==='cone')return [[w/2,h],[0,0],[w,0],[w/2,h]];
+        if(shape==='semicircle')return shapePoints('semicircle',w,h).map(function(x){return [x[1],x[2]];});
         return [[0,0],[w,h]];
     }
     function pathDimensions(path,fallback){
@@ -407,7 +412,7 @@ var AD5Areas=(function(){
     }
     function createAreaPath(pageId,shape,w,h,left,top,rotation,controlledby,stroke,strokeWidth){
         if(isJumpgate()){
-            var v2Shape=shape==='circle'?'eli':(shape==='cone'?'pol':'rec');
+            var v2Shape=shape==='circle'?'eli':((shape==='cone'||shape==='semicircle')?'pol':'rec');
             return createObj('pathv2',{pageid:pageId,layer:'objects',shape:v2Shape,points:JSON.stringify(pathV2Points(shape,w,h)),x:left,y:top,rotation:Number(rotation)||0,stroke:stroke||'#ff9900',stroke_width:strokeWidth||3,fill:'transparent',controlledby:controlledby||'',fadeOnOverlap:false,renderAsScenery:false,baseOpacity:1});
         }
         return createObj('path',{_pageid:pageId,layer:'objects',_path:JSON.stringify(shapePoints(shape,w,h)),width:w,height:h,left:left,top:top,rotation:Number(rotation)||0,scaleX:1,scaleY:1,stroke:stroke||'#ff9900',stroke_width:strokeWidth||3,fill:'transparent',controlledby:controlledby||''});
@@ -461,7 +466,7 @@ var AD5Areas=(function(){
     function refreshAreaBaseElevation(a,path){
         if(!a||!path)return 0;
         var shape=geometryShape(a,path),base=0;
-        if(shape==='cone'||shape==='line'){
+        if(shape==='cone'||shape==='line'||shape==='semicircle'){
             // Directional templates originate at the caster's physical elevation.
             base=sourceTerrainElevation(a);
         }else{
@@ -491,7 +496,7 @@ var AD5Areas=(function(){
         var off=a.effectOriginOffset;
         if(off){var fixed=localToWorld(path,Number(off.x)||0,Number(off.y)||0),fixedZ=Number(a.effectOriginElevation);if(!Number.isFinite(fixedZ))fixedZ=areaBaseElevation(a);return {left:fixed.left,top:fixed.top,pageId:a.page||pathPage(path),elevation:fixedZ};}
         var shape=geometryShape(a,path),p;
-        if(shape==='cone'){
+        if(shape==='cone'||shape==='semicircle'){
             // Cone geometry has a single apex at local +Y. That apex is its emitter.
             p=localToWorld(path,0,(Number(a.h)||0)/2);
         }else if(shape==='line'){
@@ -574,9 +579,9 @@ var AD5Areas=(function(){
         return {left:Number(start.left)+dx*fraction,top:Number(start.top)+dy*fraction,fraction:fraction,blocked:fraction<0.999};
     }
     function coneCoveragePolygon(a,path,height){
-        var origin=areaEffectOrigin(a,path,null),count=120,pts=[{left:origin.left,top:origin.top}],changed=false,halfW=(Number(a.w)||0)/2,baseY=-(Number(a.h)||0)/2;
+        var origin=areaEffectOrigin(a,path,null),count=120,pts=[{left:origin.left,top:origin.top}],changed=false,halfW=(Number(a.w)||0)/2,baseY=-(Number(a.h)||0)/2,semi=geometryShape(a,path)==='semicircle';
         for(var i=0;i<=count;i++){
-            var x=-halfW+(2*halfW*i/count),end=localToWorld(path,x,baseY),clipped=clippedRayEnd(a,origin,end,height);if(clipped.blocked)changed=true;pts.push({left:clipped.left,top:clipped.top});
+            var th=Math.PI*i/count,x=-halfW+(2*halfW*i/count),end=semi?localToWorld(path,-halfW*Math.cos(th),(Number(a.h)||0)/2-(Number(a.h)||0)*Math.sin(th)):localToWorld(path,x,baseY),clipped=clippedRayEnd(a,origin,end,height);if(clipped.blocked)changed=true;pts.push({left:clipped.left,top:clipped.top});
         }
         return changed?{points:pts,center:{left:pathLeft(path),top:pathTop(path)},origin:{left:origin.left,top:origin.top,elevation:origin.elevation}}:null;
     }
@@ -593,7 +598,7 @@ var AD5Areas=(function(){
     function coveragePolygon(a,path){
         if(!a||!path||a.ignoreCover||typeof AD5Environment==='undefined'||!AD5Environment||typeof AD5Environment.propagationLimit!=='function')return null;
         var shape=geometryShape(a,path),height=areaHeightFeet(a)||5;
-        if(shape==='cone')return coneCoveragePolygon(a,path,height);
+        if(shape==='cone'||shape==='semicircle')return coneCoveragePolygon(a,path,height);
         if(shape==='line')return lineCoveragePolygon(a,path,height);
         var cx=pathLeft(path),cy=pathTop(path),count=180,pts=[],changed=false;
         for(var i=0;i<count;i++){
@@ -655,7 +660,7 @@ var AD5Areas=(function(){
         var spec=q.areaSpec;
         if(!spec)throw new Error('В способности не определена площадь.');
         var shape=spec.shape,size=positive(spec.size,'Размер');
-        if(['circle','square','cone','line'].indexOf(shape)<0)throw new Error('Неподдерживаемая форма области: '+shape+'.');
+        if(['circle','square','cone','line','semicircle'].indexOf(shape)<0)throw new Error('Неподдерживаемая форма области: '+shape+'.');
         var pageId=assertPartyPage(playerPageId(pid)),page=getObj('page',pageId);if(!page)throw new Error('Карта под «Лентой для вечеринок» не найдена.');
         var source=sourceToken(q,pid,sourceId),origin=originId?getObj('graphic',String(originId)):null;
         if(origin&&(!combatToken(origin,pageId)||origin.get('_pageid')!==pageId))throw new Error('Токен-центр вторичной области должен быть боевым токеном на активной карте.');
@@ -664,7 +669,7 @@ var AD5Areas=(function(){
         var rectangular=(shape==='line'||shape==='square');
         var width=rectangular?positive(spec.width||(shape==='line'?5:size),'Ширина'):size;
         var length=rectangular?positive(spec.length||size,'Длина'):size;
-        var w=(shape==='circle'?2*size:width)*factor,h=(shape==='circle'?2*size:length)*factor;
+        var w=((shape==='circle'||shape==='semicircle')?2*size:width)*factor,h=(shape==='circle'?2*size:length)*factor;
         if(w>100000||h>100000)throw new Error('Область слишком велика для страницы.');
         var left,top;
         if(origin){
@@ -676,6 +681,8 @@ var AD5Areas=(function(){
                 var tokenHalfH=Math.max(1,Number(origin.get('height'))||70)/2;
                 top=top-tokenHalfH-h/2;
             }
+            // Полукруг — взмах вокруг атакующего: центр окружности совпадает с центром его токена.
+            if(shape==='semicircle')top=top-h/2;
         }
         else {left=Number(page.get('width')||33)*70/2;top=Number(page.get('height')||20)*70/2;}
         var path=createAreaPath(page.id,shape,w,h,left,top,0,pid,'#ff9900',3);if(!path)throw new Error('Не удалось создать шаблон области.');
@@ -792,6 +799,7 @@ var AD5Areas=(function(){
             return d2<=rr*rr+e;
         }
         if(shape==='cone'){var depth=a.h/2-y;return depth>=-e&&depth<=a.h+e&&Math.abs(x)<=depth*a.w/(2*a.h)+e;}
+        if(shape==='semicircle'){var sd=a.h/2-y;return sd>=-e&&x*x+sd*sd<=(a.h+e)*(a.h+e);}
         if(shape==='polygon'&&Array.isArray(a.coveragePolygon))return pointInPolygonLocal({x:x,y:y},a.coveragePolygon);
         // 2.26.0: a wall thinner than a square counts a creature whose space it crosses.
         if(a.wallTouch&&a.w<70){var wt=28;return Math.abs(x)<=a.w/2+wt+e&&Math.abs(y)<=a.h/2+wt+e;}
@@ -2976,6 +2984,8 @@ var AD5Areas=(function(){
         // A phased KAST is an area-membership event and therefore affects every
         // combat token physically inside the template.  Keep the normal target
         // limit only for legacy/non-phased one-shot area actions.
+        // 2.30.0: атака по области (бросок атаки по каждой цели — Залп, Вихрь, Размашистый удар) не задевает атакующего.
+        if(a.source&&q&&q.hasAttack)ids=ids.filter(function(tid){return String(tid)!==String(a.source);});
         if(!persistentRules.cast&&!q.allArea&&q.max&&ids.length>q.max)ids=ids.slice(0,q.max);
         // Full cover / SOLID removes creatures from the effect, but never cancels
         // the cast itself.  An AoE is also allowed to resolve on an empty point.
@@ -3090,7 +3100,7 @@ var AD5Areas=(function(){
         var q=api().get(args[2],msg.playerid),spec=q.areaSpec;
         if(!spec&&args[3]){
             var legacyShape=normalizeUserText(args[3]),legacySize=Number(args[4]);
-            if(['circle','square','cone','line'].indexOf(legacyShape)>=0&&Number.isFinite(legacySize)&&legacySize>0)
+            if(['circle','square','cone','line','semicircle'].indexOf(legacyShape)>=0&&Number.isFinite(legacySize)&&legacySize>0)
                 spec={shape:legacyShape,size:legacySize,width:legacyShape==='line'?(Number(args[5])||5):legacySize,length:legacySize,raw:legacyShape+' '+legacySize};
         }
         if(!spec)throw new Error('В карточке не определена площадь.');
