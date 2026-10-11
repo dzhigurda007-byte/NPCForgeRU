@@ -48,7 +48,7 @@ var AD5Background = (function(){
     return {put:put,isReady:function(){return ready;}};
 }());
 /*
-AutoDamage 4.3.161 / NPC Forge RU 2.7.4 — «шепот звезд».
+AutoDamage 4.3.162 / NPC Forge RU 2.7.4 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Обычная атака игрока -> Target AD5 на карте -> штатные запросы преимущества/помехи/доп. урона Roll20 -> бросок -> урон и крит. NPC/Transform сохраняют штатный Target Roll20. AutoFront заранее держит боевые токены на переднем плане. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -72,6 +72,7 @@ hp листа используется однократно как началь�
 Поле «Описание» способности является источником исходов спасброска. Элементы разделяются запятыми: ПРВ: ... для провала, УСП: ... для успеха. Таймеры и маркеры ведёт отдельный AD5 Effect Turns. Если УСП отсутствует, успешный спас автоматически означает 0 урона и 0 эффектов.
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
+4.3.162: homebrew dnd.su — ПОПАДЛЕЧЕНИЕ/ПОПАДТОЛЧ со столкновением/ПОПАДСЕБЕ/ПОПАДДОСЯГ; условия «АТАКОВАН ПРОШЛЫЙ ХОД», «СХВАЧЕН ИСТОЧНИКОМ», «ДЕРЖИТ ИСТОЧНИК», «отпускает источник»; «УРОН ЕСЛИ …: Урон2» без «вместо» — добавочный; повтор промаха (!ad5 replay); ВРХП ПРОПУСКАЕТ / ВРХП СОПР; grants.add для Ока мимикрии; ДАРУЕТ не снимает строку, которая была в листе раньше.
 4.3.161: «N фт цилиндр» без высоты распознаётся как область (Лунный луч). МУВ (Шипы) — каждые 5 фт бросаются отдельно; Концентрация получает список частей урона и проверяет каждую отдельно.
 4.3.160: Spells with «ВКР …» (an effect centred on the caster: Sword Burst, Thunderclap, Word of Radiance, Arms of Hadar) never open the Roll20 target picker — like exact «На себя» ranges, the caster's token is used.
 4.3.159: Supplement spells (imports/expansion-spells.json). Filters: clause «РАНЕН», «УРОН ЕСЛИ РАНЕН: Урон2 вместо Урон1» (Toll the Dead), «ЕСЛИ ТИП нежить: вр хп половина урона вместо урона» with an automatic failed save (Negative Energy Flood), item «без спас». Target modifiers «теряет сопр» and «урон по цели … раз в ход» (Elemental Bane); attack mode modifiers «прем/пом атака …» reach the attack roll. Projectiles «СНРРАЗНЫЕ: да», «СНРПРОВАЛ1: в заклинателя». «ПОПАДСОСЕД» button (Green-Flame Blade, !ad5 neighbor), «ТИП ПО КУБУ» + «ПЕРЕСКОК: ДУБЛЬ» (Chaos Bolt, !ad5 chain), «ЦЕНА» + «ЛЕЧЕНИЕ ЦЕЛИ» (Life Transference), «КОСТИ ХИТОВ» (Wither and Bloom, !ad5 hitdie), Tether Essence mirroring, «ДАРУЕТ: id, ЗАРЯДЫ N, ХОДЫ N» / «ДАРУЕТ СЕБЕ:» — temporary library actions (Spell Library grant/revoke) spent per use and removed when concentration ends; «ЗАВЕРШАЕТ КОНЦЕНТРАЦИЮ». Damage reactions receive damage by type (Absorb Elements).
@@ -778,7 +779,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.161', diagnostics = [], debug = false;
+    var VERSION = '4.3.162', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -862,8 +863,27 @@ var AD5 = (function () {
         if (debug) gm('<b>AD5 DEBUG</b> ' + esc(text));
     }
     // 4.3.79: единый русский мост событий. Без AD5 События ядро работает как раньше.
+    // 4.3.162: журнал атак (Ярый взмах) и «повтор промаха» (Повтор).
+    var lastAttackCtx=null,missReplays=Object.create(null),missReplaySeq=0;
+    function missReplayOffer(данные){
+        var src=String(данные.источникТокенId||''),tgt=String(данные.цельТокенId||'');if(!src||!lastAttackCtx||lastAttackCtx.source!==src||lastAttackCtx.target!==tgt)return;
+        if(/\{\{ad5replay=1\}\}/.test(String(lastAttackCtx.msg&&lastAttackCtx.msg.content||'')))return;
+        var rows=[];try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.modifierRowsForToken==='function')rows=AD5EffectTurns.modifierRowsForToken(src,'missReplay')||[];}catch(ignoreReplay){}
+        if(!rows.length)return;
+        var id='r'+Date.now().toString(36)+'-'+(++missReplaySeq),ctx=lastAttackCtx;missReplays[id]={id:id,pid:ctx.msg.playerid,msg:ctx.msg,name:ctx.name,expires:Date.now()+600000};
+        var tok=getObj('graphic',tgt);setTimeout(function(){reply(ctx.msg.playerid,'<b>Повтор</b>: промах — '+esc(ctx.name)+' → '+esc(tok&&tok.get('name')||'цель')+'. [Повторить атаку](!ad5 replay '+id+')');},800);
+    }
+    function missReplayCommand(pid,id){
+        var rec=missReplays[String(id||'')];if(!rec||rec.expires<Date.now())throw new Error('Повтор недоступен: кнопка устарела.');
+        if(rec.pid!==pid&&!playerIsGM(pid))throw new Error('Повторить может только атакующий.');delete missReplays[rec.id];
+        var exprs=(rec.msg.inlinerolls||[]).map(function(r){return String(r&&r.expression||'0');});
+        var replay=function(newRolls){var m=JSON.parse(JSON.stringify(rec.msg));m.playerid=pid;if(newRolls)m.inlinerolls=newRolls;m.content=String(m.content||'')+' {{ad5replay=1}}';processMessage(m,null);};
+        if(!exprs.length){replay(null);return;}
+        sendChat('','[['+exprs.join(']] [[')+']]',function(out){try{var rolls=out&&out[0]&&out[0].inlinerolls;replay(rolls&&rolls.length===exprs.length?rolls:null);}catch(e){reply(pid,'Повтор: '+esc(e.message||e));}});
+    }
     function событиеAD5(тип, данные) {
         данные=данные&&typeof данные==='object'?данные:{};
+        try{if(тип==='АТАКА ПО ЦЕЛИ')attackLogRecord(данные.источникТокенId,данные.цельТокенId);else if(тип==='ПРОМАХ')missReplayOffer(данные);}catch(ignoreAttackHooks){}
         try{
             if(typeof AD5События!=='undefined'&&AD5События&&typeof AD5События.сообщить==='function')return AD5События.сообщить(тип,данные)||данные;
         }catch(ошибкаСобытия){record('AD5 События · '+тип+': '+String(ошибкаСобытия&&ошибкаСобытия.message||ошибкаСобытия));}
@@ -4335,7 +4355,7 @@ var AD5 = (function () {
         var areaCoverLabel=String((pendingContext&&pendingContext.areaCoverLabel)||f.ad5areacoverlabel||'');
         var finalSaveMode=custom.mode||'normal';if(areaCoverAdvantage)finalSaveMode=combineSaveModes(finalSaveMode,'adv');
         if(contextRule.advantage.length)finalSaveMode=combineSaveModes(finalSaveMode,'adv');
-        try{var filterSave=creatureFilterPlan(description,token);if(filterSave.saveMode)finalSaveMode=combineSaveModes(finalSaveMode,filterSave.saveMode);if(filterSave.autoFail||(f&&(f.ad5damagetotemp||f.ad5autofail)))custom.condition={autoFail:true,mode:'normal',labels:['без спасброска']};}catch(ignoreFilterSave){}
+        try{var filterSave=creatureFilterPlan(description,token,f&&f.ad5filtersource);if(filterSave.saveMode)finalSaveMode=combineSaveModes(finalSaveMode,filterSave.saveMode);if(filterSave.autoFail||(f&&(f.ad5damagetotemp||f.ad5autofail)))custom.condition={autoFail:true,mode:'normal',labels:['без спасброска']};}catch(ignoreFilterSave){}
         if(contextRule.disadvantage.length)finalSaveMode=combineSaveModes(finalSaveMode,'dis');
         var successEffect=saveOutcomeDamageMode(description,'success',f.savedesc||f.ad5spellsavesuccess||'');
         if(contextRule.evasion&&successEffect==='half')successEffect='none';
@@ -4719,6 +4739,7 @@ var AD5 = (function () {
     function typeKeysFromText(text){var out=[];String(text||'').split(/\s*\/\s*|\s*,\s*|\s+или\s+/).forEach(function(w){w=normalizeUserText(w);Object.keys(CREATURE_TYPE_RX).forEach(function(k){if(w&&CREATURE_TYPE_RX[k].test(w)&&out.indexOf(k)<0)out.push(k);});});return out;}
     function creatureClauseMatches(token,clause){
         var c=normalizeUserText(clause),m,cid=String(token.get('represents')||'');if(!c)return true;
+        var bySource=sourceClauseMatches(token,c);if(bySource!==null)return bySource;
         // 4.3.159: «РАНЕН» — current HP below maximum (Toll the Dead).
         if((m=/^(не\s+)?ранен\S*$/.exec(c))){var hpNow=Number(token.get('bar1_value')),hpMax=Number(token.get('bar1_max'));var hurt=Number.isFinite(hpNow)&&Number.isFinite(hpMax)&&hpMax>0&&hpNow<hpMax;return m[1]?!hurt:hurt;}
         if((m=/^(не\s+)?тип\s+(.+)$/.exec(c))){var want=typeKeysFromText(m[2]),have=creatureTypeKeys(token),hit=want.some(function(k){return have.indexOf(k)>=0;});return m[1]?!hit:hit;}
@@ -4736,11 +4757,31 @@ var AD5 = (function () {
         return true;
     }
     function creatureMatches(token,conds){return String(conds||'').split(/\s*,\s*|\s+и\s+/).every(function(cl){return creatureClauseMatches(token,cl);});}
-    function creatureFilterPlan(description,token){
+    // 4.3.162: условия, зависящие от источника: «АТАКОВАН ПРОШЛЫЙ ХОД» (Ярый взмах), «СХВАЧЕН ИСТОЧНИКОМ»,
+    // «ДЕРЖИТ ИСТОЧНИК» (Внутреннее пламя). Источник задаётся перед разбором фильтра.
+    var filterSourceId='',attackTurnSeq={},attackLog={},attackLastTop='';
+    function attackLogRecord(srcId,tgtId){
+        srcId=String(srcId||'');tgtId=String(tgtId||'');if(!srcId||!tgtId)return;var seq=Number(attackTurnSeq[srcId]||0);
+        var bySrc=attackLog[srcId]=attackLog[srcId]||{},list=bySrc[tgtId]=bySrc[tgtId]||[];if(list.indexOf(seq)<0)list.push(seq);while(list.length>3)list.shift();
+    }
+    function attackedLastTurn(srcId,tgtId){
+        var list=((attackLog[String(srcId||'')]||{})[String(tgtId||'')])||[],seq=Number(attackTurnSeq[String(srcId||'')]||0);return list.indexOf(seq-1)>=0;
+    }
+    on('change:campaign:turnorder',function(){try{var order=JSON.parse(Campaign().get('turnorder')||'[]')||[];var top=order.length?String(order[0].id||''):'';if(top&&top!=='-1'&&top!==attackLastTop){attackTurnSeq[top]=Number(attackTurnSeq[top]||0)+1;}attackLastTop=top;}catch(ignoreAttackSeq){}});
+    function grappleRefsOf(token){try{if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.grapplesOf==='function')return AD5ConditionEngine.grapplesOf(token)||[];}catch(ignoreGrapple){}return [];}
+    function sourceClauseMatches(token,c){
+        var m;
+        if((m=/^(не\s+)?атакован\S*\s+(?:в\s+)?прошл\S*\s+ход\S*$/.exec(c))){var hit=!!filterSourceId&&attackedLastTurn(filterSourceId,token.id);return m[1]?!hit:hit;}
+        if((m=/^(не\s+)?схвачен\S*\s+источник\S*$/.exec(c))){var held=!!filterSourceId&&grappleRefsOf(token).some(function(ref){return String(ref.source&&ref.source.sourceToken||'')===filterSourceId;});return m[1]?!held:held;}
+        if((m=/^(не\s+)?держит\s+источник\S*$/.exec(c))){var src=filterSourceId&&getObj('graphic',filterSourceId),holds=!!src&&grappleRefsOf(src).some(function(ref){return String(ref.source&&ref.source.sourceToken||'')===String(token.id);});return m[1]?!holds:holds;}
+        return null;
+    }
+    function creatureFilterPlan(description,token,sourceId){
+        filterSourceId=String(sourceId||'');
         var text=String(description||''),out={blocked:false,reason:'',items:[],maxDamage:false,stripped:text},m;
         var only=/(?:^|\n)[ \t]*ТОЛЬКО\s+ЕСЛИ\s*[:：]\s*([^\n]+)/i.exec(text);
         if(only&&!creatureMatches(token,only[1])){out.blocked=true;out.reason=only[1].trim();}
-        var re=/(?:^|\n)[ \t]*ЕСЛИ\s+((?:НЕ\s+)?(?:ТИП|ИММ|СИЛ|ЛОВ|ТЕЛ|ИНТ|МДР|ХАР)[^:\n]*?)\s*:\s*([^\n]+)/gi;
+        var re=/(?:^|\n)[ \t]*ЕСЛИ\s+((?:НЕ\s+)?(?:ТИП|ИММ|СИЛ|ЛОВ|ТЕЛ|ИНТ|МДР|ХАР|РАНЕН|АТАКОВАН|СХВАЧЕН|ДЕРЖИТ)[^:\n]*?)\s*:\s*([^\n]+)/gi;
         while((m=re.exec(text))){
             if(!creatureMatches(token,m[1]))continue;
             m[2].split(/\s*,\s*/).forEach(function(item){item=item.trim();
@@ -4749,13 +4790,15 @@ var AD5 = (function () {
                 else if(/^(?:прем|преимущество)\s+(?:на\s+)?спас/i.test(item))out.saveMode='adv';
                 else if(/^вр(?:еменные)?\.?\s*х(?:иты|п)\s+половина\s+урона\s+вместо\s+урона$/i.test(item)){out.damageToTemp=0.5;out.autoFail=true;}
                 else if(/^без\s+спас\S*$/i.test(item))out.autoFail=true;
+                else if(/^отпускает\s+источник\S*$/i.test(item))out.releaseSource=true;
                 else if(/^вр(?:еменные)?\.?\s*х(?:иты|п)\s+вместо\s+урона$/i.test(item))out.damageToTemp=1;
                 else if(item)out.items.push(item);});
         }
         // 4.3.159: «УРОН ЕСЛИ РАНЕН: Урон2 вместо Урон1» — the named component replaces the other one when
         // the clause matches; otherwise the named component is dropped (Toll the Dead d8/d12).
         var dm=/(?:^|\n)[ \t]*УРОН\s+ЕСЛИ\s+([^:\n]+?)\s*:\s*Урон\s*(\d)(?:\s+вместо\s+Урон\s*(\d))?/i.exec(text);
-        if(dm){var useIdx=dm[2],otherIdx=dm[3]||'1';out.skipComponent=creatureMatches(token,dm[1])?otherIdx:useIdx;}
+        // 4.3.162: без «вместо» компонент добавочный — он просто не действует, если условие не выполнено (Ярый взмах).
+        if(dm){var useIdx=dm[2],otherIdx=dm[3];if(otherIdx)out.skipComponent=creatureMatches(token,dm[1])?otherIdx:useIdx;else if(!creatureMatches(token,dm[1]))out.skipComponent=useIdx;}
         text=text.replace(/(?:^|\n)[ \t]*УРОН\s+ЕСЛИ\s+[^:\n]+:[^\n]*/gi,'');
         out.stripped=text.replace(/(?:^|\n)[ \t]*ТОЛЬКО\s+ЕСЛИ\s*[:：][^\n]*/gi,'').replace(/(?:^|\n)[ \t]*ЕСЛИ\s+(?:НЕ\s+)?(?:ТИП|ИММ|СИЛ|ЛОВ|ТЕЛ|ИНТ|МДР|ХАР)[^:\n]*:[^\n]*/gi,'');
         return out;
@@ -5454,9 +5497,20 @@ var AD5 = (function () {
             parts.forEach(function(x){var cm=/^ЗАРЯДЫ\s*(\d+)$/i.exec(x);if(cm)charges=Number(cm[1]);var rm=/^ХОДЫ\s*(\d+)$/i.exec(x);if(rm)rounds=Number(rm[1]);});
             if(!libId||typeof AD5SpellLibrary==='undefined'||!AD5SpellLibrary||typeof AD5SpellLibrary.grant!=='function')continue;
             var key=t.cid+'|'+libId,res=AD5SpellLibrary.grant(t.token.id,libId);
+            // 4.3.162: запись уже была в листе до заклинания — не регистрируем, иначе снятие удалит собственную строку.
+            if(res==='exists'&&!grantsDb()[key]){reply(msg.playerid,'<b>'+esc(p.name||'Эффект')+'</b>: у '+esc(t.token.get('name')||'')+' это действие уже есть в листе.');continue;}
             grantsDb()[key]={key:key,cid:t.cid,tokenId:t.token.id,libId:libId,charges:charges,rounds:rounds,concId:p.concentrationId||null,sourceToken:String(p.sourceToken||''),name:String(p.name||attackName(f)||'Эффект')};
             reply(msg.playerid,'<b>'+esc(p.name||'Эффект')+'</b>: '+esc(t.token.get('name')||'')+' получает действие из библиотеки'+(charges?' ('+charges+' зарядов)':'')+(res==='exists'?' — уже есть в листе':'')+'.');
         }
+    }
+    // 4.3.162: выдать запись библиотеки токену на время (Око мимикрии: скопированное заклинание на 10 ходов, 1 раз).
+    function grantLibrarySpell(tokenId,libId,opts){
+        opts=opts||{};var tok=getObj('graphic',String(tokenId||''));if(!tok)throw new Error('Токен не найден.');
+        if(typeof AD5SpellLibrary==='undefined'||!AD5SpellLibrary||typeof AD5SpellLibrary.grant!=='function')throw new Error('Нужен AD5 Spell Library 2.3.24 или новее.');
+        var cid=String(tok.get('represents')||''),key=cid+'|'+libId;if(!cid)throw new Error('Токен без листа.');
+        var res=AD5SpellLibrary.grant(tok.id,libId);if(res==='exists'&&!grantsDb()[key])return 'exists';
+        grantsDb()[key]={key:key,cid:cid,tokenId:tok.id,libId:String(libId),charges:opts.charges===undefined?null:opts.charges,rounds:opts.rounds===undefined?null:opts.rounds,concId:null,sourceToken:String(opts.sourceToken||tok.id),name:String(opts.name||'Дарованное заклинание')};
+        return res;
     }
     function revokeGrant(key,reason){
         var g=grantsDb()[key];if(!g)return;delete grantsDb()[key];
@@ -5504,6 +5558,35 @@ var AD5 = (function () {
         if(!exprs.length){replay(null);return;}
         sendChat('','[['+exprs.join(']] [[')+']]',function(out){try{var rolls=out&&out[0]&&out[0].inlinerolls;replay(rolls&&rolls.length===exprs.length?rolls:null);}catch(e){reply(pid,'Перескок: '+esc(e.message||e));}});
     }
+    // 4.3.162: «ПОПАДЛЕЧЕНИЕ» — атакующий восстанавливает хиты (Правосудие света).
+    function payloadSelfHeal(msg,row,p){
+        var src=String(p.sourceToken||'');if(!src)return;var amount=rollFormulaText(row.payload.selfHeal,p.actor);
+        reactionDamage(src,amount,'лечение',String(row.label||'Эффект')+' — лечение',{actorId:p.actor,sourceTokenId:src,playerId:msg.playerid,healing:true,fixedDamage:true});
+    }
+    // 4.3.162: «ПОПАДТОЛЧ: 30, СТОЛКНОВЕНИЕ 2d8 дробящий, МАКС РАЗМЕР Большой» (Отталкивающая ладонь): цель отлетает;
+    // столкнувшись с существом, останавливается — урон обоим, оба сбиты с ног.
+    var SIZE_ORDER={'крошечный':0,'маленький':1,'средний':2,'большой':3,'огромный':4,'громадный':5,tiny:0,small:1,medium:2,large:3,huge:4,gargantuan:5};
+    function tokenSizeRank(token){
+        try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.sizeProfile==='function'){var sp=AD5Height.sizeProfile(token);if(sp&&SIZE_ORDER[sp.key]!==undefined)return SIZE_ORDER[sp.key];}}catch(ignoreSize){}
+        var cells=Math.round((Number(token.get('width'))||70)/70);if(cells>=4)return 5;if(cells===3)return 4;if(cells===2)return 3;
+        var cid=String(token.get('represents')||''),raw=normalizeUserText(String(getAttrByName(cid,'npc_type')||'')),best=2;
+        ['крошечный','маленький'].forEach(function(k){if(raw.indexOf(k)>=0)best=SIZE_ORDER[k];});
+        return best;
+    }
+    function payloadPush(msg,row,p,targetToken){
+        var push=row.payload.push,src=getObj('graphic',String(p.sourceToken||''));if(!src||!targetToken||!push)return;
+        if(push.maxSize){var lim=SIZE_ORDER[normalizeUserText(push.maxSize)];if(lim!==undefined&&tokenSizeRank(targetToken)>lim){reply(msg.playerid,'<b>'+esc(row.label||'Толчок')+'</b>: цель слишком велика для толчка.');return;}}
+        if(typeof AD5Movement==='undefined'||!AD5Movement||typeof AD5Movement.forceMove!=='function')throw new Error('Для ПОПАДТОЛЧ нужен AD5 Movement 2.3.11.');
+        var r=AD5Movement.forceMove(targetToken,src,push.feet,'push',{reason:'ТОЛЧ '+push.feet+' фт',attackName:row.label||'',collide:!!push.collision});
+        if(push.collision&&r&&r.collidedWith){
+            var other=getObj('graphic',String(r.collidedWith));if(!other)return;var amount=rollFormulaText(push.collision.formula,p.actor),label=String(row.label||'Толчок')+' — столкновение';
+            [targetToken,other].forEach(function(tok){
+                try{reactionDamage(tok.id,amount,push.collision.type,label,{actorId:p.actor,sourceTokenId:src.id,playerId:msg.playerid,fixedDamage:true});}catch(e){gm('<b>'+esc(label)+':</b> '+esc(e.message||e));}
+                try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.applyCondition==='function')AD5EffectTurns.applyCondition(tok,'сбит с ног',{actionName:label,sourceToken:src.id});}catch(ignoreProne){}
+            });
+            reply(msg.playerid,'<b>'+esc(label)+'</b>: '+esc(targetToken.get('name')||'')+' врезается в '+esc(other.get('name')||'')+' — '+amount+' '+esc(push.collision.type)+' обоим, оба сбиты с ног.');
+        }
+    }
     function payloadCommitAndResolve(msg,p,t,bundle){
         if(!bundle||p.hitPayloadCommitted)return;p.hitPayloadCommitted=true;var commit={consumed:0,endConcentrations:[]},keepConcentrations=[];
         try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.commitHitPayloads==='function')commit=AD5EffectTurns.commitHitPayloads(bundle.rows||[])||commit;}catch(e){gm('<b>Weapon-hit Payload:</b> ошибка расхода: '+esc(e.message||e));}
@@ -5511,6 +5594,9 @@ var AD5 = (function () {
             if(row&&row.payload&&row.payload.mode==='once'&&row.payload.concentration==='keep'&&row.source&&row.source.concentrationId&&keepConcentrations.indexOf(String(row.source.concentrationId))<0)keepConcentrations.push(String(row.source.concentrationId));
             payloadRunDirectEffect(msg,row,t.token);payloadRunSave(msg,row,t.token);payloadLaunchArea(msg,row,{actor:p.actor,sourceToken:p.sourceToken,target:t.token.id,concentrationId:p.concentrationId});
             if(row&&row.payload&&row.payload.neighbor)neighborOffer(msg,row,p,t.token);
+            if(row&&row.payload&&row.payload.selfHeal)payloadSelfHeal(msg,row,p);
+            if(row&&row.payload&&row.payload.selfEffect){var selfTok=getObj('graphic',String(p.sourceToken||''));if(selfTok)payloadRunDirectEffect(msg,{label:row.label,payload:Object.assign({},row.payload,{effect:row.payload.selfEffect}),source:row.source,tokenId:row.tokenId,effectKey:row.effectKey,identity:row.identity},selfTok);}
+            if(row&&row.payload&&row.payload.push)payloadPush(msg,row,p,t.token);
         }catch(e){gm('<b>Weapon-hit Payload · '+esc(row&&row.label||'эффект')+':</b> '+esc(e.message||e));}});
         (commit.endConcentrations||[]).forEach(function(id){try{if(typeof AD5Concentration!=='undefined'&&AD5Concentration&&typeof AD5Concentration.end==='function')AD5Concentration.end(id,'Weapon-hit Payload израсходован');}catch(e){gm('<b>Weapon-hit Payload / концентрация:</b> '+esc(e.message||e));}});
         if((bundle.rows||[]).length)record('Weapon-hit Payload: сработало '+bundle.rows.length+', расходовано '+Number(commit.consumed||0)+'.');
@@ -5564,7 +5650,8 @@ var AD5 = (function () {
             }
         }
         // 4.3.158: creature filters «ТОЛЬКО ЕСЛИ: …» / «ЕСЛИ …: …».
-        var creatureFilter=creatureFilterPlan(f.description!==undefined?f.description:(f.desc||''),t.token);
+        f.ad5filtersource=String(p.sourceToken||'');
+        var creatureFilter=creatureFilterPlan(f.description!==undefined?f.description:(f.desc||''),t.token,f.ad5filtersource);
         if(creatureFilter.blocked){
             sendChat('шепот звезд',esc(p.name||attackName(f)||'Эффект')+' → '+esc(t.token.get('name')||'цель')+': не действует ('+esc(creatureFilter.reason)+')');
             if(p.batch)multiResult(p.batch,t.token.id,'не действует · '+creatureFilter.reason);
@@ -5581,6 +5668,7 @@ var AD5 = (function () {
         f.ad5skipcomp=creatureFilter.skipComponent?String(creatureFilter.skipComponent):'';
         f.ad5damagetotemp=creatureFilter.damageToTemp?String(creatureFilter.damageToTemp):'';
         f.ad5autofail=creatureFilter.autoFail?'1':'';
+        f.ad5releasesource=creatureFilter.releaseSource?'1':'';
         // 4.3.158: «ВСТРЯСКА» — an ally's action ends this spell's effects (Hypnotic Pattern).
         if(/(?:^|\n)[ \t]*ВСТРЯСКА[ \t]*(?:\n|$)/i.test(String(f.description||''))&&typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&AD5EffectTurns.registerShakeable){
             AD5EffectTurns.registerShakeable(p.name||attackName(f));
@@ -6022,7 +6110,13 @@ var AD5 = (function () {
             else complexEffectText=AD5TokenEffects.extract(residualDescription,false,false);
         }
         var complexEffectPlan=complexEffectText?AD5TokenEffects.planAdd(t.token,complexEffectText):null;if(complexEffectPlan&&!complexEffectPlan.added)complexEffectPlan=null;
-        var absorbed=Math.min(temp.value,damageAmount),afterDamageTemp=Math.max(0,temp.value-absorbed),transformDamagePlan=null;
+        // 4.3.162: временные хиты заклинания-щита могут пропускать тип урона («ВРХП ПРОПУСКАЕТ: психический») и
+        // поглощать тип вполовину («ВРХП СОПР: яд») — Энергетический щит.
+        var tempPass=0,tempHalf=0,ownerRule=tempOwnerBefore||{};
+        if((ownerRule.bypass&&ownerRule.bypass.length)||(ownerRule.halve&&ownerRule.halve.length))(resistance&&resistance.rows||[]).forEach(function(row){var a=Math.max(0,Number(row.amount)||0);if((ownerRule.bypass||[]).indexOf(row.type)>=0)tempPass+=a;else if((ownerRule.halve||[]).indexOf(row.type)>=0)tempHalf+=a;});
+        tempPass=Math.min(tempPass,damageAmount);tempHalf=Math.min(tempHalf,damageAmount-tempPass);
+        var tempNormal=damageAmount-tempPass-tempHalf,absorbNormal=Math.min(temp.value,tempNormal),absorbHalf=Math.min(tempHalf,Math.floor((temp.value-absorbNormal)*2));
+        var absorbed=absorbNormal+absorbHalf,tempSpent=absorbNormal+Math.ceil(absorbHalf/2),afterDamageTemp=Math.max(0,temp.value-tempSpent),transformDamagePlan=null;
         try{if(typeof AD5Transform!=='undefined'&&AD5Transform&&typeof AD5Transform.prepareDamage==='function')transformDamagePlan=AD5Transform.prepareDamage(t.token,Math.max(0,damageAmount-absorbed),plan.value);}catch(transformPlanError){record('Transform prepareDamage: '+(transformPlanError.message||transformPlanError));}
         var afterDamageHp=transformDamagePlan?transformDamagePlan.formHp:Math.max(0,plan.value-(damageAmount-absorbed));
         var afterDamageTempMax=temp.max;if(blank(afterDamageTempMax)&&temp.value>0)afterDamageTempMax=temp.value;
@@ -6051,12 +6145,14 @@ var AD5 = (function () {
         AD5Wounds.applyHealing(woundPlan,actualHealing);
         delete pending[msg.playerid];if(targetMode()==='selected'){delete armed[msg.playerid];delete deferred[msg.playerid];}
         var tempOwnerAfter=tempOwnerBefore?JSON.parse(JSON.stringify(tempOwnerBefore)):null;
-        if(temporaryApplied&&nextTemp>0)tempOwnerAfter={castId:transactionKey,sourceToken:String(effectTurnSource.sourceToken||''),actor:String(effectTurnSource.actor||''),actionName:String(effectTurnSource.actionName||''),concentrationId:String(effectTurnSource.concentrationId||''),time:Date.now()};
+        var tempRuleText=String(f.description!==undefined?f.description:(f.desc||'')),tempBypassM=/(?:^|\n)[ \t]*ВРХП\s+ПРОПУСКАЕТ\s*:\s*([^\n]+)/i.exec(tempRuleText),tempHalveM=/(?:^|\n)[ \t]*ВРХП\s+СОПР\s*:\s*([^\n]+)/i.exec(tempRuleText);
+        var tempTypes=function(m){return m?m[1].split(/\s*[,\/]\s*/).map(function(x){return effectType(x);}).filter(Boolean):[];};
+        if(temporaryApplied&&nextTemp>0)tempOwnerAfter={bypass:tempTypes(tempBypassM),halve:tempTypes(tempHalveM),castId:transactionKey,sourceToken:String(effectTurnSource.sourceToken||''),actor:String(effectTurnSource.actor||''),actionName:String(effectTurnSource.actionName||''),concentrationId:String(effectTurnSource.concentrationId||''),time:Date.now()};
         else if(nextTemp<=0)tempOwnerAfter=null;
         var key=transactionKey,entry={tokenId:t.token.id,cid:t.cid,tempBar:temp.bar,sheetHpId:plan.sheetHpId||null,resistance:resistance,wounds:woundPlan,markerChanges:markerChanges,max:plan.max,beforeHp:plan.value,afterHp:nextHp,beforeTemp:temp.value,afterTemp:nextTemp,beforeTempMax:temp.max,afterTempMax:nextTempMax,beforeTempOwner:tempOwnerBefore,afterTempOwner:tempOwnerAfter,beforeAttackBar:attackPoolBefore,afterAttackBar:attackPoolAfter,attackBonusEffect:attackApplied,temporary:temporaryApplied,temporaryApplied:temporaryApplied,temporaryAmount:temporaryAmount,healingAmount:(hasHealing&&saveMultiplier!==0&&!(transformDamagePlan&&transformDamagePlan.breaks))?healingAmount:0,healingRecovered:actualHealing,attackAmount:attackAmount,damageAmount:damageAmount,reactionDamageRule:p.reactionDamageRule||null,reactionDamageReduced:reactionDamageReduced,afterDamageHp:afterDamageHp,afterDamageTemp:afterDamageTemp,tokenEffects:complexEffectPlan,effectTurns:(effectTurnPlan&&effectTurnPlan.changed)?effectTurnPlan:null,persistentArea:!!p.persistentArea,periodicEffect:!!p.periodicEffect,movementTxn:p.movementTxn?String(p.movementTxn):null,concentrationId:p.concentrationId?String(p.concentrationId):null,ownerPid:msg.playerid||null,transformBreak:!!(transformDamagePlan&&transformDamagePlan.breaks),transformMode:transformDamagePlan?transformDamagePlan.mode:null,overflowDamage:transformDamagePlan?Number(transformDamagePlan.overflow||0):0,undone:false};
         if(areaState)areaState.applied=true;
         commitHP(t,{value:nextHp,max:plan.max});restoreConditions(t.token,markerChanges,true);
-        if(deathEngine&&!transformDamagePlan){try{deathEngine.afterHp(t.token,{before:plan.value,next:nextHp,damage:hpDamageTaken,max:Number(plan.max),critical:criticalHit});}catch(dyingErr){record('Умирание: '+dyingErr.message);}}if(hpTier.found&&hpTier.kill&&typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.kill==='function'){try{AD5ConditionEngine.kill(t.token,String(p.name||attackName(f)||'порог хитов'));nextHp=0;}catch(killErr){record('Порог хитов: '+(killErr.message||killErr));}}AD5Wounds.set(t.token,woundPlan.after);AD5Wounds.announce(t.token,woundPlan);if(complexEffectPlan)AD5TokenEffects.set(t.token,complexEffectPlan.after);if(effectTurnPlan&&effectTurnPlan.changed)AD5EffectTurns.commit(t.token,effectTurnPlan);try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.setTempHpOwner==='function')AD5EffectTurns.setTempHpOwner(t.token.id,tempOwnerAfter);}catch(ignoreTempOwnerCommit){}commitTemp(t,temp.bar,nextTemp,nextTempMax);if(attackApplied)commitAttackBar(t.token,attackPoolAfter);
+        if(deathEngine&&!transformDamagePlan){try{deathEngine.afterHp(t.token,{before:plan.value,next:nextHp,damage:hpDamageTaken,max:Number(plan.max),critical:criticalHit});}catch(dyingErr){record('Умирание: '+dyingErr.message);}}if(hpTier.found&&hpTier.kill&&typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.kill==='function'){try{AD5ConditionEngine.kill(t.token,String(p.name||attackName(f)||'порог хитов'));nextHp=0;}catch(killErr){record('Порог хитов: '+(killErr.message||killErr));}}AD5Wounds.set(t.token,woundPlan.after);AD5Wounds.announce(t.token,woundPlan);if(complexEffectPlan)AD5TokenEffects.set(t.token,complexEffectPlan.after);if(effectTurnPlan&&effectTurnPlan.changed)AD5EffectTurns.commit(t.token,effectTurnPlan);if(f.ad5releasesource==='1'&&active(f,'save')&&!success&&p.sourceToken){try{if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.releaseGrapple==='function'&&AD5ConditionEngine.releaseGrapple(t.token,String(p.sourceToken)))report.push('Захват источника окончен.');}catch(releaseErr){record('Освобождение из захвата: '+(releaseErr.message||releaseErr));}}try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.setTempHpOwner==='function')AD5EffectTurns.setTempHpOwner(t.token.id,tempOwnerAfter);}catch(ignoreTempOwnerCommit){}commitTemp(t,temp.bar,nextTemp,nextTempMax);if(attackApplied)commitAttackBar(t.token,attackPoolAfter);
         p.specialCommitted=true;
         if(typeof AD5SpellEffects!=='undefined'){
             entry.spellEffectIds=AD5SpellEffects.applied(specialContext,specialProfiles);
@@ -7713,6 +7809,7 @@ var AD5 = (function () {
         if (sub === 'targets' || sub === 'target-menu') { showTargetMenu(pid,deferred[pid]); return; }
         if (sub === 'repeat') { repeatCommand(pid,args[2]); return; }
         if (sub === 'neighbor') { neighborCommand(pid,args[2],args[3]); return; }
+        if (sub === 'replay') { missReplayCommand(pid,args[2]); return; }
         if (sub === 'chain') { chainCommand(pid,args[2]); return; }
         if (sub === 'hitdie') { hitDieCommand(pid,args[2],args[3]); return; }
         if (sub !== 'target') throw new Error('Неизвестная команда. !ad5 help');
@@ -8189,6 +8286,11 @@ var AD5 = (function () {
                     attackGeometry=opportunityGeometry.target;attackRangeText=opportunityGeometry.reach+' ft';attackRangeSpec=parseAttackRangeSpec(attackRangeText);
                 }
                 var attackRangeInfo=(hasAttack&&sourceAttack.token&&t&&t.token&&!distanceSpec.area&&!f.ad5area)?attackRangeRule(sourceAttack.token,attackGeometry,attackRangeText):{checked:false,distance:sourceAttack.token&&t&&t.token?combatRangeFeet(sourceAttack.token,t.token):Infinity,spec:attackRangeSpec,out:false,long:false};
+                // 4.3.162: «ПОПАДДОСЯГ: 20» — готовый эффект атакующего удлиняет рукопашную атаку (Призрачный разрез).
+                if(hasAttack&&attackRangeInfo.checked&&attackRangeInfo.out&&sourceAttack.token&&attackRangeInfo.spec&&!attackRangeInfo.spec.long&&Number(attackRangeInfo.spec.normal)<=10&&typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.payloadReachFor==='function'){
+                    var payloadReach=0;try{payloadReach=Number(AD5EffectTurns.payloadReachFor(sourceAttack.token))||0;}catch(ignoreReach){}
+                    if(payloadReach>0&&Number(attackRangeInfo.distance)<=payloadReach+0.01){attackRangeInfo.out=false;record('Досягаемость '+payloadReach+' фт от эффекта при попадании.');}
+                }
                 if(hasAttack&&attackRangeInfo.checked&&attackRangeInfo.out){
                     var rangeDistance=Math.round(attackRangeInfo.distance*10)/10,rangeMax=attackRangeInfo.spec.max;
                     sendChat('Шепот звезд','цель вне дальности');
@@ -8301,6 +8403,7 @@ var AD5 = (function () {
                         дистанция:Number.isFinite(Number(дистанцияСобытия))?Number(дистанцияСобытия):null,
                         кругЗаклинания:(spellMeta&&spellMeta.castLevel!==undefined&&spellMeta.castLevel!==null)?Number(spellMeta.castLevel):null
                     };
+                    lastAttackCtx={msg:JSON.parse(JSON.stringify(msg)),name:String(attackName(f)||'Атака'),source:sourceAttack.token?String(sourceAttack.token.id):'',target:String(t.token.id),time:Date.now()};
                     событиеAD5('АТАКА ПО ЦЕЛИ',данныеСобытияАтаки());
                 }
 
@@ -9217,7 +9320,7 @@ var AD5 = (function () {
         // startup repair must never join that event stream automatically.
         gm('Режим цели: <b>механические Spellbook-заклинания (включая МУЛЬТИ/DSL) → Output=Attack; одиночные → Target на карте; NPC/Transform → Native Map Target</b>. Общая автоматическая миграция строк листа на READY и из add/change:attribute <b>ОТКЛЮЧЕНА</b>; включён только точечный автопатч связанной Spellbook attack-строки для нативного Target. Ручной ремонт: <code>!ad5 buttons selected</code>; полная разовая миграция: <code>!ad5 buttons all</code>; Spellbook: <code>!ad5 spells sync</code>.');
     });
-    return {version:VERSION,special:{temp:function(token,amount,owner){var t={token:token,cid:token.get('represents')};commitTemp(t,2,amount,amount);AD5EffectTurns.setTempHpOwner(token.id,owner);}},syntax:AD5Syntax,combatTargets:{isTargetable:isCombatTargetCandidate,reason:combatTargetCandidateReason,insidePage:tokenCenterInsidePage},события:{сообщить:событиеAD5},phaseBridge:{effectType:effectType,complete:multiResult},damageDefense:{area:areaDamageDefense},reaction:{damage:reactionDamage},environment:{damage:environmentalDamage,cover:function(a,b){return (typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.coverBetween==='function')?AD5Environment.coverBetween(a,b):null;}},parseDistanceSpec:parseDistanceSpec,conditions:AD5Conditions,conditionRules:{has:hasCombatCondition,entry:conditionEntry,source:conditionSourceToken,sourceMatches:conditionSourceMatches,rangeFeet:combatRangeFeet,attackRule:conditionAttackRule,saveRule:conditionSaveRule,damageDefense:conditionDamageDefense,mode:conditionMode,abilityCheckRule:function(token,ability,context){try{return (typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&AD5ConditionEngine.abilityCheckRule)?AD5ConditionEngine.abilityCheckRule(token,ability,context):{autoFail:false,mode:'normal',labels:[]};}catch(ignore){return {autoFail:false,mode:'normal',labels:[]};}},canAct:function(token){try{return (typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&AD5ConditionEngine.canAct)?AD5ConditionEngine.canAct(token):{allowed:true,reasons:[]};}catch(ignore){return {allowed:true,reasons:[]};}},canReact:function(token){try{return (typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&AD5ConditionEngine.canReact)?AD5ConditionEngine.canReact(token):{allowed:true,reasons:[]};}catch(ignore){return {allowed:true,reasons:[]};}}},attackBuff:{value:AD5AttackBuff.value,set:AD5AttackBuff.set},concentration:{endEffects:concentrationEndEffects},spellLevel:{resolve:resolveSpellLevels,value:spellLevelValue,test:spellLevelTest,describe:spellLevelDescribe},dsl:{context:spellDslContext,expand:spellDslExpand,eval:spellDslEval,apply:spellDslApplyRuntime,needsCastLevel:spellDslNeedsCastLevel,targetDirective:spellDslHasTargetDirective,durationDirective:spellDslHasDurationDirective},multiResolver:{parse:multiResolverSpec},spellbook:{rows:spellRows,find:spellByName,sync:syncSpellbookCharacter,enforceOutputPolicy:enforceSpellbookOutputPolicy,enrich:enrichSpellFields,patchLinkedAttack:patchLinkedSpellAttack,hydrateLinkedAttack:hydrateLinkedSpellAttackRow,isMechanicalDefinition:spellDefinitionMechanical,desiredOutput:function(def){return spellDefinitionMechanical(def)?'ATTACK':'SPELLCARD';},prepareNativeMulti:prepareNativeMultiSpellCards},_test:{sleepExclusion:sleepExclusion,wakeManagedSleep:wakeManagedSleep,finish:finish,processMessage:processMessage,projectileNext:projectileNext,saveSpec:saveSpec,nativeMultiSpellCardMeta:nativeMultiSpellCardMeta,nativeMultiSpellCardRollcontent:nativeMultiSpellCardRollcontent,multiResolverSpec:multiResolverSpec,poolSortCandidates:poolSortCandidates,poolResolve:poolResolve,payloadAutoSaveDc:payloadAutoSaveDc,payloadPrepareBundle:payloadPrepareBundle,payloadOutcomeDescription:payloadOutcomeDescription,spellRowCanUpcast:spellRowCanUpcast,spellDslEval:spellDslEval,spellDslExpand:spellDslExpand,spellDslControl:spellDslControl,spellDslApplyRuntime:spellDslApplyRuntime,spellDslCastQuery:spellDslCastQuery,spellPrefersNativeCard:spellPrefersNativeCard,isExactSelfRange:isExactSelfRange,sourceTokenMatchesActor:sourceTokenMatchesActor,rememberPhysicalSourceToken:rememberPhysicalSourceToken,rememberedPhysicalSourceToken:rememberedPhysicalSourceToken,sourceAttackModifier:sourceAttackModifier,rangeConcentrationSpec:rangeConcentrationSpec,duplicatePersistentTurnPhase:duplicatePersistentTurnPhase,effectType:effectType,fields:fields,normalizeUserText:normalizeUserText,centeredAreaDirective:centeredAreaDirective,centeredAreaContains:centeredAreaContains,centeredAreaCheapMaybe:centeredAreaCheapMaybe,centeredAreaTargetIds:centeredAreaTargetIds,stripCenteredAreaDirective:stripCenteredAreaDirective,descriptionSaveDirective:descriptionSaveDirective,stripDescriptionSaveDirective:stripDescriptionSaveDirective,materializeMultiLiteralEffects:materializeMultiLiteralEffects,decodeTargetRef:decodeTargetRef,unresolvedTargetRef:unresolvedTargetRef,partyPageId:partyPageId,isCombatToken:isCombatToken,effectComponentIndexes:effectComponentIndexes,damageTypesFromText:damageTypesFromText,conditionTypesFromText:conditionTypesFromText,typedDamage:typedDamage,npcSheetDefenses:npcSheetDefenses,areaDamageDefense:areaDamageDefense,areaRollExpression:areaRollExpression,effectModifiersForToken:effectModifiersForToken,rollEffectModifierRows:rollEffectModifierRows,targetAcModifier:targetAcModifier,targetSaveModifier:targetSaveModifier,combinedAttackModifier:combinedAttackModifier,combineSaveModes:combineSaveModes,saveNatural:saveNatural,saveCritical:saveCritical,saveSucceeded:saveSucceeded,saveDamageMultiplier:saveDamageMultiplier,saveOutcomeDamageMode:saveOutcomeDamageMode,applyOutgoingDamageModifiers:applyOutgoingDamageModifiers,spellRows:spellRows,spellByName:spellByName,spellByAttackRowId:spellByAttackRowId,spellByNativeAttackRow:spellByNativeAttackRow,patchLinkedSpellAttack:patchLinkedSpellAttack,hydrateLinkedSpellAttackRow:hydrateLinkedSpellAttackRow,spellMechanical:spellMechanical,spellDefinitionMechanical:spellDefinitionMechanical,npcSpellMetaForFields:npcSpellMetaForFields,resolveSpellLevels:resolveSpellLevels,spellLevelValue:spellLevelValue,spellLevelTest:spellLevelTest,forcedMovementList:forcedMovementList,forcedMovementPlan:forcedMovementPlan,forcedMovementDirectives:forcedMovementDirectives,forcedMovementSource:forcedMovementSource,secondaryAreaConfig:secondaryAreaConfig,hiddenSecondaryTargetIds:hiddenSecondaryTargetIds,parseAttackRangeSpec:parseAttackRangeSpec,resolveAttackRangeText:resolveAttackRangeText,attackRangeRule:attackRangeRule,combatRangeFeet:combatRangeFeet},area:{snapshot:persistentAreaSnapshot,trigger:persistentAreaTrigger,prepareMovement:persistentAreaMovementRule,triggerMovement:persistentAreaMovementTrigger},periodic:{trigger:periodicEffectTrigger},movement:{undo:movementUndo,redo:movementRedo,pendingCount:movementPendingCount,isCancelled:function(txn){return !!cancelledMovementTransactions[String(txn||'')];}},multi:{
+    return {version:VERSION,grants:{add:grantLibrarySpell,revoke:revokeGrant,list:function(){return JSON.parse(JSON.stringify(grantsDb()));}},special:{temp:function(token,amount,owner){var t={token:token,cid:token.get('represents')};commitTemp(t,2,amount,amount);AD5EffectTurns.setTempHpOwner(token.id,owner);}},syntax:AD5Syntax,combatTargets:{isTargetable:isCombatTargetCandidate,reason:combatTargetCandidateReason,insidePage:tokenCenterInsidePage},события:{сообщить:событиеAD5},phaseBridge:{effectType:effectType,complete:multiResult},damageDefense:{area:areaDamageDefense},reaction:{damage:reactionDamage},environment:{damage:environmentalDamage,cover:function(a,b){return (typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.coverBetween==='function')?AD5Environment.coverBetween(a,b):null;}},parseDistanceSpec:parseDistanceSpec,conditions:AD5Conditions,conditionRules:{has:hasCombatCondition,entry:conditionEntry,source:conditionSourceToken,sourceMatches:conditionSourceMatches,rangeFeet:combatRangeFeet,attackRule:conditionAttackRule,saveRule:conditionSaveRule,damageDefense:conditionDamageDefense,mode:conditionMode,abilityCheckRule:function(token,ability,context){try{return (typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&AD5ConditionEngine.abilityCheckRule)?AD5ConditionEngine.abilityCheckRule(token,ability,context):{autoFail:false,mode:'normal',labels:[]};}catch(ignore){return {autoFail:false,mode:'normal',labels:[]};}},canAct:function(token){try{return (typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&AD5ConditionEngine.canAct)?AD5ConditionEngine.canAct(token):{allowed:true,reasons:[]};}catch(ignore){return {allowed:true,reasons:[]};}},canReact:function(token){try{return (typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&AD5ConditionEngine.canReact)?AD5ConditionEngine.canReact(token):{allowed:true,reasons:[]};}catch(ignore){return {allowed:true,reasons:[]};}}},attackBuff:{value:AD5AttackBuff.value,set:AD5AttackBuff.set},concentration:{endEffects:concentrationEndEffects},spellLevel:{resolve:resolveSpellLevels,value:spellLevelValue,test:spellLevelTest,describe:spellLevelDescribe},dsl:{context:spellDslContext,expand:spellDslExpand,eval:spellDslEval,apply:spellDslApplyRuntime,needsCastLevel:spellDslNeedsCastLevel,targetDirective:spellDslHasTargetDirective,durationDirective:spellDslHasDurationDirective},multiResolver:{parse:multiResolverSpec},spellbook:{rows:spellRows,find:spellByName,sync:syncSpellbookCharacter,enforceOutputPolicy:enforceSpellbookOutputPolicy,enrich:enrichSpellFields,patchLinkedAttack:patchLinkedSpellAttack,hydrateLinkedAttack:hydrateLinkedSpellAttackRow,isMechanicalDefinition:spellDefinitionMechanical,desiredOutput:function(def){return spellDefinitionMechanical(def)?'ATTACK':'SPELLCARD';},prepareNativeMulti:prepareNativeMultiSpellCards},_test:{sleepExclusion:sleepExclusion,wakeManagedSleep:wakeManagedSleep,finish:finish,processMessage:processMessage,projectileNext:projectileNext,saveSpec:saveSpec,nativeMultiSpellCardMeta:nativeMultiSpellCardMeta,nativeMultiSpellCardRollcontent:nativeMultiSpellCardRollcontent,multiResolverSpec:multiResolverSpec,poolSortCandidates:poolSortCandidates,poolResolve:poolResolve,payloadAutoSaveDc:payloadAutoSaveDc,payloadPrepareBundle:payloadPrepareBundle,payloadOutcomeDescription:payloadOutcomeDescription,spellRowCanUpcast:spellRowCanUpcast,spellDslEval:spellDslEval,spellDslExpand:spellDslExpand,spellDslControl:spellDslControl,spellDslApplyRuntime:spellDslApplyRuntime,spellDslCastQuery:spellDslCastQuery,spellPrefersNativeCard:spellPrefersNativeCard,isExactSelfRange:isExactSelfRange,sourceTokenMatchesActor:sourceTokenMatchesActor,rememberPhysicalSourceToken:rememberPhysicalSourceToken,rememberedPhysicalSourceToken:rememberedPhysicalSourceToken,sourceAttackModifier:sourceAttackModifier,rangeConcentrationSpec:rangeConcentrationSpec,duplicatePersistentTurnPhase:duplicatePersistentTurnPhase,effectType:effectType,fields:fields,normalizeUserText:normalizeUserText,centeredAreaDirective:centeredAreaDirective,centeredAreaContains:centeredAreaContains,centeredAreaCheapMaybe:centeredAreaCheapMaybe,centeredAreaTargetIds:centeredAreaTargetIds,stripCenteredAreaDirective:stripCenteredAreaDirective,descriptionSaveDirective:descriptionSaveDirective,stripDescriptionSaveDirective:stripDescriptionSaveDirective,materializeMultiLiteralEffects:materializeMultiLiteralEffects,decodeTargetRef:decodeTargetRef,unresolvedTargetRef:unresolvedTargetRef,partyPageId:partyPageId,isCombatToken:isCombatToken,effectComponentIndexes:effectComponentIndexes,damageTypesFromText:damageTypesFromText,conditionTypesFromText:conditionTypesFromText,typedDamage:typedDamage,npcSheetDefenses:npcSheetDefenses,areaDamageDefense:areaDamageDefense,areaRollExpression:areaRollExpression,effectModifiersForToken:effectModifiersForToken,rollEffectModifierRows:rollEffectModifierRows,targetAcModifier:targetAcModifier,targetSaveModifier:targetSaveModifier,combinedAttackModifier:combinedAttackModifier,combineSaveModes:combineSaveModes,saveNatural:saveNatural,saveCritical:saveCritical,saveSucceeded:saveSucceeded,saveDamageMultiplier:saveDamageMultiplier,saveOutcomeDamageMode:saveOutcomeDamageMode,applyOutgoingDamageModifiers:applyOutgoingDamageModifiers,spellRows:spellRows,spellByName:spellByName,spellByAttackRowId:spellByAttackRowId,spellByNativeAttackRow:spellByNativeAttackRow,patchLinkedSpellAttack:patchLinkedSpellAttack,hydrateLinkedSpellAttackRow:hydrateLinkedSpellAttackRow,spellMechanical:spellMechanical,spellDefinitionMechanical:spellDefinitionMechanical,npcSpellMetaForFields:npcSpellMetaForFields,resolveSpellLevels:resolveSpellLevels,spellLevelValue:spellLevelValue,spellLevelTest:spellLevelTest,forcedMovementList:forcedMovementList,forcedMovementPlan:forcedMovementPlan,forcedMovementDirectives:forcedMovementDirectives,forcedMovementSource:forcedMovementSource,secondaryAreaConfig:secondaryAreaConfig,hiddenSecondaryTargetIds:hiddenSecondaryTargetIds,parseAttackRangeSpec:parseAttackRangeSpec,resolveAttackRangeText:resolveAttackRangeText,attackRangeRule:attackRangeRule,combatRangeFeet:combatRangeFeet},area:{snapshot:persistentAreaSnapshot,trigger:persistentAreaTrigger,prepareMovement:persistentAreaMovementRule,triggerMovement:persistentAreaMovementTrigger},periodic:{trigger:periodicEffectTrigger},movement:{undo:movementUndo,redo:movementRedo,pendingCount:movementPendingCount,isCancelled:function(txn){return !!cancelledMovementTransactions[String(txn||'')];}},multi:{
         get:function(id,pid){var q=multiGet(id,pid,true);return {id:q.id,name:q.name,actor:q.actor,owner:q.owner,originalOwner:q.originalOwner||q.owner,gmLocked:!!q.gmLocked,max:q.max,maxLabel:q.maxLabel,allArea:q.allArea,areaSpec:q.areaSpec,status:q.status,concentrationId:q.concentrationId||null,sourceToken:q.sourceToken||null,areaOriginToken:q.areaOriginToken||null,conditionSourceToken:q.conditionSourceToken||null,spellMeta:q.spellMeta?JSON.parse(JSON.stringify(q.spellMeta)):null,isSpell:!!q.isSpell,spellSource:String(q.spellSource||''),targetMode:String(q.targetMode||'default'),target:(q.f&&q.f.target)||'',reactionResolved:!!q.reactionResolved,description:(q.f&&q.f.description!==undefined?q.f.description:(q.f&&q.f.desc!==undefined?q.f.desc:'')),selected:q.msg.selected||[]};},
         setTargets:function(id,pid,ids,quiet){multiTargets(multiGet(id,pid,true),ids,pid,true,!!quiet);},
         setTargetMeta:function(id,pid,meta){var q=multiGet(id,pid,true),out={};meta=meta&&typeof meta==='object'?meta:{};Object.keys(meta).forEach(function(tid){var m=meta[tid];if(!m||typeof m!=='object')return;out[String(tid)]={dexAdvantage:!!m.dexAdvantage,coverLabel:String(m.coverLabel||'')};});q.areaTargetMeta=out;return true;},

@@ -3,7 +3,8 @@ if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
     log('AD5EffectTurns: duplicate module skipped; keep one installed copy.');
 } else {
 /*
-AD5 Effect Turns 1.6.17
+AD5 Effect Turns 1.6.18
+1.6.18: ПОПАДЛЕЧЕНИЕ, ПОПАДТОЛЧ (СТОЛКНОВЕНИЕ, МАКС РАЗМЕР), ПОПАДАТАКУЕТ: носитель, ПОПАДСЕБЕ, ПОПАДДОСЯГ (payloadReachFor); модификатор «повтор промаха».
 1.6.17: Warding Bond label follows the official translation («Охраняющая связь»); the old word stays an alias.
 1.6.16: modifiers «прем/пом атака …», «при движении 1d8 звук» (Booming Blade), «теряет сопр …», «урон по цели … раз в ход», «при окончании ТЕЛ15 истощение», «концентрация -1д6», «инициатива +1д8», «полёт 0», «при уроне прем атака», «переносится 60» (!ad5fx transfer); conditions «ограничен», «покрыт кислотой» / «ожог кислотой» (periodic with type), «разлом реальности» (d10 at turn start), «связь сущностей» (tetherPartners); «ПОПАД: 12 раз» counted payloads; «ПОПАДСОСЕД».
 1.6.15: a condition with a formula and an explicit damage type deals periodic damage («опутан 1д6 колющий ПРОВЕРКА СИЛ14» — Ensnaring Strike, Evard's Black Tentacles); recovery effects deal it at the end of the bearer's turn.
@@ -64,7 +65,7 @@ var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5
 // silently shadow every newer fix.
 var AD5EffectTurns = (function () {
     'use strict';
-    var VERSION='1.6.17', SCRIPT='AD5 Effect Turns';
+    var VERSION='1.6.18', SCRIPT='AD5 Effect Turns';
     var runtimeLastGroup=Object.create(null);
     var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
     var markerCacheRaw=null, markerCacheByName=Object.create(null);
@@ -377,6 +378,8 @@ var AD5EffectTurns = (function () {
         // 1.6.16: «инициатива +1д8» — added once to the bearer's Turn Tracker entry (Gift of Alacrity).
         if((m=/^инициатив\S*\s*([+-])\s*(\d*[dDдД]\d+|\d+)$/i.exec(text)))return {type:'initiative',formula:m[2].replace(/[дД]/g,'d'),sign:m[1]==='-'?-1:1,positive:m[1]!=='-',label:'Инициатива '+m[1]+m[2]};
         // 1.6.16: «при уроне прем атака» — after taking damage the bearer has advantage on its next attack (Motivational Speech).
+        // 1.6.18: «повтор промаха» — после промаха атакой носитель может повторить её против той же цели (Повтор).
+        if(/^повтор\s+промах\S*$/i.test(text))return {type:'missReplay',positive:true,label:'Повтор промаха'};
         if(/^при\s+уроне\s+прем\S*\s+атак\S*$/i.test(text))return {type:'onDamageAdv',positive:true,label:'После урона — преимущество на следующую атаку'};
         // 1.6.16: «переносится 60» — the effect can be moved to another creature within N ft (Fizban's Platinum Shield).
         if((m=/^переносит\S*(?:\s+(\d{1,3}))?$/i.exec(text)))return {type:'transferable',range:Number(m[1]||60),positive:true,label:'Переносится ('+(m[1]||60)+' фт)'};
@@ -1034,7 +1037,7 @@ var AD5EffectTurns = (function () {
             .replace(/\r/g,'\n').split(/\n+/).map(function(x){return String(x||'').trim();}).filter(Boolean);
     }
     function строкаHitPayload(line){
-        return /^\s*(?:ПОПАД|ПОПАДУСЛ|ПОПАДЦЕЛЬ|ПОПАДУРОН|ПОПАДСПАС|ПОПАДПРВ|ПОПАДУСП|ПОПАДЭФФ|ПОПАДКОН|ПОПАДОБЛ|ПОПАДОБЛЦЕЛЬ|ПОПАДОБЛУРОН|ПОПАДОБЛСПАС|ПОПАДОБЛПРВ|ПОПАДОБЛУСП|ПОПАДОБЛИСКЛ|ПОПАДЗАМЕНА|ПОПАДПРОМАХ|ПОПАДСОСЕД)\s*[:：—–-]/i.test(String(line||''));
+        return /^\s*(?:ПОПАД|ПОПАДУСЛ|ПОПАДЦЕЛЬ|ПОПАДУРОН|ПОПАДСПАС|ПОПАДПРВ|ПОПАДУСП|ПОПАДЭФФ|ПОПАДКОН|ПОПАДОБЛ|ПОПАДОБЛЦЕЛЬ|ПОПАДОБЛУРОН|ПОПАДОБЛСПАС|ПОПАДОБЛПРВ|ПОПАДОБЛУСП|ПОПАДОБЛИСКЛ|ПОПАДЗАМЕНА|ПОПАДПРОМАХ|ПОПАДСОСЕД|ПОПАДЛЕЧЕНИЕ|ПОПАДТОЛЧ|ПОПАДАТАКУЕТ|ПОПАДСЕБЕ|ПОПАДДОСЯГ)\s*[:：—–-]/i.test(String(line||''));
     }
     function убратьУсловныеСтроки(описание){
         return условныеСтроки(описание).filter(function(x){return !/^\s*(?:ПОКА|СНЯТЬ|РАСХ|ДО|УСЛЭФ|УСЛ\s*ЭФФ|УСЛОВНЫЙ\s+ЭФФЕКТ)\s*[:：—–-]/i.test(x)&&!строкаHitPayload(x);}).join('\n');
@@ -1167,7 +1170,7 @@ var AD5EffectTurns = (function () {
     function разобратьHitPayloads(описание){
         var out=[],cur=null,errors=[];
         условныеСтроки(описание).forEach(function(line){
-            var m=/^\s*(ПОПАД|ПОПАДУСЛ|ПОПАДЦЕЛЬ|ПОПАДУРОН|ПОПАДСПАС|ПОПАДПРВ|ПОПАДУСП|ПОПАДЭФФ|ПОПАДКОН|ПОПАДОБЛ|ПОПАДОБЛЦЕЛЬ|ПОПАДОБЛУРОН|ПОПАДОБЛСПАС|ПОПАДОБЛПРВ|ПОПАДОБЛУСП|ПОПАДОБЛИСКЛ|ПОПАДЗАМЕНА|ПОПАДПРОМАХ|ПОПАДСОСЕД)\s*[:：—–-]\s*(.*?)\s*$/i.exec(line);if(!m)return;
+            var m=/^\s*(ПОПАД|ПОПАДУСЛ|ПОПАДЦЕЛЬ|ПОПАДУРОН|ПОПАДСПАС|ПОПАДПРВ|ПОПАДУСП|ПОПАДЭФФ|ПОПАДКОН|ПОПАДОБЛ|ПОПАДОБЛЦЕЛЬ|ПОПАДОБЛУРОН|ПОПАДОБЛСПАС|ПОПАДОБЛПРВ|ПОПАДОБЛУСП|ПОПАДОБЛИСКЛ|ПОПАДЗАМЕНА|ПОПАДПРОМАХ|ПОПАДСОСЕД|ПОПАДЛЕЧЕНИЕ|ПОПАДТОЛЧ|ПОПАДАТАКУЕТ|ПОПАДСЕБЕ|ПОПАДДОСЯГ)\s*[:：—–-]\s*(.*?)\s*$/i.exec(line);if(!m)return;
             var key=matchNorm(m[1]),body=String(m[2]||'').trim();
             if(key==='попад'){
                 var mode=payloadMode(body);if(!mode){errors.push(line);return;}
@@ -1195,9 +1198,21 @@ var AD5EffectTurns = (function () {
             // 1.6.16: «ПОПАДСОСЕД: 5 фт, МОД огонь» — after the hit the attacker picks another creature within N ft of
             // the target; it takes that damage (Green-Flame Blade). МОД = spellcasting ability modifier.
             if(key==='попадсосед'){var nm=/^\s*(\d{1,3})\s*(?:фт|ft)?\.?\s*[,;]\s*(.+?)\s+(\S.*)$/i.exec(body);if(!nm){errors.push(line);return;}cur.neighbor={range:Number(nm[1]),formula:nm[2].trim(),type:nm[3].trim()};return;}
+            // 1.6.18: «ПОПАДЛЕЧЕНИЕ: 1d4» — атакующий восстанавливает хиты (Правосудие света);
+            // «ПОПАДТОЛЧ: 30, СТОЛКНОВЕНИЕ 2d8 дробящий, МАКС РАЗМЕР Большой» — толчок цели со столкновением
+            // (Отталкивающая ладонь); «ПОПАДАТАКУЕТ: носитель» — срабатывает на атаки носителя эффекта, а не
+            // заклинателя (Стихийная кара на чужом оружии); «ПОПАДСЕБЕ: кд 1 1» — эффект на атакующего;
+            // «ПОПАДДОСЯГ: 20» — рукопашная атака оружием достаёт на 20 фт (Призрачный разрез).
+            if(key==='попадлечение'){if(!/\d/.test(body)){errors.push(line);return;}cur.selfHeal=body.replace(/[дД]/g,'d');return;}
+            if(key==='попадтолч'){var pm=/^\s*(\d{1,3})/.exec(body);if(!pm){errors.push(line);return;}
+                var cm=/столкновени\S*\s+([0-9dDдД+\-*()]+)\s+([^,;]+)/i.exec(body),sm=/макс\S*\s+размер\S*\s+(\S+)/i.exec(body);
+                cur.push={feet:Number(pm[1]),collision:cm?{formula:cm[1].replace(/[дД]/g,'d'),type:cm[2].trim()}:null,maxSize:sm?sm[1]:''};return;}
+            if(key==='попадатакует'){cur.attacker=/носител|владел|bearer/i.test(matchNorm(body))?'bearer':'source';return;}
+            if(key==='попадсебе'){cur.selfEffect=cur.selfEffect?cur.selfEffect+', '+body:body;return;}
+            if(key==='попаддосяг'){var rm=/(\d{1,3})/.exec(body);if(!rm){errors.push(line);return;}cur.reach=Number(rm[1]);return;}
             if(key==='попадоблискл'){cur.area=cur.area||{range:'',target:'каждое существо',damage:[],save:null,failure:'',success:'',excludePrimary:false};cur.area.excludePrimary=payloadAreaExclude(body);return;}
         });
-        out.forEach(function(p){if(!p.damage.length&&!p.effect&&!p.save&&!p.area&&!p.neighbor)errors.push('ПОПАД #'+p.index+': нет УРОН/ЭФФ/СПАС/ОБЛ');if(p.area&&!p.area.range)errors.push('ПОПАД #'+p.index+': ПОПАДОБЛ без области');});
+        out.forEach(function(p){if(!p.damage.length&&!p.effect&&!p.save&&!p.area&&!p.neighbor&&!p.selfHeal&&!p.push&&!p.selfEffect&&!p.reach)errors.push('ПОПАД #'+p.index+': нет УРОН/ЭФФ/СПАС/ОБЛ');if(p.area&&!p.area.range)errors.push('ПОПАД #'+p.index+': ПОПАДОБЛ без области');});
         if(errors.length)throw new Error('Weapon-hit Payload: не распознано: '+errors.join(' | '));
         return out;
     }
@@ -1428,14 +1443,28 @@ var AD5EffectTurns = (function () {
         var out=[],seen={};if(!sourceToken||!targetToken)return out;var db=root().tokens;
         Object.keys(db).forEach(function(ownerTokenId){var owner=getObj('graphic',ownerTokenId),rec=db[ownerTokenId];if(!owner||!rec||!rec.effects)return;
             Object.keys(rec.effects).forEach(function(key){var e=rec.effects[key],p=e&&e.условный;if(!e||!p||!Array.isArray(p.попадания)||!p.попадания.length)return;
-                if(String(e.source&&e.source.sourceToken||'')!==String(sourceToken.id))return;if(!профильПокаАктивен(e,owner))return;
-                p.попадания.forEach(function(payload){if(!payloadУсловиеСовпало(payload,attackInfo)||!payloadЦельСовпала(payload,e,ownerTokenId,sourceToken,targetToken))return;
+                if(!профильПокаАктивен(e,owner))return;
+                var byCaster=String(e.source&&e.source.sourceToken||'')===String(sourceToken.id),byBearer=String(ownerTokenId)===String(sourceToken.id);
+                p.попадания.forEach(function(payload){
+                    // 1.6.18: «ПОПАДАТАКУЕТ: носитель» — эффект на оружии носителя: срабатывает на его атаки по любой цели.
+                    if(payload.attacker==='bearer'){if(!byBearer||!payloadУсловиеСовпало(payload,attackInfo))return;}
+                    else if(!byCaster||!payloadУсловиеСовпало(payload,attackInfo)||!payloadЦельСовпала(payload,e,ownerTokenId,sourceToken,targetToken))return;
                     var identity=String(e.source&&e.source.castId||e.source&&e.source.actionName||key)+'|'+String(payload.index||0)+'|'+String(ownerTokenId);
                     if(seen[identity])return;seen[identity]=true;
                     out.push({tokenId:String(ownerTokenId),effectKey:String(key),identity:identity,payload:clone(payload),source:clone(e.source||{}),label:String(e.label||e.source&&e.source.actionName||'Weapon-hit Payload')});
                 });
             });
         });return out;
+    }
+    // 1.6.18: наибольшая досягаемость «ПОПАДДОСЯГ» у готовых эффектов атакующего (Призрачный разрез).
+    function payloadReachFor(sourceToken){
+        var best=0,db=root().tokens;if(!sourceToken)return 0;
+        Object.keys(db).forEach(function(ownerTokenId){var owner=getObj('graphic',ownerTokenId),rec=db[ownerTokenId];if(!owner||!rec||!rec.effects)return;
+            Object.keys(rec.effects).forEach(function(key){var e=rec.effects[key],p=e&&e.условный;if(!e||!p||!Array.isArray(p.попадания))return;
+                var mine=String(e.source&&e.source.sourceToken||'')===String(sourceToken.id)||String(ownerTokenId)===String(sourceToken.id);if(!mine||!профильПокаАктивен(e,owner))return;
+                p.попадания.forEach(function(payload){if(Number(payload.reach)>best)best=Number(payload.reach);});
+            });
+        });return best;
     }
     function профильПослеРасходаPayload(profile,index){var p=clone(profile),before=(p.попадания||[]).length;p.попадания=(p.попадания||[]).filter(function(x){return Number(x.index)!==Number(index);});return {profile:p,removed:before-p.попадания.length};}
     function профильПустПослеPayload(p){return !p||(!(p.снять||[]).length&&!(p.расход||[]).length&&!p.до&&!(p.эффекты||[]).length&&!(p.попадания||[]).length);}
@@ -2909,7 +2938,7 @@ var AD5EffectTurns = (function () {
         conditionalProfile:условныйПрофиль,
         conditionalAttackRule:условноеПравилоАтаки,rollUsed:rollUsed,damageSaveCheck:damageSaveCheck,teleportFor:teleportFor,consumeTeleport:consumeTeleport,mirrorImageAttack:mirrorImageAttack,
         hitPayloadProfiles:разобратьHitPayloads,
-        hitPayloadsForAttack:hitPayloadsForAttack,
+        hitPayloadsForAttack:hitPayloadsForAttack,payloadReachFor:payloadReachFor,
         commitHitPayloads:commitHitPayloads,
         hasPayloadSustain:hasPayloadSustain,
         evaluateConditional:проверитьУсловныеСвязи,
@@ -2929,7 +2958,7 @@ var AD5EffectTurns = (function () {
         conditionKey:conditionKey,
         remapScope:function(oldId,newId){Object.keys(root().tokens).forEach(function(tid){var rec=root().tokens[tid];Object.keys(rec.effects||{}).forEach(function(k){var e=rec.effects[k];if(e.source&&e.source.phaseScope===oldId)e.source.phaseScope=newId;});});},
         polarity:polarity,
-        _test:{recoveryMode:recoveryMode,releaseRestrained:releaseRestrained,syncRestrainedAction:syncRestrainedAction,parseEffect:parseEffect,modifierSpec:modifierSpec,recognizesDirect:recognizesDirect,conditionalProfile:условныйПрофиль,hitPayloadProfiles:разобратьHitPayloads,hitPayloadsForAttack:hitPayloadsForAttack,commitHitPayloads:commitHitPayloads,conditionalAttackRule:условноеПравилоАтаки,handleConditionalEvent:обработатьУсловноеСобытие,conditionalTurnGroupEvent:условноеСобытиеГруппы,whileCondition:условиеПокаИстинно,rollModifierFormula:rollModifierFormula,rollModifiers:rollModifierRows,passivePlan:passivePlan,recoverySpec:recoverySpec,recoverySaveBonus:recoverySaveBonus,beginGroup:beginGroup,endGroup:endGroup,playerRecovery:playerRecovery,slowedSpec:slowedSpec,sanctuarySpec:sanctuarySpec,sanctuaryForToken:sanctuaryForToken,descriptionHasDebuff:descriptionHasDebuff,markerValues:markerValues,baseWalkingSpeed:baseWalkingSpeed,customMarkerTag:customMarkerTag,modifierSummaryState:modifierSummaryState,modifierSlot:modifierSlot,activeModifierEntries:activeModifierEntries,migrateModifierStacking:migrateModifierStacking,syncMarkers:syncMarkers}
+        _test:{recoveryMode:recoveryMode,releaseRestrained:releaseRestrained,syncRestrainedAction:syncRestrainedAction,parseEffect:parseEffect,modifierSpec:modifierSpec,recognizesDirect:recognizesDirect,conditionalProfile:условныйПрофиль,hitPayloadProfiles:разобратьHitPayloads,hitPayloadsForAttack:hitPayloadsForAttack,payloadReachFor:payloadReachFor,commitHitPayloads:commitHitPayloads,conditionalAttackRule:условноеПравилоАтаки,handleConditionalEvent:обработатьУсловноеСобытие,conditionalTurnGroupEvent:условноеСобытиеГруппы,whileCondition:условиеПокаИстинно,rollModifierFormula:rollModifierFormula,rollModifiers:rollModifierRows,passivePlan:passivePlan,recoverySpec:recoverySpec,recoverySaveBonus:recoverySaveBonus,beginGroup:beginGroup,endGroup:endGroup,playerRecovery:playerRecovery,slowedSpec:slowedSpec,sanctuarySpec:sanctuarySpec,sanctuaryForToken:sanctuaryForToken,descriptionHasDebuff:descriptionHasDebuff,markerValues:markerValues,baseWalkingSpeed:baseWalkingSpeed,customMarkerTag:customMarkerTag,modifierSummaryState:modifierSummaryState,modifierSlot:modifierSlot,activeModifierEntries:activeModifierEntries,migrateModifierStacking:migrateModifierStacking,syncMarkers:syncMarkers}
     };
 }());
 }

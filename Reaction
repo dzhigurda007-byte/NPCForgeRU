@@ -3,7 +3,8 @@ if(typeof AD5Reactions!=='undefined'&&AD5Reactions) {
     log('AD5Reactions: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Reactions v1.6.12 — Generic Resource Binding / Countershot / Sheet First
+ * AD5 Reactions v1.6.13 — Generic Resource Binding / Countershot / Sheet First
+ * 1.6.13: РЕЗ «КОПИЯ ЗАКЛИНАНИЯ» (Око мимикрии) — заклинание источника в лист реагирующего на 10 ходов, 1 использование.
  * 1.6.12: РЕЗ «СОПРОТИВЛЕНИЕ ТИПУ кислота/холод/…» — half of the triggering damage of that type, then
  *         resistance and +1d6 on the next melee hit (Absorb Elements); РЕЗ «СДВИГ ИСТОЧНИКА» — the attack or
  *         spell fails and its source is banished until the end of its next turn (Temporal Shunt).
@@ -43,7 +44,7 @@ if(typeof AD5Reactions!=='undefined'&&AD5Reactions) {
 var AD5Reactions = (function(){
     'use strict';
 
-    var VERSION='1.6.12', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
+    var VERSION='1.6.13', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
     var opportunityPending=Object.create(null);
     var runtimePending=Object.create(null), seq=0, recentMove=Object.create(null), lastAreaCheck=null, movementHookRegistered=false, featherCollecting=Object.create(null), reactionRowCache=Object.create(null);
     // 1.4.2 Fast Fall: cache Feather Fall card discovery per character.
@@ -279,6 +280,8 @@ var AD5Reactions = (function(){
         m=/(?:сопротивлени\S*|сопр\S*)\s+типу\s*(.*)$/i.exec(source);
         if(m){var rtypes=String(m[1]||'').split(/\s*[\/,]\s*/).map(function(x){var ty=null;try{ty=AD5._test.effectType(x);}catch(ignoreType){}return ty;}).filter(Boolean);return {type:'resist_trigger',types:rtypes,label:'Сопротивление типу урона'};}
         if(/сдвиг\s+источника|изгна\S*\s+источник/.test(v))return {type:'shunt',label:'Сдвиг источника'};
+        // 1.6.13: «КОПИЯ ЗАКЛИНАНИЯ» (Око мимикрии) — заклинание источника на 10 ходов попадает в лист реагирующего.
+        if(/копи\S*\s+заклинан|мимикри/.test(v))return {type:'copy_spell',label:'Копия заклинания'};
         if(/урон\s*0|damage\s*0/.test(v))return {type:'damage_zero',label:'Урон 0'};
         m=/(?:урон|damage)\s*-\s*([^,;]+)/i.exec(source);if(m){var formula=cleanFormula(m[1]);if(/^[0-9d+*\/().-]+$/i.test(formula)&&/\d/.test(formula))return {type:'damage_reduce',formula:formula,label:'Урон -'+formula.replace(/d/g,'д')};}
         if(/отмен(?:ить|а).*заклин|counterspell|cancel\s*spell/.test(v))return {type:'cancel_spell',label:'Отменить заклинание'};
@@ -645,6 +648,7 @@ var AD5Reactions = (function(){
                 if(ev.type==='damage'&&['damage_zero','damage_reduce','resist_trigger'].indexOf(result.type)>=0)return;
                 if(result.type==='resist_trigger'&&!(ev.damageByType||[]).some(function(x){return Number(x.amount)>0&&(!result.types||!result.types.length||result.types.indexOf(x.type)>=0);}))return;
                 if(result.type==='shunt'&&['hit','spell_cast','spell'].indexOf(ev.type)<0)return;
+                if(result.type==='copy_spell'&&ev.type!=='spell_cast')return;
                 // AC reactions are personal unless explicitly authored otherwise.
                 if((r.effect==='shield'||result.type==='ac_bonus'||result.type==='ac_bonus_pb')&&(ev.type!=='hit'||!ev.targetTokenId||t.id!==String(ev.targetTokenId)))return;
                 if(src&&t.id===src.id&&r.subject!=='source'&&ev.type!=='damage')return;
@@ -1902,6 +1906,33 @@ var AD5Reactions = (function(){
         });return true;
     }
 
+    // 1.6.13: Око мимикрии. Враждебный заклинатель проходит спасбросок Интеллекта против СЛ заклинаний
+    // реагирующего; при провале (или если заклинатель не враждебен) заклинание из библиотеки AD5 кладётся в лист
+    // реагирующего на 10 ходов и на одно использование (ячейкой своего круга), затем убирается.
+    function sheetNumber(cid,names){for(var i=0;i<names.length;i++){var v=attrVal(cid,names[i]);if(v!==''&&Number.isFinite(Number(v.replace(/^\+/,''))))return Number(v.replace(/^\+/,''));}return null;}
+    function copySpellReaction(ev,r,token){
+        var src=getObj('graphic',String(ev.sourceTokenId||'')),spellName=String(ev.spellName||ev.actionName||'').trim();
+        var say=function(t){whisperOwners(token,'<b>'+esc(r.name||'Око мимикрии')+'</b>: '+t);sendChat(SCRIPT,'/w gm <b>'+esc(r.name||'Око мимикрии')+'</b> ('+esc(token.get('name')||'')+'): '+t,null,{noarchive:true});};
+        if(!spellName){say('не удалось определить заклинание.');return;}
+        if(src&&hostileTo(token,src)){
+            var scid=String(src.get('represents')||''),rcid=String(token.get('represents')||'');
+            var bonus=sheetNumber(scid,['npc_int_save','intelligence_save_bonus']);
+            if(bonus===null){var sc=sheetNumber(scid,['intelligence']);bonus=sheetNumber(scid,['intelligence_mod']);if(bonus===null)bonus=sc===null?0:Math.floor((sc-10)/2);}
+            var dc=sheetNumber(rcid,['spell_save_dc','npc_spelldc'])||10,die=randomInteger(20),total=die+bonus,ok=die!==1&&(die===20||total>=dc);
+            say(esc(src.get('name')||'Заклинатель')+' — спасбросок Интеллекта: '+die+(bonus>=0?'+':'')+bonus+' = <b>'+total+'</b> против СЛ '+dc+' — <b>'+(ok?'успех':'провал')+'</b>.');
+            if(ok){say('заклинание не скопировано, реакция потрачена.');return;}
+        }
+        var lib=null;
+        try{if(typeof AD5SpellLibrary!=='undefined'&&AD5SpellLibrary&&typeof AD5SpellLibrary.search==='function'){var want=norm(spellName);(AD5SpellLibrary.search(spellName)||[]).some(function(s){var names=[s.name].concat(s.aliases||[]);if(names.some(function(n){return norm(n)===want;})){lib=s;return true;}return false;});}}catch(ignoreSearch){}
+        if(!lib){say('«'+esc(spellName)+'» нет в библиотеке AD5 — добавьте заклинание в лист вручную на 1 минуту.');return;}
+        if(typeof AD5==='undefined'||!AD5||!AD5.grants||typeof AD5.grants.add!=='function'){say('нужен AutoDamage 4.3.162 или новее.');return;}
+        var tid=token.id,libId=lib.id,label=(r.name||'Око мимикрии')+': '+lib.name;
+        setTimeout(function(){
+            try{var res=AD5.grants.add(tid,libId,{charges:1,rounds:10,name:label,sourceToken:tid});
+                say(res==='exists'?'«'+esc(lib.name)+'» уже есть в листе.':'«'+esc(lib.name)+'» ('+(Number(lib.level)?lib.level+' круг':'заговор')+') добавлено в лист на 10 ходов, одно использование ячейкой своего круга.');}
+            catch(e){say(esc(e.message||e));}
+        },300);
+    }
     function applyGenericReactionResult(ev,cand,token){
         var r=cand&&cand.reaction||{},result=r.result||reactionResultSpec('',r.name,r.description,r.effect),type=result.type||'execute';
         if(type==='ac_bonus_pb'){var pb=proficiencyBonusForToken(token)*(Number(result.sign)||1);activateShield(token,r,pb);return {cancelled:false,reactionUsed:true,reactionName:r.name,reactorTokenId:token.id,acChanged:true,acBonus:pb};}
@@ -1923,6 +1954,7 @@ var AD5Reactions = (function(){
             if(ev.type==='hit')return {cancelled:false,reactionUsed:true,reactionName:r.name,reactorTokenId:token.id,cancelledHit:true};
             return {cancelled:true,reactionUsed:true,reactionName:r.name,reactorTokenId:token.id,reactorName:token.get('name')||token.id};
         }
+        if(type==='copy_spell'){copySpellReaction(ev,r,token);return {cancelled:false,reactionUsed:true,reactionName:r.name,reactorTokenId:token.id};}
         if(type==='cancel_spell')return {cancelled:true,reactionUsed:true,reactionName:r.name,reactorTokenId:token.id,reactorName:token.get('name')||token.id};
         if(type==='reflect_spell')return {cancelled:false,reflected:true,reactionUsed:true,reactionName:r.name,reactorTokenId:token.id,reflectorTokenId:token.id,reactorName:token.get('name')||token.id};
         executeReaction(ev,cand);return {cancelled:false,reactionUsed:true,reactionName:r.name,reactorTokenId:token.id,executed:true};
