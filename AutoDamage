@@ -72,7 +72,7 @@ hp листа используется однократно как началь�
 Поле «Описание» способности является источником исходов спасброска. Элементы разделяются запятыми: ПРВ: ... для провала, УСП: ... для успеха. Таймеры и маркеры ведёт отдельный AD5 Effect Turns. Если УСП отсутствует, успешный спас автоматически означает 0 урона и 0 эффектов.
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
-4.3.163: классовые механики — атрибут листа ad5_features: КРИТ 19/18, КРИТ КОСТИ, ПЕРЕБРОС УРОНА, СКРЫТАЯ АТАКА, РАЗ В ХОД, УРОН ЗАКЛИНАНИЙ/ШКОЛЫ, ЛУЧ, ЛЕЧЕНИЕ ЗАКЛИНАНИЙ; ПОСЛЕ ПОПАДАНИЯ — кнопки с расходом ячейки или ресурса (!ad5 posthit).
+4.3.163: классовые механики — атрибут листа ad5_features: КРИТ 19/18, КРИТ КОСТИ, ПЕРЕБРОС УРОНА, СКРЫТАЯ АТАКА, РАЗ В ХОД, УРОН ЗАКЛИНАНИЙ/ШКОЛЫ, ЛУЧ, ЛЕЧЕНИЕ ЗАКЛИНАНИЙ; ПОСЛЕ ПОПАДАНИЯ — кнопки с расходом ячейки или ресурса (!ad5 posthit). ЯРОСТЬ, НЕУДЕРЖИМАЯ ЯРОСТЬ (!ad5 relentless-reset), ПРИ УБИЙСТВЕ [ЗАКЛИНАНИЕМ]; метамагия (!ad5 meta: Усиленное, Продлённое, Удвоенное, Осторожное), ФОРМИРОВАНИЕ ЗАКЛИНАНИЙ; спасбросок может быть автоуспешным. Описание — docs/class-features.md.
 4.3.162: homebrew dnd.su — ПОПАДЛЕЧЕНИЕ/ПОПАДТОЛЧ со столкновением/ПОПАДСЕБЕ/ПОПАДДОСЯГ; условия «АТАКОВАН ПРОШЛЫЙ ХОД», «СХВАЧЕН ИСТОЧНИКОМ», «ДЕРЖИТ ИСТОЧНИК», «отпускает источник»; «УРОН ЕСЛИ …: Урон2» без «вместо» — добавочный; повтор промаха (!ad5 replay); ВРХП ПРОПУСКАЕТ / ВРХП СОПР; grants.add для Ока мимикрии; ДАРУЕТ не снимает строку, которая была в листе раньше.
 4.3.161: «N фт цилиндр» без высоты распознаётся как область (Лунный луч). МУВ (Шипы) — каждые 5 фт бросаются отдельно; Концентрация получает список частей урона и проверяет каждую отдельно.
 4.3.160: Spells with «ВКР …» (an effect centred on the caster: Sword Burst, Thunderclap, Word of Radiance, Arms of Hadar) never open the Roll20 target picker — like exact «На себя» ranges, the caster's token is used.
@@ -4358,6 +4358,7 @@ var AD5 = (function () {
         if(contextRule.advantage.length)finalSaveMode=combineSaveModes(finalSaveMode,'adv');
         try{var filterSave=creatureFilterPlan(description,token,f&&f.ad5filtersource);if(filterSave.saveMode)finalSaveMode=combineSaveModes(finalSaveMode,filterSave.saveMode);if(filterSave.autoFail||(f&&(f.ad5damagetotemp||f.ad5autofail)))custom.condition={autoFail:true,mode:'normal',labels:['без спасброска']};}catch(ignoreFilterSave){}
         if(contextRule.disadvantage.length)finalSaveMode=combineSaveModes(finalSaveMode,'dis');
+        try{var metaMode=metaSaveAdjust(f,token,pendingContext,custom);if(metaMode)finalSaveMode=combineSaveModes(finalSaveMode,metaMode);}catch(ignoreMeta){}
         var successEffect=saveOutcomeDamageMode(description,'success',f.savedesc||f.ad5spellsavesuccess||'');
         if(contextRule.evasion&&successEffect==='half')successEffect='none';
         return {ability:ability,dc:number(roll(msg,f.savedc,'СЛ спасброска',true).total,'СЛ спасброска'),
@@ -4395,6 +4396,7 @@ var AD5 = (function () {
     function saveCritical(result){var d=saveNatural(result);return d===1?'failure':(d===20?'success':'');}
     function saveSucceeded(result,spec){
         if(!result||result.autoFailSkull||result.autoFailCondition)return false;
+        if(result.autoSuccess)return true;
         var crit=saveCritical(result);if(crit==='failure')return false;if(crit==='success')return true;
         spec=spec||(result&&result.spec)||{};return Number(result.total)>=Number(spec.dc);
     }
@@ -4444,6 +4446,7 @@ var AD5 = (function () {
     }
     function autoNPCSave(spec){
         if(spec&&spec.conditionRule&&spec.conditionRule.autoFail)return failedSaveByCondition(spec);
+        if(spec&&spec.conditionRule&&spec.conditionRule.autoSuccess)return succeededSaveByMeta(spec);
         var mode=spec.mode||'normal',d1=typeof randomInteger==='function'?randomInteger(20):(Math.floor(Math.random()*20)+1),d2=null,die=d1;
         if(mode!=='normal'){d2=typeof randomInteger==='function'?randomInteger(20):(Math.floor(Math.random()*20)+1);die=mode==='adv'?Math.max(d1,d2):Math.min(d1,d2);}
         var dynamic=rollEffectModifierRows(spec.modifierRolls||[]),dynamicBonus=Number(dynamic.total)||0;
@@ -5660,6 +5663,7 @@ var AD5 = (function () {
             delete pending[msg.playerid];
             return;
         }
+        try{if(sculptSkip(f,p,t)){sendChat('шепот звезд',esc(p.name||attackName(f)||'Эффект')+' → '+esc(t.token.get('name')||'цель')+': не задет (формирование заклинаний)');if(p.batch)multiResult(p.batch,t.token.id,'формирование заклинаний');delete pending[msg.playerid];return;}}catch(ignoreSculpt){}
         if(creatureFilter.stripped!==String(f.description!==undefined?f.description:(f.desc||''))||creatureFilter.items.length){
             var filteredDesc=creatureFilter.stripped;
             if(creatureFilter.items.length)filteredDesc+=(active(f,'save')?'\nПРВ: ':'\n')+creatureFilter.items.join(', ');
@@ -5858,6 +5862,7 @@ var AD5 = (function () {
                 var requestedSpec=saveSpec(msg,f,t.cid,t.token,p);
                 if(hasTokenMarker(t.token,'skull'))saveResult=failedSaveBySkull(requestedSpec);
                 else if(requestedSpec.conditionRule&&requestedSpec.conditionRule.autoFail)saveResult=failedSaveByCondition(requestedSpec);
+                else if(requestedSpec.conditionRule&&requestedSpec.conditionRule.autoSuccess)saveResult=succeededSaveByMeta(requestedSpec);
                 else if(isUncontrolledNPC(t.cid)){saveResult=autoNPCSave(requestedSpec);autoNpcSave=true;p.autoNpcSave=true;}
                 else{if(areaState)areaState.savePending=true;requestSave(msg,f,p,requestedSpec);return;}
                 if(areaState)areaState.saveResult=saveResult;
@@ -6134,6 +6139,7 @@ var AD5 = (function () {
         // 4.3.144: death and dying (Condition Engine) — Death Ward adjusts before HP is written.
         var hpDamageTaken=Math.max(0,damageAmount-absorbed),deathEngine=(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.adjustHp==='function')?AD5ConditionEngine:null;
         if(deathEngine&&!transformDamagePlan){try{var hpAdj=deathEngine.adjustHp(t.token,{before:plan.value,next:nextHp,damage:hpDamageTaken,max:Number(plan.max)});if(hpAdj&&Number.isFinite(Number(hpAdj.next)))nextHp=Number(hpAdj.next);}catch(adjErr){record('Death Ward: '+adjErr.message);}}
+        if(nextHp<=0&&plan.value>0&&!transformDamagePlan){try{if(relentlessRage(t.token,t.cid,report))nextHp=1;}catch(relErr){record('Неудержимая ярость: '+(relErr.message||relErr));}}
         var nextTemp=afterDamageTemp,nextTempMax=afterDamageTempMax,temporaryApplied=hasTemporary&&saveMultiplier!==0;if(temporaryApplied){nextTemp=Math.max(0,temporaryAmount);nextTempMax=nextTemp;}
         var attackPoolBefore=attackBarValue(t.token),attackPoolAfter=attackPoolBefore,attackApplied=hasAttackBonus&&saveMultiplier!==0;if(attackApplied){attackPoolAfter=Math.max(0,attackAmount);if(!Number.isSafeInteger(attackPoolAfter)||Math.abs(attackPoolAfter)>1000000)throw new Error('Бафф Атака: итоговый бонус выходит за допустимый диапазон.');}
         var specialContext={source:p.sourceToken,target:t.token.id,name:p.name,owner:msg.playerid,concentration:p.concentrationId,description:specialDescription,save:active(f,'save'),success:!!success,secondary:p.payloadSecondary,temporary:temporaryApplied,temporaryAmount:temporaryAmount};
@@ -6155,7 +6161,9 @@ var AD5 = (function () {
         var key=transactionKey,entry={tokenId:t.token.id,cid:t.cid,tempBar:temp.bar,sheetHpId:plan.sheetHpId||null,resistance:resistance,wounds:woundPlan,markerChanges:markerChanges,max:plan.max,beforeHp:plan.value,afterHp:nextHp,beforeTemp:temp.value,afterTemp:nextTemp,beforeTempMax:temp.max,afterTempMax:nextTempMax,beforeTempOwner:tempOwnerBefore,afterTempOwner:tempOwnerAfter,beforeAttackBar:attackPoolBefore,afterAttackBar:attackPoolAfter,attackBonusEffect:attackApplied,temporary:temporaryApplied,temporaryApplied:temporaryApplied,temporaryAmount:temporaryAmount,healingAmount:(hasHealing&&saveMultiplier!==0&&!(transformDamagePlan&&transformDamagePlan.breaks))?healingAmount:0,healingRecovered:actualHealing,attackAmount:attackAmount,damageAmount:damageAmount,reactionDamageRule:p.reactionDamageRule||null,reactionDamageReduced:reactionDamageReduced,afterDamageHp:afterDamageHp,afterDamageTemp:afterDamageTemp,tokenEffects:complexEffectPlan,effectTurns:(effectTurnPlan&&effectTurnPlan.changed)?effectTurnPlan:null,persistentArea:!!p.persistentArea,periodicEffect:!!p.periodicEffect,movementTxn:p.movementTxn?String(p.movementTxn):null,concentrationId:p.concentrationId?String(p.concentrationId):null,ownerPid:msg.playerid||null,transformBreak:!!(transformDamagePlan&&transformDamagePlan.breaks),transformMode:transformDamagePlan?transformDamagePlan.mode:null,overflowDamage:transformDamagePlan?Number(transformDamagePlan.overflow||0):0,undone:false};
         if(areaState)areaState.applied=true;
         commitHP(t,{value:nextHp,max:plan.max});restoreConditions(t.token,markerChanges,true);
-        if(deathEngine&&!transformDamagePlan){try{deathEngine.afterHp(t.token,{before:plan.value,next:nextHp,damage:hpDamageTaken,max:Number(plan.max),critical:criticalHit});}catch(dyingErr){record('Умирание: '+dyingErr.message);}}if(hpTier.found&&hpTier.kill&&typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.kill==='function'){try{AD5ConditionEngine.kill(t.token,String(p.name||attackName(f)||'порог хитов'));nextHp=0;}catch(killErr){record('Порог хитов: '+(killErr.message||killErr));}}AD5Wounds.set(t.token,woundPlan.after);AD5Wounds.announce(t.token,woundPlan);if(complexEffectPlan)AD5TokenEffects.set(t.token,complexEffectPlan.after);if(effectTurnPlan&&effectTurnPlan.changed)AD5EffectTurns.commit(t.token,effectTurnPlan);if(f.ad5releasesource==='1'&&active(f,'save')&&!success&&p.sourceToken){try{if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.releaseGrapple==='function'&&AD5ConditionEngine.releaseGrapple(t.token,String(p.sourceToken)))report.push('Захват источника окончен.');}catch(releaseErr){record('Освобождение из захвата: '+(releaseErr.message||releaseErr));}}try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.setTempHpOwner==='function')AD5EffectTurns.setTempHpOwner(t.token.id,tempOwnerAfter);}catch(ignoreTempOwnerCommit){}commitTemp(t,temp.bar,nextTemp,nextTempMax);if(attackApplied)commitAttackBar(t.token,attackPoolAfter);
+        var metaFxBefore=(f.ad5meta==='extend')?metaSnapshot(t.token):null;
+        if(nextHp<=0&&plan.value>0&&damageAmount>0){try{onKillFeatures(p,f,t,msg);}catch(killFeatErr){record('При убийстве: '+(killFeatErr.message||killFeatErr));}}
+        if(deathEngine&&!transformDamagePlan){try{deathEngine.afterHp(t.token,{before:plan.value,next:nextHp,damage:hpDamageTaken,max:Number(plan.max),critical:criticalHit});}catch(dyingErr){record('Умирание: '+dyingErr.message);}}if(hpTier.found&&hpTier.kill&&typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.kill==='function'){try{AD5ConditionEngine.kill(t.token,String(p.name||attackName(f)||'порог хитов'));nextHp=0;}catch(killErr){record('Порог хитов: '+(killErr.message||killErr));}}AD5Wounds.set(t.token,woundPlan.after);AD5Wounds.announce(t.token,woundPlan);if(complexEffectPlan)AD5TokenEffects.set(t.token,complexEffectPlan.after);if(effectTurnPlan&&effectTurnPlan.changed)AD5EffectTurns.commit(t.token,effectTurnPlan);if(f.ad5meta==='extend')metaExtend(t.token,metaFxBefore,f,p);if(f.ad5releasesource==='1'&&active(f,'save')&&!success&&p.sourceToken){try{if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.releaseGrapple==='function'&&AD5ConditionEngine.releaseGrapple(t.token,String(p.sourceToken)))report.push('Захват источника окончен.');}catch(releaseErr){record('Освобождение из захвата: '+(releaseErr.message||releaseErr));}}try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.setTempHpOwner==='function')AD5EffectTurns.setTempHpOwner(t.token.id,tempOwnerAfter);}catch(ignoreTempOwnerCommit){}commitTemp(t,temp.bar,nextTemp,nextTempMax);if(attackApplied)commitAttackBar(t.token,attackPoolAfter);
         p.specialCommitted=true;
         if(typeof AD5SpellEffects!=='undefined'){
             entry.spellEffectIds=AD5SpellEffects.applied(specialContext,specialProfiles);
@@ -7815,6 +7823,8 @@ var AD5 = (function () {
         if (sub === 'neighbor') { neighborCommand(pid,args[2],args[3]); return; }
         if (sub === 'replay') { missReplayCommand(pid,args[2]); return; }
         if (sub === 'posthit') { postHitCommand(pid,args[2],args[3]); return; }
+        if (sub === 'meta') { metaCommand(pid,args); return; }
+        if (sub === 'relentless-reset') { if(!playerIsGM(pid))throw new Error('Только ГМ.');state.AD5Relentless={};reply(pid,'Неудержимая ярость: СЛ сброшена (отдых).');return; }
         if (sub === 'chain') { chainCommand(pid,args[2]); return; }
         if (sub === 'hitdie') { hitDieCommand(pid,args[2],args[3]); return; }
         if (sub !== 'target') throw new Error('Неизвестная команда. !ad5 help');
@@ -7971,6 +7981,7 @@ var AD5 = (function () {
             if(!context){try{rememberRepeat(msg,f);}catch(ignoreRepeat){}try{hitDieOffer(msg,f);}catch(ignoreHitDie){}try{grantUsed(msg,f);}catch(ignoreGrantUse){}try{grantSelfAtCast(msg,f);}catch(ignoreGrantSelf){}}
             if(!spellMeta)spellMeta=npcSpellMetaForFields(f);
             if(!spellMeta)spellMeta=taggedPlayerSpellMetaForFields(msg,f);
+            if(spellMeta&&!context){try{var metaCid=spellSourceId||(actor(f,msg)||{}).id;if(metaCid)metaAttach(msg,f,spellMeta,String(metaCid));}catch(metaErr){record('Метамагия: '+(metaErr.message||metaErr));}}
             // 4.3.158: a caster inside «ТИШИНА» cannot cast a spell with a verbal component; a feebleminded
             // creature cannot cast spells at all.
             if(spellMeta&&!context&&!active(f,'ad5repeatconc')){
@@ -8917,6 +8928,7 @@ var AD5 = (function () {
         var castLevel=Number(f.ad5castlevel||f.ad5spellcastlevel||f.spelllevel||f.level)||0,school='';
         if(f.ad5spellprefix){try{school=normalizeUserText(String(getAttrByName(cid,f.ad5spellprefix+'spellschool')||''));if(!castLevel)castLevel=Number(getAttrByName(cid,f.ad5spellprefix+'spelllevel'))||0;}catch(ignoreSchool){}}
         var dmgTotal=Number(g.damage.amount)||0;
+        if(weapon&&melee&&dmgTotal>0&&src){var rg=featureLine(cid,/^ЯРОСТЬ\s*[:：]\s*(\d+)\s*$/i);if(rg&&tokenRaging(src))addFeatureDamage(g,Number(rg.m[1]),baseType||'дробящий','ярость',report);}
         if(weapon&&dmgTotal>0){
             var gwf=featureLine(cid,/^ПЕРЕБРОС\s+УРОНА\s*[:：]\s*(\d)\s*$/i);
             if(gwf&&melee&&comps.length){var dl=rerollLowDice(msg,f.dmg1,Number(gwf.m[1]))+(criticalHit?rerollLowDice(msg,f.crit1,Number(gwf.m[1])):0);if(dl){comps[0].amount=Math.max(0,comps[0].amount+dl);g.damage.amount=Math.max(0,g.damage.amount+dl);report.push('переброс 1–'+gwf.m[1]+': '+(dl>0?'+':'')+dl);}}
@@ -9009,6 +9021,81 @@ var AD5 = (function () {
             var sr=featureSaveRoll(tok,save.ab,dc);lines.push('спасбросок '+save.ab.toUpperCase()+': '+sr.die+(sr.bonus>=0?'+':'')+sr.bonus+' = '+sr.total+' против СЛ '+dc+' — '+(sr.success?'успех':'провал'));if(!sr.success)applyFx(save.effect);}
         sendChat('шепот звезд','/w gm <b>'+esc(label)+'</b> → '+esc(tok.get('name')||'')+(spent?' · '+esc(spent):'')+'<br>'+lines.map(esc).join('<br>'));
         reply(pid,'<b>'+esc(label)+'</b> → '+esc(tok.get('name')||'')+(spent?' · '+esc(spent):'')+(lines.length?': '+esc(lines.join('; ')):''));
+    }
+    // ===== 4.3.163: ярость, неудержимая ярость, эффекты при убийстве (ad5_features) =====
+    //   ЯРОСТЬ: 2 — пока на токене эффект «Ярость», рукопашные атаки оружием получают +2 урона;
+    //   НЕУДЕРЖИМАЯ ЯРОСТЬ — в ярости при падении до 0 хитов спасбросок ТЕЛ СЛ 10 (+5 за каждое срабатывание) → 1 хит;
+    //   ПРИ УБИЙСТВЕ: вр хп ХАР+УРОВЕНЬ — снизив враждебное существо до 0 хитов, получить временные хиты;
+    //   ПРИ УБИЙСТВЕ ЗАКЛИНАНИЕМ: лечение 2*КРУГ — убив заклинанием 1+ круга, восстановить хиты.
+    function tokenRaging(token){
+        try{var r=typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&AD5EffectTurns.snapshot?AD5EffectTurns.snapshot(token.id):null;
+            return !!(r&&r.effects&&Object.keys(r.effects).some(function(k){var e=r.effects[k];return /ярост/i.test(String(e&&e.label||''))||/ярост/i.test(String(e&&e.source&&e.source.actionName||''));}));}catch(ignoreRage){return false;}
+    }
+    function relentlessDb(){state.AD5Relentless=state.AD5Relentless||{};return state.AD5Relentless;}
+    function relentlessRage(token,cid,report){
+        if(!featureLine(cid,/^НЕУДЕРЖИМАЯ\s+ЯРОСТЬ\s*$/i)||!tokenRaging(token))return false;
+        var db=relentlessDb(),uses=Number(db[cid]||0),dc=10+5*uses,sr=featureSaveRoll(token,'тел',dc);db[cid]=uses+1;
+        report.push('Неудержимая ярость: ТЕЛ '+sr.die+(sr.bonus>=0?'+':'')+sr.bonus+' = '+sr.total+' против СЛ '+dc+' — '+(sr.success?'успех, 1 хит':'провал'));
+        return sr.success;
+    }
+    function onKillFeatures(p,f,t,msg){
+        var src=getObj('graphic',String(p.sourceToken||'')),cid=String(p.actor||'');if(!src||!cid||src.id===t.token.id)return;
+        var rel='hostile';try{if(typeof AD5Sides!=='undefined'&&AD5Sides&&typeof AD5Sides.relation==='function')rel=AD5Sides.relation({sourceToken:src.id},t.token);}catch(ignoreRel){}
+        if(rel!=='hostile')return;
+        var spell=!!(f.ad5spellprefix||active(f,'ad5isspell')),castLevel=Number(f.ad5castlevel||f.ad5spellcastlevel||f.spelllevel||0)||0;
+        if(f.ad5spellprefix&&!castLevel){try{castLevel=Number(getAttrByName(cid,f.ad5spellprefix+'spelllevel'))||0;}catch(ignoreLvl){}}
+        var tk=featureLine(cid,/^ПРИ\s+УБИЙСТВЕ\s*[:：]\s*вр\.?\s*хп\s+(.+)$/i);
+        if(tk){var amt=featureNumber(tk.m[1],cid,castLevel),cur=Number(src.get('bar2_value'))||0;if(amt>cur){setTimeout(function(){try{AD5.special.temp(src,amt,{actionName:'При убийстве',sourceToken:src.id});}catch(e){record('При убийстве: '+(e.message||e));}},300);reply(msg.playerid,'<b>При убийстве</b>: '+esc(src.get('name')||'')+' получает '+amt+' временных хитов.');}}
+        var hk=spell&&castLevel>=1?featureLine(cid,/^ПРИ\s+УБИЙСТВЕ\s+ЗАКЛИНАНИЕМ\s*[:：]\s*лечение\s+(.+)$/i):null;
+        if(hk){var heal=featureNumber(hk.m[1],cid,castLevel);if(heal>0)setTimeout(function(){try{reactionDamage(src.id,heal,'лечение','При убийстве заклинанием',{actorId:cid,sourceTokenId:src.id,playerId:msg.playerid,healing:true,fixedDamage:true});}catch(e){record('При убийстве заклинанием: '+(e.message||e));}},300);}
+    }
+    // ===== 4.3.163: метамагия и формирование заклинаний (ad5_features) =====
+    //   МЕТАМАГИЯ: Усиленное 3, Продлённое 1, Удвоенное, Осторожное 1 — варианты и их цена в единицах чародейства
+    //   (Удвоенное — по кругу заклинания, заговор 1); РЕСУРС МЕТАМАГИИ: Единицы чародейства — имя ресурса листа.
+    //   !ad5 meta — меню; выбранный вариант применяется к следующему заклинанию персонажа (2 минуты).
+    //   ФОРМИРОВАНИЕ ЗАКЛИНАНИЙ — союзники в области вашего заклинания воплощения (до 1 + круг) не задеты.
+    var metaArmed={},metaUsed={},metaSeq=0,META_KINDS={'усиленн':'heighten','продлённ':'extend','продленн':'extend','удвоенн':'twin','осторожн':'careful'},META_LABEL={heighten:'Усиленное',extend:'Продлённое',twin:'Удвоенное',careful:'Осторожное'};
+    function metaOptions(cid){var l=featureLine(cid,/^МЕТАМАГИЯ\s*[:：]\s*(.+)$/i);if(!l)return [];return l.m[1].split(/\s*,\s*/).map(function(x){var m=/^(\S+)(?:\s+(\d+))?/.exec(x.trim());if(!m)return null;var k=null;Object.keys(META_KINDS).forEach(function(p){if(normalizeUserText(m[1]).indexOf(p)===0)k=META_KINDS[p];});return k?{kind:k,cost:m[2]===undefined?null:Number(m[2])}:null;}).filter(Boolean);}
+    function metaResourceName(cid){var l=featureLine(cid,/^РЕСУРС\s+МЕТАМАГИИ\s*[:：]\s*(.+)$/i);return l?l.m[1].trim():'Единицы чародейства';}
+    function metaCommand(pid,args){
+        var tokId=args[3]||args[2],kindArg=args[3]?args[2]:'',tok=getObj('graphic',String(tokId||''));if(!tok)throw new Error('Выделите токен заклинателя.');
+        var cid=String(tok.get('represents')||''),opts=metaOptions(cid);if(!opts.length)throw new Error('В ad5_features нет строки МЕТАМАГИЯ.');
+        if(!kindArg||!/^(heighten|extend|twin|careful)$/.test(kindArg)){reply(pid,'<b>Метамагия</b> ('+esc(metaResourceName(cid))+'): '+opts.map(function(o){return '['+META_LABEL[o.kind]+(o.cost!==null?' '+o.cost:'')+'](!ad5 meta '+o.kind+' '+tok.id+')';}).join(' '));return;}
+        var o=opts.filter(function(x){return x.kind===kindArg;})[0];if(!o)throw new Error('Этого варианта нет в списке МЕТАМАГИЯ.');
+        if(o.kind!=='twin'){var r=sheetResource(cid,metaResourceName(cid));if(!r||r.left<o.cost)throw new Error('Недостаточно ресурса «'+metaResourceName(cid)+'».');r.attr.set('current',String(r.left-o.cost));}
+        metaArmed[cid]={kind:o.kind,cost:o.cost,expires:Date.now()+120000};
+        reply(pid,'<b>Метамагия</b>: '+META_LABEL[o.kind]+' — к следующему заклинанию '+esc(tok.get('name')||'')+(o.kind!=='twin'?' (−'+o.cost+')':'')+'.');
+    }
+    function metaAttach(msg,f,spellMeta,cid){
+        var armed=metaArmed[cid];if(!armed||armed.expires<Date.now()||f.ad5meta)return;delete metaArmed[cid];
+        var lvl=Number(spellMeta&&(spellMeta.castLevel!==undefined?spellMeta.castLevel:spellMeta.spellLevel))||0;
+        if(armed.kind==='twin'){var cost=Math.max(1,lvl),r=sheetResource(cid,metaResourceName(cid));if(!r||r.left<cost){reply(msg.playerid,'<b>Удвоенное заклинание</b>: недостаточно ресурса ('+cost+').');return;}r.attr.set('current',String(r.left-cost));
+            f.description=String(f.description!==undefined?f.description:(f.desc||''))+'\nЦЕЛЕЙ: 2';f.desc=f.description;}
+        f.ad5meta=armed.kind;f.ad5metaid='m'+(++metaSeq)+Date.now().toString(36);f.ad5metalimit=armed.kind==='careful'?String(Math.max(1,Number(getAttrByName(cid,'charisma_mod'))||1)):'1';
+        // Области и групповые цели разбирают поля из сообщения заново — переносим флаги в само сообщение.
+        msg.content=String(msg.content||'')+' {{ad5meta='+f.ad5meta+'}} {{ad5metaid='+f.ad5metaid+'}} {{ad5metalimit='+f.ad5metalimit+'}}';
+        reply(msg.playerid,'<b>Метамагия</b>: '+META_LABEL[armed.kind]+' заклинание.');
+    }
+    function metaSaveAdjust(f,token,pendingContext,custom){
+        var kind=f&&f.ad5meta,id=f&&f.ad5metaid;if(!kind||!id)return null;
+        if(kind==='heighten'){if(metaUsed[id])return null;metaUsed[id]=1;return 'dis';}
+        if(kind==='careful'){var srcId=String((pendingContext&&pendingContext.sourceToken)||f.ad5filtersource||''),rel='hostile';if(!srcId)return null;
+            try{if(typeof AD5Sides!=='undefined'&&AD5Sides&&typeof AD5Sides.relation==='function')rel=AD5Sides.relation({sourceToken:srcId},token);}catch(ignoreRel){}
+            if(rel==='ally'&&(metaUsed[id]||0)<Number(f.ad5metalimit||1)){metaUsed[id]=(metaUsed[id]||0)+1;custom.condition={autoFail:false,autoSuccess:true,mode:'normal',labels:['Осторожное заклинание']};}}
+        return null;
+    }
+    function succeededSaveByMeta(spec){return {spec:spec,total:spec.dc,die:0,mode:'auto-success',autoSuccess:true};}
+    function metaSnapshot(token){try{var r=AD5EffectTurns.snapshot(token.id);return r?JSON.parse(JSON.stringify(r)):null;}catch(ignoreSnap){return null;}}
+    function metaExtend(token,before,f,p){
+        try{var after=AD5EffectTurns.snapshot(token.id);if(after&&after.effects){var changed=false;Object.keys(after.effects).forEach(function(k){var e=after.effects[k],b=before&&before.effects&&before.effects[k];
+            if(e&&e.timed!==false&&Number(e.remaining)>0&&(!b||Number(b.remaining)!==Number(e.remaining))){e.remaining=Number(e.remaining)*2;changed=true;}});if(changed)AD5EffectTurns.restore(token,after);}}catch(ignoreExt){}
+        var id=f.ad5metaid;if(id&&!metaUsed[id+'|conc']){metaUsed[id+'|conc']=1;try{var src=getObj('graphic',String(p.sourceToken||'')),rec=src&&AD5Concentration&&AD5Concentration.currentForToken(src);if(rec&&Number(rec.remaining)>0)rec.remaining=Number(rec.remaining)*2;}catch(ignoreConc){}}
+    }
+    function sculptSkip(f,p,t){
+        var cid=String(p.actor||'');if(!featureLine(cid,/^ФОРМИРОВАНИЕ\s+ЗАКЛИНАНИЙ\s*$/i)||!f.ad5spellprefix||!(p.areaEffect||p.batch))return false;
+        var school='';try{school=normalizeUserText(String(getAttrByName(cid,f.ad5spellprefix+'spellschool')||''));}catch(ignoreSchool){}if(school.indexOf('воплощ')<0&&school.indexOf('evocation')<0)return false;
+        var src=String(p.sourceToken||''),rel='hostile';if(!src||src===t.token.id)return false;try{rel=AD5Sides.relation({sourceToken:src},t.token);}catch(ignoreRel){}if(rel!=='ally')return false;
+        var lvl=Number(f.ad5castlevel||getAttrByName(cid,f.ad5spellprefix+'spelllevel'))||0,key='sculpt|'+(p.batch||p.time);metaUsed[key]=(metaUsed[key]||0)+1;return metaUsed[key]<=1+lvl;
     }
     function persistentAreaMovementTrigger(snapshot,rule,targetId,label,context){
         rule=persistentAreaMovementRule(snapshot,rule);
