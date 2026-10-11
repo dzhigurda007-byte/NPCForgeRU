@@ -48,7 +48,7 @@ var AD5Background = (function(){
     return {put:put,isReady:function(){return ready;}};
 }());
 /*
-AutoDamage 4.3.162 / NPC Forge RU 2.7.4 — «шепот звезд».
+AutoDamage 4.3.163 / NPC Forge RU 2.7.4 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Обычная атака игрока -> Target AD5 на карте -> штатные запросы преимущества/помехи/доп. урона Roll20 -> бросок -> урон и крит. NPC/Transform сохраняют штатный Target Roll20. AutoFront заранее держит боевые токены на переднем плане. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -72,6 +72,7 @@ hp листа используется однократно как началь�
 Поле «Описание» способности является источником исходов спасброска. Элементы разделяются запятыми: ПРВ: ... для провала, УСП: ... для успеха. Таймеры и маркеры ведёт отдельный AD5 Effect Turns. Если УСП отсутствует, успешный спас автоматически означает 0 урона и 0 эффектов.
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
+4.3.163: классовые механики — атрибут листа ad5_features: КРИТ 19/18, КРИТ КОСТИ, ПЕРЕБРОС УРОНА, СКРЫТАЯ АТАКА, РАЗ В ХОД, УРОН ЗАКЛИНАНИЙ/ШКОЛЫ, ЛУЧ, ЛЕЧЕНИЕ ЗАКЛИНАНИЙ; ПОСЛЕ ПОПАДАНИЯ — кнопки с расходом ячейки или ресурса (!ad5 posthit).
 4.3.162: homebrew dnd.su — ПОПАДЛЕЧЕНИЕ/ПОПАДТОЛЧ со столкновением/ПОПАДСЕБЕ/ПОПАДДОСЯГ; условия «АТАКОВАН ПРОШЛЫЙ ХОД», «СХВАЧЕН ИСТОЧНИКОМ», «ДЕРЖИТ ИСТОЧНИК», «отпускает источник»; «УРОН ЕСЛИ …: Урон2» без «вместо» — добавочный; повтор промаха (!ad5 replay); ВРХП ПРОПУСКАЕТ / ВРХП СОПР; grants.add для Ока мимикрии; ДАРУЕТ не снимает строку, которая была в листе раньше.
 4.3.161: «N фт цилиндр» без высоты распознаётся как область (Лунный луч). МУВ (Шипы) — каждые 5 фт бросаются отдельно; Концентрация получает список частей урона и проверяет каждую отдельно.
 4.3.160: Spells with «ВКР …» (an effect centred on the caster: Sword Burst, Thunderclap, Word of Radiance, Arms of Hadar) never open the Roll20 target picker — like exact «На себя» ranges, the caster's token is used.
@@ -779,7 +780,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.162', diagnostics = [], debug = false;
+    var VERSION = '4.3.163', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -5713,7 +5714,8 @@ var AD5 = (function () {
             }
         }
         if(p.specialCommitted)return;
-        var criticalHit=!!(p.die===20||p.forceCritical),effect=damageValue(msg,f,criticalHit),g=effect.groups;
+        var criticalHit=!!(p.die===20||(p.critMin&&p.die>=p.critMin)||p.forceCritical),effect=damageValue(msg,f,criticalHit),g=effect.groups;
+        try{applyActorFeatures(msg,f,p,t,g,criticalHit);}catch(featureErr){record('Особенности: '+(featureErr.message||featureErr));}
         // 4.3.159: «ЦЕНА: 4d8 некротическая энергия» + «ЛЕЧЕНИЕ ЦЕЛИ: ×2» (Life Transference) — the caster takes the
         // cost (it cannot be reduced) and the target regains a multiple of it.
         try{
@@ -5893,6 +5895,7 @@ var AD5 = (function () {
         if(p.incomingReport)report.push(p.incomingReport);
         if(p.chaosReport)report.push(p.chaosReport);
         if(p.costReport)report.push(p.costReport);
+        if(p.featureReport)report.push(esc(p.featureReport));
         if(p.sanctuaryCheck&&p.sanctuaryCheck.required)report.push('Убежище: спасбросок Мудрости '+esc(sanctuaryResultText(p.sanctuaryCheck))+'.');
         if(p.hasAttack){var attackBase=p.baseAttackTotal===undefined?p.total:p.baseAttackTotal,attackGlobal=Number(p.globalAttack)||0,attackToken=Number(p.tokenAttackBonus)||0,acMod=Number(p.acModifier)||0,acBase=p.acBase===undefined?p.ac:Number(p.acBase);report.push('Атака: d20 '+dieLabel(p.die)+', бросок '+attackBase+(attackGlobal!==0?' + общий модификатор '+(attackGlobal>0?'+':'')+attackGlobal:'')+(attackToken!==0?' + модификатор Атака '+(attackToken>0?'+':'')+attackToken:'')+' = '+p.total+' против КД '+p.ac+(acMod!==0?' (база '+acBase+(acMod>0?' + ':' - ')+Math.abs(acMod)+')':'')+' — <b>попадание</b>.'+(p.attackConditionRule&&p.attackConditionRule.autoHitClose?' <b>Паралич: автоматическое попадание на 5 фт. (кроме натуральной 1).</b>':''));if(p.attackDistance!==null&&p.attackDistance!==undefined&&Number.isFinite(Number(p.attackDistance)))report.push('Дистанция до цели: <b>'+(Math.round(Number(p.attackDistance)*10)/10)+' фт</b>'+(p.attackRange&&p.attackRange.max?' · дальность атаки '+(p.attackRange.long?p.attackRange.normal+'/'+p.attackRange.max:p.attackRange.max)+' фт':'')+'.');if(p.cover&&p.cover.tier&&p.cover.tier!=='none')report.push('Укрытие: <b>'+esc(p.cover.label)+'</b>'+(Number(p.coverAcBonus||0)?' · КД +'+Number(p.coverAcBonus||0):'')+'.');if(p.attackConditionRule&&(p.attackConditionRule.advantage.length||p.attackConditionRule.disadvantage.length))report.push('Состояния атаки: '+(p.attackConditionRule.advantage.length?'ПРЕМ ['+esc(p.attackConditionRule.advantage.join(', '))+'] ':'')+(p.attackConditionRule.disadvantage.length?'ПОМ ['+esc(p.attackConditionRule.disadvantage.join(', '))+'] ':'')+'→ '+(p.attackMode==='adv'?'ПРЕМ':p.attackMode==='dis'?'ПОМ':'обычный')+'.');}
         if(p.hasAttack){
@@ -6351,6 +6354,7 @@ var AD5 = (function () {
         },0);
         else if(p.onComplete)setTimeout(p.onComplete,0);
         if(hitPayloadBundle)payloadCommitAndResolve(msg,p,t,hitPayloadBundle);
+        try{if(p.hasAttack&&g&&g.damage&&g.damage.components&&g.damage.components.length)p.lastDamageType=g.damage.components[0].type;postHitOffer(msg,f,p,t,criticalHit);}catch(postHitErr){record('После попадания: '+(postHitErr.message||postHitErr));}
         // 4.3.85: for one-shot KEEP payloads, decide only after this child
         // transaction has actually committed. A failed save may create the
         // sustaining effect; a successful save may create nothing.
@@ -6804,7 +6808,7 @@ var AD5 = (function () {
             if(beamAttack.crit)beamFormula=beamFormula.replace(/(\d*)\s*[dDдД]\s*(\d+)/g,function(all,n,sides){return String((Number(n)||1)*2)+'d'+sides;});
         }
         q.projectileActiveIndex=i;q.projectileAwaiting=true;
-        var amount=areaRollExpression(beamFormula,0);q.projectileRolls=q.projectileRolls||[];q.projectileRolls[i]={formula:beamFormula,total:Number(amount),type:String(q.resolverSpec.damage.type||''),targetId:String(shot.id||''),name:String(shot.name||shot.id||''),attackText:beamAttack?beamAttack.text:''};var sf=Object.create(null);sf.rname=q.name+' · снаряд '+(i+1);sf.charname=(getObj('character',q.actor)||{get:function(){return '';}}).get('name')||'';sf.range=q.resolverSpec.range;sf.target='1 существо';sf.description=q.resolverSpec.payloadDescription||'';sf.desc=sf.description;sf.ad5source=q.actor;sf.ad5sourcetoken=q.sourceToken;sf.ad5target=shot.id;sf.damage='1';sf.dmg1flag='1';sf.dmg1=String(amount);sf.dmg1type=q.resolverSpec.damage.type;sf.ad5auto='1';sf.ad5projectileauto='1';
+        var amount=areaRollExpression(beamFormula,0);try{var beamBonus=featureBeamBonus(q.actor,q.name);if(beamBonus)amount=Number(amount)+beamBonus;}catch(ignoreBeam){}q.projectileRolls=q.projectileRolls||[];q.projectileRolls[i]={formula:beamFormula,total:Number(amount),type:String(q.resolverSpec.damage.type||''),targetId:String(shot.id||''),name:String(shot.name||shot.id||''),attackText:beamAttack?beamAttack.text:''};var sf=Object.create(null);sf.rname=q.name+' · снаряд '+(i+1);sf.charname=(getObj('character',q.actor)||{get:function(){return '';}}).get('name')||'';sf.range=q.resolverSpec.range;sf.target='1 существо';sf.description=q.resolverSpec.payloadDescription||'';sf.desc=sf.description;sf.ad5source=q.actor;sf.ad5sourcetoken=q.sourceToken;sf.ad5target=shot.id;sf.damage='1';sf.dmg1flag='1';sf.dmg1=String(amount);sf.dmg1type=q.resolverSpec.damage.type;sf.ad5auto='1';sf.ad5projectileauto='1';
         var sm={type:'general',playerid:q.owner,who:sf.charname||q.name,rolltemplate:'dmg',content:templateContentFromFields(sf)+' {{ad5auto=1}} {{ad5projectileauto=1}}',inlinerolls:[]};
         событиеAD5('СНАРЯД ПЕРЕД ПОПАДАНИЕМ',{игрокId:q.owner,источникПерсонажId:q.actor,источникТокенId:q.sourceToken,цельТокенId:shot.id,имяДействия:q.name,номер:i+1,всего:q.projectiles.length});
         событиеAD5('СНАРЯД ПОПАЛ',{игрокId:q.owner,источникПерсонажId:q.actor,источникТокенId:q.sourceToken,цельТокенId:shot.id,имяДействия:q.name,номер:i+1,всего:q.projectiles.length});
@@ -7810,6 +7814,7 @@ var AD5 = (function () {
         if (sub === 'repeat') { repeatCommand(pid,args[2]); return; }
         if (sub === 'neighbor') { neighborCommand(pid,args[2],args[3]); return; }
         if (sub === 'replay') { missReplayCommand(pid,args[2]); return; }
+        if (sub === 'posthit') { postHitCommand(pid,args[2],args[3]); return; }
         if (sub === 'chain') { chainCommand(pid,args[2]); return; }
         if (sub === 'hitdie') { hitDieCommand(pid,args[2],args[3]); return; }
         if (sub !== 'target') throw new Error('Неизвестная команда. !ad5 help');
@@ -8527,7 +8532,8 @@ var AD5 = (function () {
                             if(targetMode()==='selected'){delete armed[pid];delete deferred[pid];delete pending[pid];}
                             return;
                         }
-                        var hit = !hasAttack || (attackConditionRule.autoHitClose ? die!==1 : (die!==1 && (die===20 || r.total>=ac)));
+                        var critMin=hasAttack?featureCritMin(c.id,!!(событиеАтаки&&событиеАтаки.оружие)):20;
+                        var hit = !hasAttack || (attackConditionRule.autoHitClose ? die!==1 : (die!==1 && (die>=critMin || r.total>=ac)));
                         var forceCritical=!!(attackConditionRule&&attackConditionRule.forceCritical&&die!==1);
                         // Only fixed, non-sensitive text is published to all players.
                         if (!hit) {
@@ -8618,13 +8624,13 @@ var AD5 = (function () {
                         var specialRetaliations=[];
                         if(hasAttack&&typeof AD5SpellEffects!=='undefined')specialRetaliations=AD5SpellEffects.preHit({source:sourceAttack.token&&sourceAttack.token.id,target:t.token.id,melee:!!(событиеАтаки&&событиеАтаки.классАтаки==='рукопашная')});
                         if(hasAttack&&событиеАтаки)событиеAD5('ПОПАДАНИЕ',данныеСобытияАтаки({итогАтаки:r.total,натуральныйБросок:die,крит:(die===20||forceCritical),концентрацияId:concentrationId||null}));
-                        if(hasAttack)sendChat('Шепот звезд','попадание');
+                        if(hasAttack)sendChat('Шепот звезд',(die===20||die>=critMin||forceCritical)?'критическое попадание':'попадание');
                         if (hasAttack) record('Проверка атаки: база=' + baseAttackTotal + ', общий=' + globalAttack + ', модификатор токена=' + tokenAttackBonus + ', итог=' + r.total + ', КД=' + ac + ', попадание=' + hit);
                         else record(hasSave?'Спасбросок без проверки КД.':'Автоматический эффект без атаки и спасброска.');
                         if (hit) pending[pid] = { actor: c.id, sourceName: f.charname || f.name || '',
                             specialRetaliations:specialRetaliations,npcMessage: ['npcatk', 'npcaction', 'npcdmg'].indexOf(msg.rolltemplate) >= 0,
                             name: name, target: a.target, cid: a.cid, hit: true, ac: ac, acBase:acBase, acModifier:acModifier, hasAttack: hasAttack,
-                            total: r.total, baseAttackTotal:baseAttackTotal, globalAttack:globalAttack, tokenAttackBonus:tokenAttackBonus, attackDynamicBonus:Number(attackDynamic.total)||0, attackDynamicRolls:attackDynamic.rolled||[], sourceToken:sourceAttack.token?sourceAttack.token.id:null, conditionSourceToken:(context&&context.reflectionSourceTokenId)?String(context.reflectionSourceTokenId):null, reactionExec:active(f,'ad5reactionexec'), reactionDamageRule:hitReactionDamageRule, sourceModifiers:sourceAttack.modifiers||emptyCombatModifiers(), concentrationId:concentrationId||null, die: die, factor: a.factor, forceCritical:forceCritical, attackMode:mode, attackConditionRule:attackConditionRule, attackDistance:attackRangeInfo&&Number.isFinite(attackRangeInfo.distance)?attackRangeInfo.distance:null, attackRange:attackRangeInfo&&attackRangeInfo.spec?attackRangeInfo.spec:null, cover:coverInfo, coverAcBonus:coverAcBonus, time: Date.now(), batch:context?context.batch:null, areaResolutionId:(context&&context.areaResolutionId)?String(context.areaResolutionId):null, событиеАтаки:событиеАтаки?данныеСобытияАтаки({итогАтаки:r.total,натуральныйБросок:die,крит:(die===20||forceCritical),концентрацияId:concentrationId||null}):null };
+                            total: r.total, baseAttackTotal:baseAttackTotal, globalAttack:globalAttack, tokenAttackBonus:tokenAttackBonus, attackDynamicBonus:Number(attackDynamic.total)||0, attackDynamicRolls:attackDynamic.rolled||[], sourceToken:sourceAttack.token?sourceAttack.token.id:null, conditionSourceToken:(context&&context.reflectionSourceTokenId)?String(context.reflectionSourceTokenId):null, reactionExec:active(f,'ad5reactionexec'), reactionDamageRule:hitReactionDamageRule, sourceModifiers:sourceAttack.modifiers||emptyCombatModifiers(), concentrationId:concentrationId||null, die: die, critMin:critMin, factor: a.factor, forceCritical:forceCritical, attackMode:mode, attackConditionRule:attackConditionRule, attackDistance:attackRangeInfo&&Number.isFinite(attackRangeInfo.distance)?attackRangeInfo.distance:null, attackRange:attackRangeInfo&&attackRangeInfo.spec?attackRangeInfo.spec:null, cover:coverInfo, coverAcBonus:coverAcBonus, time: Date.now(), batch:context?context.batch:null, areaResolutionId:(context&&context.areaResolutionId)?String(context.areaResolutionId):null, событиеАтаки:событиеАтаки?данныеСобытияАтаки({итогАтаки:r.total,натуральныйБросок:die,крит:(die===20||forceCritical),концентрацияId:concentrationId||null}):null };
                         var hasComplexDescription=!!AD5TokenEffects.stripTerrain(f.description!==undefined?f.description:(f.desc||''));
                         if (!isDmg || !(hasEffectComponents(f) || (hasSave && failureConditions(f).length) || hasComplexDescription)) {
                             var secondaryOnly=active(f,'ad5secondary');
@@ -8846,6 +8852,163 @@ var AD5 = (function () {
         var out=raw.map(function(x){return Math.floor(x*total/sum);}),rest=total-out.reduce(function(a,b){return a+b;},0);
         for(var i=0;rest>0&&i<out.length;i++,rest--)out[i]++;
         return out.filter(function(x){return x>0;});
+    }
+    // ===== 4.3.163: особенности персонажа (атрибут листа ad5_features) =====
+    // Строки-директивы читаются при каждой атаке (sheet first):
+    //   КРИТ: 19 — критическое попадание оружием на 19–20 (Улучшенный критический удар);
+    //   КРИТ КОСТИ: 1 — при крите оружием +1 кость урона оружия (Сокрушительный крит);
+    //   ПЕРЕБРОС УРОНА: 2 — кости урона рукопашного оружия 1–2 перебрасываются (Сражение большим оружием);
+    //   СКРЫТАЯ АТАКА: 3d6 — раз в ход, атака оружием с преимуществом или союзник в 5 фт от цели, без помехи;
+    //   РАЗ В ХОД: 1d8 излучение, ОРУЖИЕ[, РУКОПАШНОЕ|ДАЛЬНОБОЙНОЕ|ЗАКЛИНАНИЕ][, РАНЕН] — доп. урон раз в ход;
+    //   УРОН ЗАКЛИНАНИЙ огонь: +ХАР — к урону заклинаний этого типа (Стихийное родство);
+    //   УРОН ШКОЛЫ Воплощение: +ИНТ — к урону заклинаний школы (Усиленное воплощение);
+    //   ЛУЧ Мистический заряд: +ХАР — к каждому лучу заклинания (Мучительный взрыв);
+    //   ЛЕЧЕНИЕ ЗАКЛИНАНИЙ: +2+КРУГ — к лечению заклинаниями 1+ круга (Последователь жизни).
+    var featureTurnSeq=0,featureUsed={};
+    on('change:campaign:turnorder',function(){try{var order=JSON.parse(Campaign().get('turnorder')||'[]')||[];var top=order.length?String(order[0].id||''):'';if(top&&top!==featureLastTop)featureTurnSeq++;featureLastTop=top;}catch(ignoreFeatureSeq){}});
+    var featureLastTop='';
+    function actorFeatureLines(cid){
+        cid=String(cid||'');if(!cid)return [];var raw='';try{raw=String(getAttrByName(cid,'ad5_features')||'');}catch(ignoreFeatures){}
+        return raw.replace(/<br\s*\/?>/gi,'\n').split(/\r?\n|;/).map(function(x){return x.trim();}).filter(Boolean);
+    }
+    function featureLine(cid,re){var out=null;actorFeatureLines(cid).some(function(line,i){var m=re.exec(line);if(m){out={m:m,index:i,line:line};return true;}return false;});return out;}
+    function featureLinesAll(cid,re){var out=[];actorFeatureLines(cid).forEach(function(line,i){var m=re.exec(line);if(m)out.push({m:m,index:i,line:line});});return out;}
+    var FEATURE_ABILITY={'сил':'strength_mod','лов':'dexterity_mod','тел':'constitution_mod','инт':'intelligence_mod','мдр':'wisdom_mod','хар':'charisma_mod'};
+    function featureNumber(expr,cid,castLevel){
+        var text=normalizeUserText(String(expr||'')).replace(/\s+/g,'');
+        text=text.replace(/сил|лов|тел|инт|мдр|хар/g,function(k){return '('+(Number(getAttrByName(cid,FEATURE_ABILITY[k]))||0)+')';});
+        text=text.replace(/мод/g,function(){return '('+(Number(spellAbilityMod(cid))||0)+')';});
+        text=text.replace(/уровень/g,function(){return '('+(Number(getAttrByName(cid,'level'))||1)+')';});
+        text=text.replace(/круг/g,function(){return '('+(Number(castLevel)||0)+')';});
+        var v=spellDslEval(text.replace(/^\+/,''));return Number.isFinite(Number(v))?Math.floor(Number(v)):0;
+    }
+    function featureDiceOnly(formula){var m=String(formula||'').match(/\d*[dд]\d+/gi);return m?m.join('+').replace(/д/gi,'d'):'';}
+    function featureRoll(formula,cid,crit){var base=rollFormulaText(String(formula).replace(/д/gi,'d'),cid),dice=crit?featureDiceOnly(formula):'';return base+(dice?rollFormulaText(dice,cid):0);}
+    function featureCritMin(cid,isWeapon){if(!isWeapon)return 20;var f=featureLine(cid,/^КРИТ\s*[:：]\s*(\d{2})\s*$/i);var n=f?Number(f.m[1]):20;return n>=2&&n<=20?n:20;}
+    function inlineIndex(field){var m=/\$\[\[(\d+)\]\]/.exec(String(field||''));return m?Number(m[1]):-1;}
+    function weaponDieFromField(msg,field){var i=inlineIndex(field),r=i>=0&&msg&&msg.inlinerolls&&msg.inlinerolls[i];var m=r&&/(\d*)d(\d+)/i.exec(String(r.expression||''));return m?Number(m[2]):0;}
+    function rerollLowDice(msg,field,limit){
+        var i=inlineIndex(field),r=i>=0&&msg&&msg.inlinerolls&&msg.inlinerolls[i],delta=0;if(!r||!r.results||!Array.isArray(r.results.rolls))return 0;
+        r.results.rolls.forEach(function(group){if(!group||group.type!=='R'||!Array.isArray(group.results))return;var sides=Number(group.sides)||0;if(sides<3)return;
+            group.results.forEach(function(d){if(d&&!d.d&&Number(d.v)<=limit){var nv=randomInteger(sides);delta+=nv-Number(d.v);}});});
+        return delta;
+    }
+    function hasAllyNear(sourceToken,targetToken){
+        if(!sourceToken||!targetToken)return false;
+        return (findObjs({_type:'graphic',_pageid:targetToken.get('_pageid'),layer:'objects'})||[]).some(function(o){
+            if(o.id===sourceToken.id||o.id===targetToken.id||!String(o.get('represents')||''))return false;
+            var hp=Number(o.get('bar1_value'));if(Number.isFinite(hp)&&hp<=0)return false;
+            try{if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&AD5ConditionEngine.canAct){var ca=AD5ConditionEngine.canAct(o);if(ca&&ca.allowed===false)return false;}}catch(ignoreAct){}
+            var rel='ally';try{if(typeof AD5Sides!=='undefined'&&AD5Sides&&typeof AD5Sides.relation==='function')rel=AD5Sides.relation({sourceToken:sourceToken.id},o);}catch(ignoreRel){}
+            return rel==='ally'&&combatRangeFeet(o,targetToken)<=5.01;
+        });
+    }
+    function addFeatureDamage(g,amount,type,label,report){
+        amount=Math.max(0,Math.floor(Number(amount)||0));if(!amount||!g||!g.damage)return;
+        g.damage.components.push({index:'feat',kind:'damage',type:type,amount:amount,base:amount,crit:0,fixed:true});g.damage.amount+=amount;if(g.damage.types.indexOf(type)<0)g.damage.types.push(type);
+        report.push(label+' +'+amount+' '+type);
+    }
+    function applyActorFeatures(msg,f,p,t,g,criticalHit){
+        if(!g||!g.damage||p.featuresApplied)return;p.featuresApplied=true;
+        var cid=String(p.actor||''),lines=actorFeatureLines(cid);if(!lines.length)return;
+        var ev=p.событиеАтаки||null,weapon=!!(p.hasAttack&&ev&&ev.оружие),spell=!!(f.ad5spellprefix||f.ad5attackrow&&f.ad5spellname||active(f,'ad5isspell')||(ev&&ev.заклинание));
+        var melee=!!(ev&&ev.классАтаки==='рукопашная'),ranged=!!(ev&&ev.классАтаки==='дальнобойная'),report=[],src=getObj('graphic',String(p.sourceToken||'')),comps=g.damage.components||[];
+        var baseType=comps.length?comps[0].type:'';
+        var castLevel=Number(f.ad5castlevel||f.ad5spellcastlevel||f.spelllevel||f.level)||0,school='';
+        if(f.ad5spellprefix){try{school=normalizeUserText(String(getAttrByName(cid,f.ad5spellprefix+'spellschool')||''));if(!castLevel)castLevel=Number(getAttrByName(cid,f.ad5spellprefix+'spelllevel'))||0;}catch(ignoreSchool){}}
+        var dmgTotal=Number(g.damage.amount)||0;
+        if(weapon&&dmgTotal>0){
+            var gwf=featureLine(cid,/^ПЕРЕБРОС\s+УРОНА\s*[:：]\s*(\d)\s*$/i);
+            if(gwf&&melee&&comps.length){var dl=rerollLowDice(msg,f.dmg1,Number(gwf.m[1]))+(criticalHit?rerollLowDice(msg,f.crit1,Number(gwf.m[1])):0);if(dl){comps[0].amount=Math.max(0,comps[0].amount+dl);g.damage.amount=Math.max(0,g.damage.amount+dl);report.push('переброс 1–'+gwf.m[1]+': '+(dl>0?'+':'')+dl);}}
+            var bc=featureLine(cid,/^КРИТ\s+КОСТИ\s*[:：]\s*(\d+)\s*$/i);
+            if(bc&&criticalHit&&melee){var die=weaponDieFromField(msg,f.dmg1);if(die)addFeatureDamage(g,rollFormulaText(bc.m[1]+'d'+die,cid),baseType||'дробящий','сокрушительный крит',report);}
+            var sa=featureLine(cid,/^СКРЫТАЯ\s+АТАКА\s*[:：]\s*([0-9dдD+]+)\s*$/i);
+            if(sa&&src&&featureUsed[src.id+'|sneak']!==featureTurnSeq&&p.attackMode!=='dis'&&(p.attackMode==='adv'||hasAllyNear(src,t.token))){
+                featureUsed[src.id+'|sneak']=featureTurnSeq;addFeatureDamage(g,featureRoll(sa.m[1],cid,criticalHit),baseType||'колющий','скрытая атака',report);
+            }
+        }
+        featureLinesAll(cid,/^РАЗ\s+В\s+ХОД\s*[:：]\s*([0-9dдD+]+)\s+([^,]+?)\s*(?:,\s*(.*))?$/i).forEach(function(x){
+            var opts=normalizeUserText(x.m[3]||''),key=(src?src.id:cid)+'|once|'+x.index;if(featureUsed[key]===featureTurnSeq||!(dmgTotal>0))return;
+            if(/заклинани/.test(opts)){if(!spell)return;}else if(!weapon)return;
+            if(/рукопаш/.test(opts)&&!melee)return;if(/дальнобой/.test(opts)&&!ranged)return;
+            if(/ранен/.test(opts)){var hpNow=Number(t.token.get('bar1_value')),hpMax=Number(t.token.get('bar1_max'));if(!(hpMax>0&&hpNow<hpMax))return;}
+            var ty=/^как\s+оружие$/i.test(x.m[2].trim())?(baseType||'дробящий'):(effectType(x.m[2])||baseType);
+            featureUsed[key]=featureTurnSeq;addFeatureDamage(g,featureRoll(x.m[1],cid,criticalHit&&weapon),ty,'раз в ход',report);
+        });
+        if(spell&&dmgTotal>0){
+            featureLinesAll(cid,/^УРОН\s+ЗАКЛИНАНИЙ\s+(.+?)\s*[:：]\s*(.+)$/i).forEach(function(x){var ty=effectType(x.m[1]);if(!ty)return;var c0=comps.filter(function(c){return c.type===ty;})[0];if(!c0)return;var add=featureNumber(x.m[2],cid,castLevel);if(add){c0.amount+=add;g.damage.amount+=add;report.push('+'+add+' к урону ('+ty+')');}});
+            featureLinesAll(cid,/^УРОН\s+ШКОЛЫ\s+(.+?)\s*[:：]\s*(.+)$/i).forEach(function(x){if(!school||school.indexOf(normalizeUserText(x.m[1]))<0||!comps.length)return;var add=featureNumber(x.m[2],cid,castLevel);if(add){comps[0].amount+=add;g.damage.amount+=add;report.push('+'+add+' к урону (школа)');}});
+        }
+        if(spell&&castLevel>=1&&g.healing&&Number(g.healing.amount)>0){
+            var hl=featureLine(cid,/^ЛЕЧЕНИЕ\s+ЗАКЛИНАНИЙ\s*[:：]\s*(.+)$/i);if(hl){var hadd=featureNumber(hl.m[1],cid,castLevel);if(hadd){g.healing.components.push({index:'feat',kind:'healing',type:'лечение',amount:hadd,base:hadd,crit:0,fixed:true});g.healing.amount+=hadd;report.push('+'+hadd+' к лечению');}}
+        }
+        if(report.length)p.featureReport='Особенности: '+report.join('; ')+'.';
+    }
+    function featureBeamBonus(cid,spellName){
+        var out=0;featureLinesAll(cid,/^ЛУЧ\s+(.+?)\s*[:：]\s*(.+)$/i).forEach(function(x){if(sameUserText(x.m[1],spellName)||normalizeUserText(spellName).indexOf(normalizeUserText(x.m[1]))>=0)out+=featureNumber(x.m[2],cid,0);});return out;
+    }
+    // ===== 4.3.163: окно после попадания (ad5_features) =====
+    //   ПОСЛЕ ПОПАДАНИЯ: Божественная кара | ЯЧЕЙКА | 2d8 излучение, +1d8 ЗА КРУГ, +1d8 ЕСЛИ ТИП нежить/исчадие, МАКС 5d8 | РУКОПАШНОЕ
+    //   ПОСЛЕ ПОПАДАНИЯ: Ошеломляющий удар | РЕСУРС Ки 1 | СПАС ТЕЛ СЛ 8+БМ+МДР: ошеломлён 1 | РУКОПАШНОЕ
+    //   ПОСЛЕ ПОПАДАНИЯ: Сбивающая атака | РЕСУРС Кости превосходства 1 | 1d8 как оружие, СПАС СИЛ СЛ 8+БМ+СИЛ: сбит с ног | ОРУЖИЕ
+    // После попадания атакующий получает кнопки; решение принимается, когда попадание уже известно.
+    var postHits=Object.create(null),postHitSeq=0,SAVE_ABILITY={'сил':'strength','лов':'dexterity','тел':'constitution','инт':'intelligence','мдр':'wisdom','хар':'charisma'};
+    function postHitLines(cid){return featureLinesAll(cid,/^ПОСЛЕ\s+ПОПАДАНИЯ\s*[:：]\s*(.+)$/i).map(function(x){var parts=x.m[1].split('|').map(function(y){return y.trim();});return {index:x.index,name:parts[0]||'Приём',resource:parts[1]||'-',effect:parts[2]||'',options:normalizeUserText(parts[3]||'')};});}
+    function slotAttrs(cid,level){var cur=findObjs({_type:'attribute',_characterid:cid,name:'lvl'+level+'_slots_expended'})[0]||null,tot=findObjs({_type:'attribute',_characterid:cid,name:'lvl'+level+'_slots_total'})[0]||null;return {cur:cur,tot:tot,left:cur?Number(cur.get('current'))||0:0};}
+    function sheetResource(cid,name){
+        var want=normalizeUserText(name),attrs=findObjs({_type:'attribute',_characterid:cid})||[],found=null;
+        attrs.forEach(function(a){var n=String(a.get('name')||''),m=/^(class_resource|other_resource|repeating_resource_.+_resource_(?:left|right))_name$/i.exec(n);if(m&&normalizeUserText(a.get('current'))===want&&!found)found=m[1];});
+        if(!found)return null;var va=attrs.filter(function(a){return String(a.get('name')||'').toLowerCase()===found.toLowerCase();})[0]||null;return va?{attr:va,left:Number(String(va.get('current')||'0').replace(',','.'))||0}:null;
+    }
+    function postHitOffer(msg,f,p,t,criticalHit){
+        if(!p.hasAttack||p.postHitOffered||!p.actor)return;p.postHitOffered=true;
+        var ev=p.событиеАтаки||{},weapon=!!ev.оружие,melee=ev.классАтаки==='рукопашная',lines=postHitLines(p.actor);if(!lines.length)return;
+        var buttons=[];lines.forEach(function(L){
+            if(/рукопаш/.test(L.options)&&!(weapon&&melee))return;if(/оруж/.test(L.options)&&!weapon)return;if(/заклинани/.test(L.options)&&weapon)return;
+            var res=normalizeUserText(L.resource),id='h'+Date.now().toString(36)+'-'+(++postHitSeq);
+            postHits[id]={id:id,pid:msg.playerid,actor:String(p.actor),sourceToken:String(p.sourceToken||''),target:String(t.token.id),crit:!!criticalHit,weaponType:(ev&&ev.оружие&&p.lastDamageType)||'',line:L,expires:Date.now()+300000};
+            if(/^ячейк/.test(res)){var lv=[];for(var n=1;n<=9;n++){var sa=slotAttrs(p.actor,n);if(sa.left>0)lv.push('['+n+'](!ad5 posthit '+id+' '+n+')');}if(lv.length)buttons.push(esc(L.name)+': круг '+lv.join(' '));}
+            else{var rm=/^ресурс\s+(.+?)(?:\s+(\d+))?$/i.exec(L.resource.trim());if(rm){var r=sheetResource(p.actor,rm[1]);if(!r||r.left<Number(rm[2]||1))return;}buttons.push('['+esc(L.name)+'](!ad5 posthit '+id+' 0)');}
+        });
+        if(buttons.length)setTimeout(function(){reply(msg.playerid,'<b>После попадания</b> → '+esc(t.token.get('name')||'цель')+': '+buttons.join(' · '));},700);
+    }
+    function featureSaveRoll(token,ab,dc){
+        var cid=String(token.get('represents')||''),full=SAVE_ABILITY[ab],npc=String(getAttrByName(cid,'npc')||'')==='1';
+        var raw=npc?getAttrByName(cid,'npc_'+ab.replace('сил','str').replace('лов','dex').replace('тел','con').replace('инт','int').replace('мдр','wis').replace('хар','cha')+'_save'):getAttrByName(cid,full+'_save_bonus');
+        var bonus=Number(raw);if(!Number.isFinite(bonus)||String(raw).trim()===''){bonus=Number(getAttrByName(cid,full+'_mod'))||0;}
+        var die=randomInteger(20),total=die+bonus;return {die:die,bonus:bonus,total:total,success:die!==1&&(die===20||total>=dc)};
+    }
+    function postHitCommand(pid,id,levelArg){
+        var rec=postHits[String(id||'')];if(!rec||rec.expires<Date.now())throw new Error('Кнопка устарела.');if(rec.pid!==pid&&!playerIsGM(pid))throw new Error('Использовать может только атакующий.');
+        var L=rec.line,cid=rec.actor,tok=getObj('graphic',rec.target),src=getObj('graphic',rec.sourceToken);if(!tok)throw new Error('Цель не найдена.');
+        var res=normalizeUserText(L.resource),level=Number(levelArg)||0,spent='';
+        if(/^ячейк/.test(res)){if(level<1)throw new Error('Выберите круг ячейки.');var sa=slotAttrs(cid,level);if(sa.left<1)throw new Error('Нет ячеек '+level+' круга.');sa.cur.set('current',String(sa.left-1));spent='ячейка '+level+' круга (осталось '+(sa.left-1)+')';}
+        else{var rm=/^ресурс\s+(.+?)(?:\s+(\d+))?$/i.exec(L.resource.trim());if(rm){var r=sheetResource(cid,rm[1]),cost=Number(rm[2]||1);if(!r||r.left<cost)throw new Error('Недостаточно ресурса «'+rm[1]+'».');r.attr.set('current',String(r.left-cost));spent=rm[1]+' −'+cost+' (осталось '+(r.left-cost)+')';}}
+        delete postHits[rec.id];
+        var parts=[],buf='',depth=0;String(L.effect).split('').forEach(function(ch){if(ch===','&&depth===0){parts.push(buf);buf='';}else buf+=ch;});parts.push(buf);parts=parts.map(function(x){return x.trim();}).filter(Boolean);
+        var dmg=null,extra=0,condExtra=0,cap=0,effects=[],save=null,lines=[],label=L.name;
+        parts.forEach(function(part){var m;
+            if((m=/^\+\s*(\d+)d(\d+)\s+за\s+круг$/i.exec(part))){extra+=Number(m[1])*Math.max(0,level-1);return;}
+            if((m=/^\+\s*(\d+)d(\d+)\s+если\s+(.+)$/i.exec(part))){if(creatureMatches(tok,m[3]))condExtra+=Number(m[1]);return;}
+            if((m=/^макс\s+(\d+)d\d+$/i.exec(part))){cap=Number(m[1]);return;}
+            if((m=/^спас\s+(сил|лов|тел|инт|мдр|хар)(?:\s+сл\s+([^:]+))?\s*:\s*(.+)$/i.exec(part))){save={ab:normalizeUserText(m[1]),dcExpr:m[2]||'',effect:m[3]};return;}
+            if(!dmg&&(m=/^(\d+)d(\d+)(?:\s*\+\s*(\d+))?\s+(.+)$/i.exec(part))){dmg={n:Number(m[1]),d:Number(m[2]),bonus:Number(m[3]||0),type:m[4].trim()};return;}
+            effects.push(part);
+        });
+        if(dmg){
+            var n=dmg.n+extra;if(cap&&n>cap)n=cap;n+=condExtra;
+            var formula=n+'d'+dmg.d,amount=rollFormulaText(formula,cid)+(rec.crit?rollFormulaText(formula,cid):0)+dmg.bonus;
+            var ty=/^как\s+оружие$/i.test(dmg.type)?(rec.weaponType||'дробящий'):(effectType(dmg.type)||dmg.type);
+            reactionDamage(tok.id,amount,ty,label,{actorId:cid,sourceTokenId:rec.sourceToken,playerId:pid,fixedDamage:true});
+            lines.push(formula+(rec.crit?' (крит ×2 кости)':'')+' = '+amount+' '+ty);
+        }
+        var applyFx=function(text){if(!text)return;var mv=/толч\s*(\d+)/i.exec(text);if(mv&&src&&typeof AD5Movement!=='undefined'&&AD5Movement.forceMove){try{AD5Movement.forceMove(tok,src,Number(mv[1]),'push',{reason:'ТОЛЧ '+mv[1]+' фт'});}catch(e){lines.push('толчок: '+esc(e.message||e));}text=text.replace(/толч\s*\d+\s*(фт)?/i,'').replace(/^[\s,]+|[\s,]+$/g,'');}
+            if(text&&typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.applyCondition==='function'){try{AD5EffectTurns.applyCondition(tok,text,{actionName:label,sourceToken:rec.sourceToken,actor:cid});lines.push(text);}catch(e){lines.push(esc(e.message||e));}}};
+        effects.forEach(applyFx);
+        if(save){var dc=save.dcExpr?featureNumber(save.dcExpr.replace(/бм/gi,String(Number(getAttrByName(cid,'pb'))||2)),cid,level):(Number(getAttrByName(cid,'spell_save_dc'))||10);
+            var sr=featureSaveRoll(tok,save.ab,dc);lines.push('спасбросок '+save.ab.toUpperCase()+': '+sr.die+(sr.bonus>=0?'+':'')+sr.bonus+' = '+sr.total+' против СЛ '+dc+' — '+(sr.success?'успех':'провал'));if(!sr.success)applyFx(save.effect);}
+        sendChat('шепот звезд','/w gm <b>'+esc(label)+'</b> → '+esc(tok.get('name')||'')+(spent?' · '+esc(spent):'')+'<br>'+lines.map(esc).join('<br>'));
+        reply(pid,'<b>'+esc(label)+'</b> → '+esc(tok.get('name')||'')+(spent?' · '+esc(spent):'')+(lines.length?': '+esc(lines.join('; ')):''));
     }
     function persistentAreaMovementTrigger(snapshot,rule,targetId,label,context){
         rule=persistentAreaMovementRule(snapshot,rule);
