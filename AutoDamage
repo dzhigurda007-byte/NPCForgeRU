@@ -48,7 +48,7 @@ var AD5Background = (function(){
     return {put:put,isReady:function(){return ready;}};
 }());
 /*
-AutoDamage 4.3.170 / NPC Forge RU 2.7.4 — «шепот звезд».
+AutoDamage 4.3.171 / NPC Forge RU 2.7.4 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Обычная атака игрока -> Target AD5 на карте -> штатные запросы преимущества/помехи/доп. урона Roll20 -> бросок -> урон и крит. NPC/Transform сохраняют штатный Target Roll20. AutoFront заранее держит боевые токены на переднем плане. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -73,6 +73,7 @@ hp листа используется однократно как началь�
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
 4.3.163: классовые механики — атрибут листа ad5_features: КРИТ 19/18, КРИТ КОСТИ, ПЕРЕБРОС УРОНА, СКРЫТАЯ АТАКА, РАЗ В ХОД, УРОН ЗАКЛИНАНИЙ/ШКОЛЫ, ЛУЧ, ЛЕЧЕНИЕ ЗАКЛИНАНИЙ; ПОСЛЕ ПОПАДАНИЯ — кнопки с расходом ячейки или ресурса (!ad5 posthit). ЯРОСТЬ, НЕУДЕРЖИМАЯ ЯРОСТЬ (!ad5 relentless-reset), ПРИ УБИЙСТВЕ [ЗАКЛИНАНИЕМ]; метамагия (!ad5 meta: Усиленное, Продлённое, Удвоенное, Осторожное), ФОРМИРОВАНИЕ ЗАКЛИНАНИЙ; спасбросок может быть автоуспешным. Описание — docs/class-features.md.
+4.3.171: если выбранный токен не подходит под цель заклинания, концентрация этой карточки снимается (Sides 1.1.1: персонаж под управлением ГМ — сторона игроков).
 4.3.170: свойства оружия — из описания атаки (фехтовальное, лёгкое, тяжёлое, двуручное, универсальное, дальнобойное, метательное, досягаемость, посеребрённое, магическое, священный/сияющий клинок): Скрытая атака, Сражение большим оружием, опция «СВОЙСТВО <имя>» для РАЗ В ХОД / ПРИ ПОПАДАНИИ / ПОСЛЕ ПОПАДАНИЯ; событиеАтаки.свойстваОружия.
 4.3.169: перед атакой персонажа вызывается AD5Classes.ensure — лист, ещё не пересчитанный скриптом Classes, обновляется автоматически; без Classes — подсказка ГМ.
 4.3.168: меню после попадания — карточка (Божественная кара: кнопки кругов с остатком ячеек; приёмы: расход ресурса и остаток; «Ничего не добавлять»); ячейка/ресурс списываются автоматически.
@@ -787,7 +788,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.170', diagnostics = [], debug = false;
+    var VERSION = '4.3.171', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -5660,6 +5661,8 @@ var AD5 = (function () {
                 delete pending[msg.playerid];
                 if(p.batch)multiResult(p.batch,p.target,'не подходит под формулировку цели');
                 else reply(msg.playerid,'<b>'+esc(p.name)+'</b>: выбранный токен не подходит под формулировку цели заклинания.');
+                // 4.3.171: заклинание не подействовало — концентрация, начатая этой карточкой, не остаётся висеть.
+                if(!p.batch&&p.concentrationId&&typeof AD5Concentration!=='undefined'&&AD5Concentration&&typeof AD5Concentration.end==='function'){var rejConc=String(p.concentrationId);setTimeout(function(){try{AD5Concentration.end(rejConc,'цель не подходит');}catch(ignoreRejConc){}},0);}
                 if(p.phaseExecution&&typeof AD5Phases!=='undefined'&&AD5Phases.failed)AD5Phases.failed(p,t.token);
                 return;
             }

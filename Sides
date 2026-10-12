@@ -2,7 +2,8 @@
 if(typeof AD5Sides!=='undefined'&&AD5Sides) {
     log('AD5Sides: duplicate module skipped; keep one installed copy.');
 } else {
-/* AD5 Sides 1.1.0 — spell target semantics + automatic allegiance.
+/* AD5 Sides 1.1.1 — spell target semantics + automatic allegiance.
+ * 1.1.1: лист персонажа игрока (не NPC, с классом/уровнем) — сторона игроков и под управлением ГМ.
  * Player side: player-controlled character/token, or native green marker.
  * Positive effects: same side. Negative effects: opposite side, plus player
  * allies bearing 001-karma-on or the GM-only hidden karma flag.
@@ -12,7 +13,7 @@ if(typeof AD5Sides!=='undefined'&&AD5Sides) {
  */
 var AD5Sides=(function(){
     'use strict';
-    var VERSION='1.1.0',markerRaw=null,karmaTags={},refreshPending={},refreshTimer=null;
+    var VERSION='1.1.1',markerRaw=null,karmaTags={},refreshPending={},refreshTimer=null;
     function root(){state.AD5Sides=state.AD5Sides||{};state.AD5Sides.karma=state.AD5Sides.karma||{};return state.AD5Sides;}
     function esc(s){return String(s).replace(/[&<>"'\r\n]/g,function(c){return '&#'+c.charCodeAt(0)+';';});}
     function gm(s){sendChat('AD5 стороны','/w gm '+s,null,{noarchive:true});}
@@ -48,7 +49,11 @@ var AD5Sides=(function(){
         // player character remains authoritative while a temporary form is used.
         return hasPlayer(c?c.get('controlledby'):token.get('controlledby'))||!!(original&&hasPlayer(original.get('controlledby')));
     }
-    function side(token){return green(token)||controlled(token)?'players':'npcs';}
+    // 1.1.1: лист персонажа игрока (не NPC, с классом или уровнем) — сторона игроков, даже если им управляет только ГМ.
+    function attrNow(cid,name){var a=findObjs({_type:'attribute',_characterid:cid,name:name})[0];return a?String(a.get('current')||'').trim():'';}
+    function pcSheet(c){if(!c)return false;var cid=c.id;if(attrNow(cid,'npc')==='1')return false;return !!(attrNow(cid,'class')||attrNow(cid,'base_level')||attrNow(cid,'cust_classname'));}
+    function pcToken(token){if(!token)return false;var c=getObj('character',token.get('represents')),original=originalCharacter(token);return pcSheet(c)||pcSheet(original);}
+    function side(token){return green(token)||controlled(token)||pcToken(token)?'players':'npcs';}
     function sourceToken(source){
         source=source||{};
         return getObj('graphic',String(source.sourceToken||source.source||''));
@@ -57,7 +62,7 @@ var AD5Sides=(function(){
         source=source||{};
         var t=sourceToken(source);
         if(t)return side(t);
-        var c=getObj('character',source.actor||'');return c&&hasPlayer(c.get('controlledby'))?'players':'npcs';
+        var c=getObj('character',source.actor||'');return c&&(hasPlayer(c.get('controlledby'))||pcSheet(c))?'players':'npcs';
     }
     function targetModeText(value){
         var text=String(value==null?'':value)
