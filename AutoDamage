@@ -48,7 +48,7 @@ var AD5Background = (function(){
     return {put:put,isReady:function(){return ready;}};
 }());
 /*
-AutoDamage 4.3.167 / NPC Forge RU 2.7.4 — «шепот звезд».
+AutoDamage 4.3.168 / NPC Forge RU 2.7.4 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Обычная атака игрока -> Target AD5 на карте -> штатные запросы преимущества/помехи/доп. урона Roll20 -> бросок -> урон и крит. NPC/Transform сохраняют штатный Target Roll20. AutoFront заранее держит боевые токены на переднем плане. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -73,6 +73,7 @@ hp листа используется однократно как началь�
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
 4.3.163: классовые механики — атрибут листа ad5_features: КРИТ 19/18, КРИТ КОСТИ, ПЕРЕБРОС УРОНА, СКРЫТАЯ АТАКА, РАЗ В ХОД, УРОН ЗАКЛИНАНИЙ/ШКОЛЫ, ЛУЧ, ЛЕЧЕНИЕ ЗАКЛИНАНИЙ; ПОСЛЕ ПОПАДАНИЯ — кнопки с расходом ячейки или ресурса (!ad5 posthit). ЯРОСТЬ, НЕУДЕРЖИМАЯ ЯРОСТЬ (!ad5 relentless-reset), ПРИ УБИЙСТВЕ [ЗАКЛИНАНИЕМ]; метамагия (!ad5 meta: Усиленное, Продлённое, Удвоенное, Осторожное), ФОРМИРОВАНИЕ ЗАКЛИНАНИЙ; спасбросок может быть автоуспешным. Описание — docs/class-features.md.
+4.3.168: меню после попадания — карточка (Божественная кара: кнопки кругов с остатком ячеек; приёмы: расход ресурса и остаток; «Ничего не добавлять»); ячейка/ресурс списываются автоматически.
 4.3.167: «ТРАТИТ РЕСУРС: <ресурс> N» в описании действия листа — расход ресурса (Class Resource / Other Resource / Resources) при нажатии; без ресурса действие блокируется (кнопки Classes 1.4.0).
 4.3.166: РАЗ В ХОД / ПРИ ПОПАДАНИИ — опции «АТАКА» (любой бросок атаки) и «ЭФФЕКТ <название>» (только пока эффект на атакующем); ПОСЛЕ ПОПАДАНИЯ — фиксированный урон «15 некротическая»; ЛИХАЯ УДАЛЬ для Скрытой атаки; подклассы официальных дополнений (скрипт Classes 1.2.0).
 4.3.165: ПОСЛЕ ПОПАДАНИЯ — в эффекте спасброска части через «/», «урон МДР излучение» наносится только при провале (Цепи правосудия); РАЗ В ХОД / ПРИ ПОПАДАНИИ — опция «НАЗВАНИЕ <атака>» (священный клинок); директива ФЕХТОВАЛЬНОЕ: <атака> для Скрытой атаки.
@@ -784,7 +785,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.167', diagnostics = [], debug = false;
+    var VERSION = '4.3.168', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -7831,6 +7832,7 @@ var AD5 = (function () {
         if (sub === 'neighbor') { neighborCommand(pid,args[2],args[3]); return; }
         if (sub === 'replay') { missReplayCommand(pid,args[2]); return; }
         if (sub === 'posthit') { postHitCommand(pid,args[2],args[3]); return; }
+        if (sub === 'posthit-skip') { postHitSkip(pid,args[2]); return; }
         if (sub === 'meta') { metaCommand(pid,args); return; }
         if (sub === 'relentless-reset') { if(!playerIsGM(pid))throw new Error('Только ГМ.');state.AD5Relentless={};reply(pid,'Неудержимая ярость: СЛ сброшена (отдых).');return; }
         if (sub === 'chain') { chainCommand(pid,args[2]); return; }
@@ -8416,6 +8418,9 @@ var AD5 = (function () {
                     // and no explicit attack class. A short, non-long range is the
                     // safe final fallback for their hit-event classification.
                     else if(attackRangeInfo.spec&&!attackRangeInfo.spec.long&&attackRangeInfo.spec.normal<=10)классСобытия='рукопашная';
+                    // 4.3.168: у оружия листа поле дистанции часто пустое — класс атаки по расстоянию до цели
+                    // (до 10 фт — рукопашная), иначе Божественная кара и др. «РУКОПАШНОЕ» не предлагались.
+                    if(классСобытия==='неизвестно'&&!spellMeta){var dFallback=Number(дистанцияСобытия);классСобытия=(Number.isFinite(dFallback)&&dFallback>10.01)?'дальнобойная':'рукопашная';}
                     событиеАтаки={
                         игрокId:pid,
                         источникПерсонажId:String(c.id||''),
@@ -9004,7 +9009,14 @@ var AD5 = (function () {
     // После попадания атакующий получает кнопки; решение принимается, когда попадание уже известно.
     var postHits=Object.create(null),postHitSeq=0,SAVE_ABILITY={'сил':'strength','лов':'dexterity','тел':'constitution','инт':'intelligence','мдр':'wisdom','хар':'charisma'};
     function postHitLines(cid){return featureLinesAll(cid,/^ПОСЛЕ\s+ПОПАДАНИЯ\s*[:：]\s*(.+)$/i).map(function(x){var parts=x.m[1].split('|').map(function(y){return y.trim();});return {index:x.index,name:parts[0]||'Приём',resource:parts[1]||'-',effect:parts[2]||'',options:normalizeUserText(parts[3]||'')};});}
-    function slotAttrs(cid,level){var cur=findObjs({_type:'attribute',_characterid:cid,name:'lvl'+level+'_slots_expended'})[0]||null,tot=findObjs({_type:'attribute',_characterid:cid,name:'lvl'+level+'_slots_total'})[0]||null;return {cur:cur,tot:tot,left:cur?Number(cur.get('current'))||0:0};}
+    // 4.3.168: поле «осталось ячеек» (lvlN_slots_expended) создаётся листом только после первой правки; если его нет,
+    // доступны все ячейки круга (lvlN_slots_total), а поле создаётся при первом расходе.
+    function slotAttrs(cid,level){
+        var cur=findObjs({_type:'attribute',_characterid:cid,name:'lvl'+level+'_slots_expended'})[0]||null,tot=findObjs({_type:'attribute',_characterid:cid,name:'lvl'+level+'_slots_total'})[0]||null;
+        var total=tot?Number(tot.get('current'))||0:0,blankCur=!cur||String(cur.get('current')).trim()==='';
+        if(blankCur&&total>0){if(!cur)cur=createObj('attribute',{characterid:cid,name:'lvl'+level+'_slots_expended',current:String(total)});else cur.set('current',String(total));}
+        return {cur:cur,tot:tot,left:cur?Number(cur.get('current'))||0:0};
+    }
     function sheetResource(cid,name){
         var want=normalizeUserText(name),attrs=findObjs({_type:'attribute',_characterid:cid})||[],found=null;
         attrs.forEach(function(a){var n=String(a.get('name')||''),m=/^(class_resource|other_resource|repeating_resource_.+_resource_(?:left|right))_name$/i.exec(n);if(m&&normalizeUserText(a.get('current'))===want&&!found)found=m[1];});
@@ -9015,14 +9027,24 @@ var AD5 = (function () {
         var ev=p.событиеАтаки||{},weapon=!!ev.оружие,melee=ev.классАтаки==='рукопашная',lines=postHitLines(p.actor);
         if(p.sneakOffer)lines=[{index:-1,name:'Скрытая атака',resource:'-',effect:p.sneakOffer.dice+' '+p.sneakOffer.type,options:'',onceKey:p.sneakOffer.key}].concat(lines);
         if(!lines.length)return;
-        var buttons=[];lines.forEach(function(L){
+        // 4.3.168: меню после попадания — карточка: строка на каждое умение, кнопки кругов ячеек (с остатком) или ресурса;
+        // ресурс/ячейка списываются при нажатии (!ad5 posthit). «Ничего не добавлять» закрывает меню.
+        var rows=[],ids=[],tmplSafe=function(x){return String(x).replace(/[{}|]/g,' ').replace(/\]/g,')').replace(/\[/g,'(');};
+        lines.forEach(function(L){
             if(/рукопаш/.test(L.options)&&!(weapon&&melee))return;if(/оруж/.test(L.options)&&!weapon)return;if(/заклинани/.test(L.options)&&weapon)return;
             var res=normalizeUserText(L.resource),id='h'+Date.now().toString(36)+'-'+(++postHitSeq);
-            postHits[id]={id:id,pid:msg.playerid,actor:String(p.actor),sourceToken:String(p.sourceToken||''),target:String(t.token.id),crit:!!criticalHit,weaponType:(ev&&ev.оружие&&p.lastDamageType)||'',line:L,expires:Date.now()+300000};
-            if(/^ячейк/.test(res)){var lv=[];for(var n=1;n<=9;n++){var sa=slotAttrs(p.actor,n);if(sa.left>0)lv.push('['+n+'](!ad5 posthit '+id+' '+n+')');}if(lv.length)buttons.push(esc(L.name)+': круг '+lv.join(' '));}
-            else{var rm=/^ресурс\s+(.+?)(?:\s+(\d+))?$/i.exec(L.resource.trim());if(rm){var r=sheetResource(p.actor,rm[1]);if(!r||r.left<Number(rm[2]||1))return;}buttons.push('['+esc(L.name)+(L.onceKey?' '+esc(L.effect.split(' ')[0]):'')+'](!ad5 posthit '+id+' 0)');}
+            var rec={id:id,pid:msg.playerid,actor:String(p.actor),sourceToken:String(p.sourceToken||''),target:String(t.token.id),crit:!!criticalHit,weaponType:(ev&&ev.оружие&&p.lastDamageType)||'',line:L,expires:Date.now()+300000};
+            var hint=tmplSafe(String(L.effect||'').replace(/\s*,\s*/g,', ').slice(0,90));
+            if(/^ячейк/.test(res)){var lv=[];for(var n=1;n<=9;n++){var sa=slotAttrs(p.actor,n);if(sa.left>0)lv.push('['+n+' круг ('+sa.left+')](!ad5 posthit '+id+' '+n+')');}
+                if(!lv.length)return;postHits[id]=rec;ids.push(id);rows.push({name:L.name,body:lv.join(' ')+(hint?' <br><i>'+esc(hint)+'</i>':'')});}
+            else{var rm=/^ресурс\s+(.+?)(?:\s+(\d+))?$/i.exec(L.resource.trim()),cost='';
+                if(rm){var r=sheetResource(p.actor,rm[1]);if(!r||r.left<Number(rm[2]||1))return;cost=rm[1]+' −'+Number(rm[2]||1)+' (осталось '+r.left+')';}
+                postHits[id]=rec;ids.push(id);rows.push({name:L.name,body:'[Применить'+(L.onceKey?' '+esc(L.effect.split(' ')[0]):'')+'](!ad5 posthit '+id+' 0)'+(cost?' '+esc(cost):'')+(hint&&!L.onceKey?' <br><i>'+esc(hint)+'</i>':'')});}
         });
-        if(buttons.length)setTimeout(function(){reply(msg.playerid,'<b>После попадания</b> → '+esc(t.token.get('name')||'цель')+': '+buttons.join(' · '));},700);
+        if(!rows.length)return;
+        var skipId='s'+Date.now().toString(36)+'-'+(++postHitSeq);postHitGroups[skipId]=ids;
+        var card='&{template:default} {{name=После попадания → '+tmplSafe(t.token.get('name')||'цель')+(criticalHit?' (крит)':'')+'}} '+rows.map(function(r){return '{{'+tmplSafe(r.name)+'='+r.body+'}}';}).join(' ')+' {{ =[Ничего не добавлять](!ad5 posthit-skip '+skipId+')}}';
+        setTimeout(function(){reply(msg.playerid,card);},700);
     }
     function featureSaveRoll(token,ab,dc){
         var cid=String(token.get('represents')||''),full=SAVE_ABILITY[ab],npc=String(getAttrByName(cid,'npc')||'')==='1';
@@ -9030,6 +9052,8 @@ var AD5 = (function () {
         var bonus=Number(raw);if(!Number.isFinite(bonus)||String(raw).trim()===''){bonus=Number(getAttrByName(cid,full+'_mod'))||0;}
         var die=randomInteger(20),total=die+bonus;return {die:die,bonus:bonus,total:total,success:die!==1&&(die===20||total>=dc)};
     }
+    var postHitGroups={};
+    function postHitSkip(pid,id){var g=postHitGroups[String(id||'')];if(!g)return;delete postHitGroups[id];g.forEach(function(x){var r=postHits[x];if(r&&(r.pid===pid||playerIsGM(pid)))delete postHits[x];});reply(pid,'Ничего не добавлено.');}
     function postHitCommand(pid,id,levelArg){
         var rec=postHits[String(id||'')];if(!rec||rec.expires<Date.now())throw new Error('Кнопка устарела.');if(rec.pid!==pid&&!playerIsGM(pid))throw new Error('Использовать может только атакующий.');
         var L=rec.line,cid=rec.actor,tok=getObj('graphic',rec.target),src=getObj('graphic',rec.sourceToken);if(!tok)throw new Error('Цель не найдена.');
