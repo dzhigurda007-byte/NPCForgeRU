@@ -8948,7 +8948,7 @@ var AD5 = (function () {
     // посеребрённое, магическое, «священный/сияющий клинок». Механики, зависящие от типа оружия, читают их отсюда.
     var WEAPON_PROPS=[['фехтовальное',/фехтовальн|finesse/],['лёгкое',/л[её]гк|\blight\b/],['тяжёлое',/тяж[её]л|\bheavy\b/],['двуручное',/двуручн|two-?handed/],
         ['универсальное',/универсальн|versatile/],['дальнобойное',/дальнобойн|боеприпас|\branged\b|ammunition/],['метательное',/метательн|\bthrown\b/],['досягаемость',/досягаем|\breach\b/],
-        ['посеребрённое',/посеребр|silvered/],['магическое',/магическ\S*\s+оружи|\bmagic weapon\b/],['священный клинок',/(?:священн|сияющ)\S*\s+клин/]];
+        ['посеребрённое',/посеребр|silvered/],['мистическое оружие',/мистическ\S*\s+оружи|arcane weapon/],['магическое',/магическ\S*\s+оружи|\bmagic weapon\b/],['священный клинок',/(?:священн|сияющ)\S*\s+клин/]];
     function attackRowId(cid,f){
         var row=String(f.ad5attackrow||'');if(row)return row;var nm=normalizeUserText(attackName(f)||'');if(!nm)return '';
         (findObjs({_type:'attribute',_characterid:cid})||[]).some(function(a){var m=/^repeating_attack_(.+)_atkname$/i.exec(String(a.get('name')||''));if(m&&normalizeUserText(a.get('current'))===nm){row=m[1];return true;}return false;});
