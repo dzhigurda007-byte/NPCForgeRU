@@ -48,7 +48,7 @@ var AD5Background = (function(){
     return {put:put,isReady:function(){return ready;}};
 }());
 /*
-AutoDamage 4.3.169 / NPC Forge RU 2.7.4 — «шепот звезд».
+AutoDamage 4.3.170 / NPC Forge RU 2.7.4 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Обычная атака игрока -> Target AD5 на карте -> штатные запросы преимущества/помехи/доп. урона Roll20 -> бросок -> урон и крит. NPC/Transform сохраняют штатный Target Roll20. AutoFront заранее держит боевые токены на переднем плане. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -73,6 +73,7 @@ hp листа используется однократно как началь�
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
 4.3.163: классовые механики — атрибут листа ad5_features: КРИТ 19/18, КРИТ КОСТИ, ПЕРЕБРОС УРОНА, СКРЫТАЯ АТАКА, РАЗ В ХОД, УРОН ЗАКЛИНАНИЙ/ШКОЛЫ, ЛУЧ, ЛЕЧЕНИЕ ЗАКЛИНАНИЙ; ПОСЛЕ ПОПАДАНИЯ — кнопки с расходом ячейки или ресурса (!ad5 posthit). ЯРОСТЬ, НЕУДЕРЖИМАЯ ЯРОСТЬ (!ad5 relentless-reset), ПРИ УБИЙСТВЕ [ЗАКЛИНАНИЕМ]; метамагия (!ad5 meta: Усиленное, Продлённое, Удвоенное, Осторожное), ФОРМИРОВАНИЕ ЗАКЛИНАНИЙ; спасбросок может быть автоуспешным. Описание — docs/class-features.md.
+4.3.170: свойства оружия — из описания атаки (фехтовальное, лёгкое, тяжёлое, двуручное, универсальное, дальнобойное, метательное, досягаемость, посеребрённое, магическое, священный/сияющий клинок): Скрытая атака, Сражение большим оружием, опция «СВОЙСТВО <имя>» для РАЗ В ХОД / ПРИ ПОПАДАНИИ / ПОСЛЕ ПОПАДАНИЯ; событиеАтаки.свойстваОружия.
 4.3.169: перед атакой персонажа вызывается AD5Classes.ensure — лист, ещё не пересчитанный скриптом Classes, обновляется автоматически; без Classes — подсказка ГМ.
 4.3.168: меню после попадания — карточка (Божественная кара: кнопки кругов с остатком ячеек; приёмы: расход ресурса и остаток; «Ничего не добавлять»); ячейка/ресурс списываются автоматически.
 4.3.167: «ТРАТИТ РЕСУРС: <ресурс> N» в описании действия листа — расход ресурса (Class Resource / Other Resource / Resources) при нажатии; без ресурса действие блокируется (кнопки Classes 1.4.0).
@@ -786,7 +787,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.169', diagnostics = [], debug = false;
+    var VERSION = '4.3.170', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -8436,6 +8437,7 @@ var AD5 = (function () {
                         заклинание:!!spellMeta,
                         оружие:!spellMeta,
                         классАтаки:классСобытия,
+                        свойстваОружия:spellMeta?[]:(function(){try{return weaponProps(String(c.id||''),f).list;}catch(ignoreWp){return [];}})(),
                         дистанция:Number.isFinite(Number(дистанцияСобытия))?Number(дистанцияСобытия):null,
                         кругЗаклинания:(spellMeta&&spellMeta.castLevel!==undefined&&spellMeta.castLevel!==null)?Number(spellMeta.castLevel):null
                     };
@@ -8938,17 +8940,35 @@ var AD5 = (function () {
             return rel==='ally'&&combatRangeFeet(o,targetToken)<=5.01;
         });
     }
+    // 4.3.170: свойства оружия берутся из описания атаки (поле «Описание» строки атаки листа, {{desc}} карточки):
+    // фехтовальное, лёгкое, тяжёлое, двуручное, универсальное, дальнобойное/боеприпасы, метательное, досягаемость,
+    // посеребрённое, магическое, «священный/сияющий клинок». Механики, зависящие от типа оружия, читают их отсюда.
+    var WEAPON_PROPS=[['фехтовальное',/фехтовальн|finesse/],['лёгкое',/л[её]гк|\blight\b/],['тяжёлое',/тяж[её]л|\bheavy\b/],['двуручное',/двуручн|two-?handed/],
+        ['универсальное',/универсальн|versatile/],['дальнобойное',/дальнобойн|боеприпас|\branged\b|ammunition/],['метательное',/метательн|\bthrown\b/],['досягаемость',/досягаем|\breach\b/],
+        ['посеребрённое',/посеребр|silvered/],['магическое',/магическ\S*\s+оружи|\bmagic weapon\b/],['священный клинок',/(?:священн|сияющ)\S*\s+клин/]];
+    function attackRowId(cid,f){
+        var row=String(f.ad5attackrow||'');if(row)return row;var nm=normalizeUserText(attackName(f)||'');if(!nm)return '';
+        (findObjs({_type:'attribute',_characterid:cid})||[]).some(function(a){var m=/^repeating_attack_(.+)_atkname$/i.exec(String(a.get('name')||''));if(m&&normalizeUserText(a.get('current'))===nm){row=m[1];return true;}return false;});
+        return row;
+    }
+    function weaponProps(cid,f){
+        var text=String(f.description!==undefined?f.description:(f.desc||'')),row=attackRowId(cid,f);
+        if(row){var d=String(getAttrByName(cid,'repeating_attack_'+row+'_atk_desc')||'');if(d&&text.indexOf(d)<0)text+=' \n'+d;}
+        text=normalizeUserText(text.replace(/<[^>]+>/g,' '));var out={list:[],any:false};
+        text.split(/\n|;|\.\s/).forEach(function(part){part=part.trim();WEAPON_PROPS.forEach(function(w){if(w[1].test(part)&&out.list.indexOf(w[0])<0)out.list.push(w[0]);});});
+        out.any=out.list.length>0;out.has=function(n){return out.list.indexOf(n)>=0;};return out;
+    }
     function sneakWeapon(cid,f,ranged){
         if(ranged)return true;
-        // 4.3.165: «ФЕХТОВАЛЬНОЕ: Длинный меч» — оружие считается фехтовальным (священный клинок).
+        var wp=weaponProps(cid,f);
+        // Описание атаки — главный источник: фехтовальное, дальнобойное (в т. ч. метательное фехтовальное) или священный клинок.
+        if(wp.any)return wp.has('фехтовальное')||wp.has('дальнобойное')||wp.has('священный клинок');
+        // 4.3.165: «ФЕХТОВАЛЬНОЕ: Длинный меч» в ad5_features (совместимость).
         var an=normalizeUserText(attackName(f)||'');if(an&&featureLinesAll(cid,/^ФЕХТОВАЛЬНОЕ\s*[:：]\s*(.+)$/i).some(function(x){var w=normalizeUserText(x.m[1]);return w&&an.indexOf(w)>=0;}))return true;
-        var row=String(f.ad5attackrow||'');
-        if(!row){var nm=normalizeUserText(attackName(f)||'');(findObjs({_type:'attribute',_characterid:cid})||[]).some(function(a){var m=/^repeating_attack_(.+)_atkname$/i.exec(String(a.get('name')||''));if(m&&normalizeUserText(a.get('current'))===nm){row=m[1];return true;}return false;});}
-        if(!row)return true;
+        // Свойства в описании не указаны — старая эвристика по характеристике атаки листа.
+        var row=attackRowId(cid,f);if(!row)return true;
         var base=String(getAttrByName(cid,'repeating_attack_'+row+'_atkattr_base')||'');
-        if(/dexterity|finesse/i.test(base))return true;
-        var props=normalizeUserText(String(getAttrByName(cid,'repeating_attack_'+row+'_atk_desc')||'')+' '+String(getAttrByName(cid,'repeating_attack_'+row+'_atkname')||''));
-        return /фехтов|finesse|дальнобой|ranged/.test(props)||(!/strength/i.test(base)&&!base);
+        return /dexterity|finesse/i.test(base)||(!/strength/i.test(base)&&!base);
     }
     function addFeatureDamage(g,amount,type,label,report){
         amount=Math.max(0,Math.floor(Number(amount)||0));if(!amount||!g||!g.damage)return;
@@ -8967,6 +8987,7 @@ var AD5 = (function () {
         if(weapon&&melee&&dmgTotal>0&&src){var rg=featureLine(cid,/^ЯРОСТЬ\s*[:：]\s*(\d+)\s*$/i);if(rg&&tokenRaging(src))addFeatureDamage(g,Number(rg.m[1]),baseType||'дробящий','ярость',report);}
         if(weapon&&dmgTotal>0){
             var gwf=featureLine(cid,/^ПЕРЕБРОС\s+УРОНА\s*[:：]\s*(\d)\s*$/i);
+            if(gwf){var gwfProps=weaponProps(cid,f);if(gwfProps.any&&!gwfProps.has('двуручное')&&!gwfProps.has('универсальное'))gwf=null;}
             if(gwf&&melee&&comps.length){var dl=rerollLowDice(msg,f.dmg1,Number(gwf.m[1]))+(criticalHit?rerollLowDice(msg,f.crit1,Number(gwf.m[1])):0);if(dl){comps[0].amount=Math.max(0,comps[0].amount+dl);g.damage.amount=Math.max(0,g.damage.amount+dl);report.push('переброс 1–'+gwf.m[1]+': '+(dl>0?'+':'')+dl);}}
             var bc=featureLine(cid,/^КРИТ\s+КОСТИ\s*[:：]\s*(\d+)\s*$/i);
             if(bc&&criticalHit&&melee){var die=weaponDieFromField(msg,f.dmg1);if(die)addFeatureDamage(g,rollFormulaText(bc.m[1]+'d'+die,cid),baseType||'дробящий','сокрушительный крит',report);}
@@ -8990,6 +9011,7 @@ var AD5 = (function () {
             if(/рукопаш/.test(opts)&&!melee)return;if(/дальнобой/.test(opts)&&!ranged)return;
             // 4.3.165: «НАЗВАНИЕ Длинный меч» — только для атаки с таким названием (священный клинок).
             var onlyName=/название\s+([^,]+)/.exec(opts);if(onlyName&&normalizeUserText(attackName(f)||'').indexOf(onlyName[1].trim())<0)return;
+            var onlyProp=/свойство\s+([^,]+)/.exec(opts);if(onlyProp&&!weaponProps(cid,f).list.some(function(n){return normalizeUserText(n)===normalizeUserText(onlyProp[1].trim());}))return;
             if(/ранен/.test(opts)){var hpNow=Number(t.token.get('bar1_value')),hpMax=Number(t.token.get('bar1_max'));if(!(hpMax>0&&hpNow<hpMax))return;}
             var ty=/^как\s+оружие$/i.test(x.m[2].trim())?(baseType||'дробящий'):(effectType(x.m[2])||baseType);
             if(!every)featureUsed[key]=featureTurnSeq;addFeatureDamage(g,featureRoll(x.m[1],cid,criticalHit&&weapon),ty,every?'при попадании':'раз в ход',report);
@@ -9036,6 +9058,8 @@ var AD5 = (function () {
         var rows=[],ids=[],tmplSafe=function(x){return String(x).replace(/[{}|]/g,' ').replace(/\]/g,')').replace(/\[/g,'(');};
         lines.forEach(function(L){
             if(/рукопаш/.test(L.options)&&!(weapon&&melee))return;if(/оруж/.test(L.options)&&!weapon)return;if(/заклинани/.test(L.options)&&weapon)return;
+            var phName=/название\s+([^,|]+)/.exec(L.options);if(phName&&normalizeUserText(attackName(f)||'').indexOf(phName[1].trim())<0)return;
+            var phProp=/свойство\s+([^,|]+)/.exec(L.options);if(phProp&&!weaponProps(String(p.actor),f).list.some(function(n){return normalizeUserText(n)===normalizeUserText(phProp[1].trim());}))return;
             var res=normalizeUserText(L.resource),id='h'+Date.now().toString(36)+'-'+(++postHitSeq);
             var rec={id:id,pid:msg.playerid,actor:String(p.actor),sourceToken:String(p.sourceToken||''),target:String(t.token.id),crit:!!criticalHit,weaponType:(ev&&ev.оружие&&p.lastDamageType)||'',line:L,expires:Date.now()+300000};
             var hint=tmplSafe(String(L.effect||'').replace(/\s*,\s*/g,', ').slice(0,90));
