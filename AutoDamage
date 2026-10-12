@@ -48,7 +48,7 @@ var AD5Background = (function(){
     return {put:put,isReady:function(){return ready;}};
 }());
 /*
-AutoDamage 4.3.164 / NPC Forge RU 2.7.4 — «шепот звезд».
+AutoDamage 4.3.165 / NPC Forge RU 2.7.4 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Обычная атака игрока -> Target AD5 на карте -> штатные запросы преимущества/помехи/доп. урона Roll20 -> бросок -> урон и крит. NPC/Transform сохраняют штатный Target Roll20. AutoFront заранее держит боевые токены на переднем плане. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -73,6 +73,7 @@ hp листа используется однократно как началь�
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
 4.3.163: классовые механики — атрибут листа ad5_features: КРИТ 19/18, КРИТ КОСТИ, ПЕРЕБРОС УРОНА, СКРЫТАЯ АТАКА, РАЗ В ХОД, УРОН ЗАКЛИНАНИЙ/ШКОЛЫ, ЛУЧ, ЛЕЧЕНИЕ ЗАКЛИНАНИЙ; ПОСЛЕ ПОПАДАНИЯ — кнопки с расходом ячейки или ресурса (!ad5 posthit). ЯРОСТЬ, НЕУДЕРЖИМАЯ ЯРОСТЬ (!ad5 relentless-reset), ПРИ УБИЙСТВЕ [ЗАКЛИНАНИЕМ]; метамагия (!ad5 meta: Усиленное, Продлённое, Удвоенное, Осторожное), ФОРМИРОВАНИЕ ЗАКЛИНАНИЙ; спасбросок может быть автоуспешным. Описание — docs/class-features.md.
+4.3.165: ПОСЛЕ ПОПАДАНИЯ — в эффекте спасброска части через «/», «урон МДР излучение» наносится только при провале (Цепи правосудия); РАЗ В ХОД / ПРИ ПОПАДАНИИ — опция «НАЗВАНИЕ <атака>» (священный клинок); директива ФЕХТОВАЛЬНОЕ: <атака> для Скрытой атаки.
 4.3.164: атаки по площади — шаблон «полукруг» (N фт полукруг), атакующий не попадает в свою область, каждая цель получает свой бросок атаки; Скрытая атака — кнопка после попадания с учётом селектора преимущества листа и оружия (фехтовальное/дальнобойное/ЛОВ); директива ПРИ ПОПАДАНИИ; блок «# авто» в ad5_features ведёт скрипт Classes.
 4.3.162: homebrew dnd.su — ПОПАДЛЕЧЕНИЕ/ПОПАДТОЛЧ со столкновением/ПОПАДСЕБЕ/ПОПАДДОСЯГ; условия «АТАКОВАН ПРОШЛЫЙ ХОД», «СХВАЧЕН ИСТОЧНИКОМ», «ДЕРЖИТ ИСТОЧНИК», «отпускает источник»; «УРОН ЕСЛИ …: Урон2» без «вместо» — добавочный; повтор промаха (!ad5 replay); ВРХП ПРОПУСКАЕТ / ВРХП СОПР; grants.add для Ока мимикрии; ДАРУЕТ не снимает строку, которая была в листе раньше.
 4.3.161: «N фт цилиндр» без высоты распознаётся как область (Лунный луч). МУВ (Шипы) — каждые 5 фт бросаются отдельно; Концентрация получает список частей урона и проверяет каждую отдельно.
@@ -781,7 +782,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.164', diagnostics = [], debug = false;
+    var VERSION = '4.3.165', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -8924,7 +8925,10 @@ var AD5 = (function () {
         });
     }
     function sneakWeapon(cid,f,ranged){
-        if(ranged)return true;var row=String(f.ad5attackrow||'');
+        if(ranged)return true;
+        // 4.3.165: «ФЕХТОВАЛЬНОЕ: Длинный меч» — оружие считается фехтовальным (священный клинок).
+        var an=normalizeUserText(attackName(f)||'');if(an&&featureLinesAll(cid,/^ФЕХТОВАЛЬНОЕ\s*[:：]\s*(.+)$/i).some(function(x){var w=normalizeUserText(x.m[1]);return w&&an.indexOf(w)>=0;}))return true;
+        var row=String(f.ad5attackrow||'');
         if(!row){var nm=normalizeUserText(attackName(f)||'');(findObjs({_type:'attribute',_characterid:cid})||[]).some(function(a){var m=/^repeating_attack_(.+)_atkname$/i.exec(String(a.get('name')||''));if(m&&normalizeUserText(a.get('current'))===nm){row=m[1];return true;}return false;});}
         if(!row)return true;
         var base=String(getAttrByName(cid,'repeating_attack_'+row+'_atkattr_base')||'');
@@ -8966,6 +8970,8 @@ var AD5 = (function () {
             var opts=normalizeUserText(x.m[3]||''),key=(src?src.id:cid)+'|once|'+x.index;if((!every&&featureUsed[key]===featureTurnSeq)||!(dmgTotal>0))return;
             if(/заклинани/.test(opts)){if(!spell)return;}else if(!weapon)return;
             if(/рукопаш/.test(opts)&&!melee)return;if(/дальнобой/.test(opts)&&!ranged)return;
+            // 4.3.165: «НАЗВАНИЕ Длинный меч» — только для атаки с таким названием (священный клинок).
+            var onlyName=/название\s+([^,]+)/.exec(opts);if(onlyName&&normalizeUserText(attackName(f)||'').indexOf(onlyName[1].trim())<0)return;
             if(/ранен/.test(opts)){var hpNow=Number(t.token.get('bar1_value')),hpMax=Number(t.token.get('bar1_max'));if(!(hpMax>0&&hpNow<hpMax))return;}
             var ty=/^как\s+оружие$/i.test(x.m[2].trim())?(baseType||'дробящий'):(effectType(x.m[2])||baseType);
             if(!every)featureUsed[key]=featureTurnSeq;addFeatureDamage(g,featureRoll(x.m[1],cid,criticalHit&&weapon),ty,every?'при попадании':'раз в ход',report);
@@ -9044,7 +9050,14 @@ var AD5 = (function () {
             if(text&&typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.applyCondition==='function'){try{AD5EffectTurns.applyCondition(tok,text,{actionName:label,sourceToken:rec.sourceToken,actor:cid});lines.push(text);}catch(e){lines.push(esc(e.message||e));}}};
         effects.forEach(applyFx);
         if(save){var dc=save.dcExpr?featureNumber(save.dcExpr.replace(/бм/gi,String(Number(getAttrByName(cid,'pb'))||2)),cid,level):(Number(getAttrByName(cid,'spell_save_dc'))||10);
-            var sr=featureSaveRoll(tok,save.ab,dc);lines.push('спасбросок '+save.ab.toUpperCase()+': '+sr.die+(sr.bonus>=0?'+':'')+sr.bonus+' = '+sr.total+' против СЛ '+dc+' — '+(sr.success?'успех':'провал'));if(!sr.success)applyFx(save.effect);}
+            var sr=featureSaveRoll(tok,save.ab,dc);lines.push('спасбросок '+save.ab.toUpperCase()+': '+sr.die+(sr.bonus>=0?'+':'')+sr.bonus+' = '+sr.total+' против СЛ '+dc+' — '+(sr.success?'успех':'провал'));
+            // 4.3.165: после «:» части через «/»; «урон МДР излучение» или «урон 2d6 огонь» — урон только при провале.
+            if(!sr.success)String(save.effect).split('/').map(function(x){return x.trim();}).filter(Boolean).forEach(function(part){
+                var um=/^урон\s+(.+?)\s+(\S+)$/i.exec(part);
+                if(um){var fx=/\d*[dд]\d+/i.test(um[1])?featureRoll(um[1],cid,false):featureNumber(um[1],cid,level),uty=effectType(um[2])||um[2];fx=Math.max(0,Math.floor(Number(fx)||0));
+                    if(fx){reactionDamage(tok.id,fx,uty,label,{actorId:cid,sourceTokenId:rec.sourceToken,playerId:pid,fixedDamage:true});lines.push('урон при провале '+fx+' '+uty);}return;}
+                applyFx(part);
+            });}
         sendChat('шепот звезд','/w gm <b>'+esc(label)+'</b> → '+esc(tok.get('name')||'')+(spent?' · '+esc(spent):'')+'<br>'+lines.map(esc).join('<br>'));
         reply(pid,'<b>'+esc(label)+'</b> → '+esc(tok.get('name')||'')+(spent?' · '+esc(spent):'')+(lines.length?': '+esc(lines.join('; ')):''));
     }
