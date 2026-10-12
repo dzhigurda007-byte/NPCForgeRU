@@ -3,14 +3,14 @@ if(typeof NPCForge!=='undefined'&&NPCForge) {
     log('NPCForge: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * NPC Forge RU v2.7.4 — token sizes
+ * NPC Forge RU v2.7.5 — importData(data,{characterId}) перезаписывает существующий лист (спутники класса)
  * Roll20 Mod for the legacy "D&D 5E by Roll20" (2014) character sheet.
  * Install in Roll20: Game Settings -> Mod (API) Scripts -> New Script.
  */
 var NPCForge = NPCForge || (function () {
     'use strict';
 
-    var VERSION = '2.7.4';
+    var VERSION = '2.7.5';
     var STARTUP_SCHEMA_MIN = '2.6.5'; // UI-only version bumps must not rebuild every NPC sheet.
     var SCRIPT = 'NPC Forge RU';
     function tokenActionName(rank,label){return Array(Math.max(0,Number(rank)||0)+1).join('\u200b')+String(label||'').replace(/^\u200b+/,'');}
@@ -241,7 +241,11 @@ var NPCForge = NPCForge || (function () {
 
     function setAttr(charId,name,current,max){
         var props={characterid:charId,name:name,current:(current==null?'':String(current))};
-        if(max!=null){props.max=String(max);} return createObj('attribute',props);
+        if(max!=null){props.max=String(max);}
+        // 2.7.5: при перезаписи существующего листа атрибут обновляется, а не дублируется.
+        var ex=findObjs({_type:'attribute',_characterid:charId,name:name})[0];
+        if(ex){var up={current:props.current};if(max!=null)up.max=props.max;ex.set(up);return ex;}
+        return createObj('attribute',props);
     }
     function repeating(charId,section,fields){
         var id=rowId(); Object.keys(fields).forEach(function(k){setAttr(charId,'repeating_'+section+'_'+id+'_'+k,fields[k]);}); return id;
@@ -852,7 +856,13 @@ var NPCForge = NPCForge || (function () {
     }
     function writeCharacter(npc,opts){
         opts=opts||{}; var errors=validate(npc); if(errors.length){throw new Error(errors.join(' '));}
-        var c=createObj('character',{name:npc.name,archived:false,inplayerjournals:opts.journal||'',controlledby:opts.controlledby||''});
+        // 2.7.5: opts.characterId — перезапись существующего листа (спутники класса из AD5 Classes): токены на карте
+        // сохраняют связь с листом; старые строки действий/особенностей и спасброски/навыки NPC удаляются.
+        var c=opts.characterId?getObj('character',String(opts.characterId)):null;
+        if(c){
+            c.set({name:npc.name,inplayerjournals:opts.journal||'',controlledby:opts.controlledby||''});
+            (findObjs({_type:'attribute',_characterid:c.id})||[]).forEach(function(a){var n=String(a.get('name')||'');if(/^repeating_(npcaction|npcaction-l|npcreaction|npctrait|npcbonusaction)_/i.test(n)||/^npc_(str|dex|con|int|wis|cha)_save(_flag)?$/i.test(n)||/^npc_[a-z_]+_flag$/i.test(n)&&!/^npc_(options|name|legendary|reactions|bonus)/i.test(n))a.remove();});
+        }else c=createObj('character',{name:npc.name,archived:false,inplayerjournals:opts.journal||'',controlledby:opts.controlledby||''});
         if(!c)throw new Error('Roll20 не создал лист NPC.');
         c.set('bio',npc.notes||'');c.set('gmnotes',npc.gmnotes||'');
         var id=c.id||c.get('_id'), attrs={npc:1,npc_toggle:1,npc_options_flag:0,'npc_options-flag':0,npc_name:npc.name,npc_size:npc.size,npc_type:npc.type,npc_subtype:npc.subtype,npc_alignment:npc.alignment,npc_ac:npc.ac,npc_actype:npc.acType,npc_hpbase:npc.hp,npc_hpformula:npc.hpFormula,npc_speed:npc.speed,npc_vulnerabilities:npc.vulnerabilities,npc_resistances:npc.resistances,npc_immunities:npc.immunities,npc_condition_immunities:npc.conditionImmunities,flaws:npc.flaws||'',npc_flaws:npc.flaws||'',npc_senses:npc.senses,npc_languages:npc.languages,npc_challenge:npc.cr,npc_xp:npc.xp,pb:npc.pb};
@@ -1320,6 +1330,6 @@ var NPCForge = NPCForge || (function () {
         });
     }
     if(typeof on==='function'){on('ready',function(){checkInstall();register();scanStaleCharactersOnReady();});}
-    return {version:VERSION,parseDistanceSpec:parseDistanceSpec,_test:{tokenSizeCells:tokenSizeCells,resizeToken:resizeToken,isExactSelfRange:isExactSelfRange,effectType:effectType,inferEffectType:inferEffectType,fixAllCharacters:fixAllCharacters,scanStaleCharactersOnReady:scanStaleCharactersOnReady,syncTokenActionLayoutLight:syncTokenActionLayoutLight,configureToken:configureToken,configureAllTokens:configureAllTokens,fixCharacter:fixCharacter,scheduleCharacterFix:scheduleCharacterFix,attackRollBase:attackRollBase,handle:handle,crProfile:crProfile,generate:generate,validate:validate,parseArgs:parseArgs,diceForAverage:diceForAverage,importPayload:importPayload,chunkJson:chunkJson,requestJsonWindow:requestJsonWindow,ensureJsonWindowMacros:ensureJsonWindowMacros,ensureJsonImportHandout:ensureJsonImportHandout,importJsonHandout:importJsonHandout,clearJsonHandout:clearJsonHandout,unescapeNotes:unescapeNotes,actionRange:actionRange,enrichActionDescription:enrichActionDescription,transformDirective:transformDirective,structuredAreaText:structuredAreaText,structuredAuraText:structuredAuraText,validateGlobalDamageModifiers:validateGlobalDamageModifiers,rangeConcentrationSpec:rangeConcentrationSpec,contestSpec:contestSpec,contestCommand:contestCommand}};
+    return {version:VERSION,parseDistanceSpec:parseDistanceSpec,importData:importData,_test:{tokenSizeCells:tokenSizeCells,resizeToken:resizeToken,isExactSelfRange:isExactSelfRange,effectType:effectType,inferEffectType:inferEffectType,fixAllCharacters:fixAllCharacters,scanStaleCharactersOnReady:scanStaleCharactersOnReady,syncTokenActionLayoutLight:syncTokenActionLayoutLight,configureToken:configureToken,configureAllTokens:configureAllTokens,fixCharacter:fixCharacter,scheduleCharacterFix:scheduleCharacterFix,attackRollBase:attackRollBase,handle:handle,crProfile:crProfile,generate:generate,validate:validate,parseArgs:parseArgs,diceForAverage:diceForAverage,importPayload:importPayload,chunkJson:chunkJson,requestJsonWindow:requestJsonWindow,ensureJsonWindowMacros:ensureJsonWindowMacros,ensureJsonImportHandout:ensureJsonImportHandout,importJsonHandout:importJsonHandout,clearJsonHandout:clearJsonHandout,unescapeNotes:unescapeNotes,actionRange:actionRange,enrichActionDescription:enrichActionDescription,transformDirective:transformDirective,structuredAreaText:structuredAreaText,structuredAuraText:structuredAuraText,validateGlobalDamageModifiers:validateGlobalDamageModifiers,rangeConcentrationSpec:rangeConcentrationSpec,contestSpec:contestSpec,contestCommand:contestCommand}};
 }());
 }

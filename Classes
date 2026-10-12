@@ -3,7 +3,10 @@ if(typeof AD5Classes!=='undefined'&&AD5Classes) {
     log('AD5Classes: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Classes 1.7.0 — автоматическая прокачка по полям листа «D&D 5E by Roll20» (Legacy).
+ * AD5 Classes 1.8.0 — автоматическая прокачка по полям листа «D&D 5E by Roll20» (Legacy).
+ * 1.8.0: спутники класса — Стальной защитник (Боевой кузнец TCE и Альтернативного изобретателя), Дрейк-компаньон:
+ *        NPC-лист через NPC Forge (importData, перезапись на месте), права владельца, хиты всегда максимальные,
+ *        характеристики/атака/спасброски от листа владельца, токен по умолчанию (выставляется вручную).
  * 1.7.0: класс Альтернативный изобретатель (Laserllama Alternate Artificer v3.1.1, перевод rpgd100.ru) и его 26 специализаций;
  *        пользовательский класс листа (custom_class + cust_classname «Альтернативный изобретатель»): кость хитов,
  *        ячейки (half), ИНТ, спасброски ТЕЛ/ИНТ; Мистический разряд/всплеск, Мощные снадобья, Скрытый клинок, Мистическое копьё.
@@ -49,7 +52,7 @@ if(typeof AD5Classes!=='undefined'&&AD5Classes) {
  */
 var AD5Classes=(function(){
     'use strict';
-    var VERSION='1.7.0',SCRIPT='AD5 Классы',BEGIN='# авто:начало (AD5 Классы)',END='# авто:конец';
+    var VERSION='1.8.0',SCRIPT='AD5 Классы',BEGIN='# авто:начало (AD5 Классы)',END='# авто:конец';
     var WATCH=/^(class|base_level|subclass|custom_class|cust_classname|multiclass[1-3](?:_flag|_lvl|_subclass)?|ad5_class_choices)$/i;
     var timers={},pendingHp={},hpSeq=0;
 
@@ -700,7 +703,9 @@ var AD5Classes=(function(){
         if(S_('artificer')==='alchemist'&&L_('artificer')>=15)pas.condImmune.push('отравлен');
         if(S_('warlock')==='archfey'&&L_('warlock')>=10)pas.condImmune.push('очарован');
         if(S_('druid')==='spores'&&L_('druid')>=14)pas.condImmune.push('ослеплён','оглохший','испуган','отравлен');
-        return {classes:cls,traits:traits,lines:lines,resources:Object.keys(res).map(function(k){return res[k];}),warnings:warn,pb:pb,actions:acts,passive:pas};
+        // ----- 1.8.0: спутники класса (Стальной защитник, Дрейк-компаньон) — отдельный NPC-лист под управлением игрока -----
+        var comps=[];COMPANIONS.forEach(function(def){var c=def.when(L_,S_);if(c){try{comps.push({key:def.key,spec:def.build({cid:cid,level:c,pb:pb,owner:who(cid),int:intM,wis:wis,cha:cha,ch:ch,mod:function(ab){return mod(cid,ab);},spellAtk:spellAttackBonus(cid,pb)})});}catch(e){warn.push(def.key+': '+esc(e.message||e));}}});
+        return {classes:cls,traits:traits,lines:lines,resources:Object.keys(res).map(function(k){return res[k];}),warnings:warn,pb:pb,actions:acts,passive:pas,companions:comps};
     }
 
     // ===== Запись в лист =====
@@ -759,6 +764,63 @@ var AD5Classes=(function(){
         });
         Object.keys(managed).forEach(function(n){if(keep[n])return;var b=managed[n].base;if(norm(val(cid,b+'_name'))===norm(n)){setAttr(cid,b+'_name','');setAttr(cid,b,'','');}});
         st.res=keep;
+    }
+
+    // ===== 1.8.0: спутники класса =====
+    // Описание: when(L_,S_) → уровень класса, дающий спутника (или 0); build(ctx) → NPC в формате NPC Forge (JSON NPC).
+    // Характеристики считаются от листа владельца; хиты всегда максимальные. Лист создаётся в журнале с правами
+    // владельца, токен игрок выставляет сам (перетаскиванием из журнала). Новый спутник — новая запись в COMPANIONS.
+    function spellAttackBonus(cid,pb){var v=Number(val(cid,'spell_attack_bonus'));if(Number.isFinite(v)&&String(val(cid,'spell_attack_bonus')).trim()!=='')return v;var sa=String(val(cid,'spellcasting_ability')||'');var m=/@\{(\w+)_mod\}/.exec(sa);return pb+(m?mod(cid,m[1]):0);}
+    var COMPANIONS=[
+        {key:'steeldefender',name:'Стальной защитник',
+         when:function(L_,S_){if(S_('artificer')==='battlesmith'&&L_('artificer')>=3)return L_('artificer');if(S_('altartificer')==='aa_battlesmith'&&L_('altartificer')>=3)return L_('altartificer');return 0;},
+         build:function(x){var L=x.level,pb=x.pb,imp=L>=15;return {name:x.owner+' — Стальной защитник',size:'Средний',type:'Конструкт',alignment:'',ac:imp?17:15,acType:'природный доспех',hp:Math.max(1,2+x.int+5*L),hpFormula:L+'d8',speed:'40 фт.',
+            stats:{strength:14,dexterity:12,constitution:14,intelligence:4,wisdom:10,charisma:6},saves:{dexterity:1+pb,constitution:2+pb},skills:{athletics:2+pb,perception:2*pb},pb:pb,cr:'0',
+            immunities:'яд',conditionImmunities:'отравление, очарование, истощение',senses:'тёмное зрение 60 фт., пассивное Восприятие '+(10+2*pb),languages:'понимает языки создателя',
+            notes:'Спутник изобретателя '+x.owner+' (уровень '+L+'). Лист пересчитывается скриптом AD5 Классы.',
+            traits:[{name:'Бдительный',description:'Защитника нельзя застать врасплох.'},{name:'Подчинение',description:'Действует в ход создателя сразу после него; без команды (бонусное действие создателя) совершает Уклонение.'}],
+            actions:[{name:'Исполненный силы удар',attack:true,type:'Melee',range:'5 фт.',toHit:x.spellAtk,target:'одна видимая цель',damage:'1d8+'+pb,damageType:'силовое поле'},
+                     {name:'Ремонт (3/день)',attack:false,range:'5 фт.',target:'защитник, конструкт или объект',description:'Магические механизмы восстанавливают 2к8 + БМ хитов защитнику, конструкту или объекту в 5 фт.',damage:'2d8+'+pb,damageType:'лечение'}],
+            reactions:[{name:'Отражение атаки',attack:false,range:'На себя',reaction:{trigger:'атака',effect:'исполнить',range:5,side:'враг'},description:'Помеха к броску атаки существа в 5 фт, если атакуют не защитника.'+(imp?' Атакующий получает 1к4 + ИНТ создателя ('+x.int+') урона силовым полем.':'')+'\nСубъект: союзник\nУСЛ: ВИДИТ ИСТОЧНИК\nРЕЗ: ПОМ АТАКЕ'}]};}},
+        {key:'drake',name:'Дрейк-компаньон',
+         when:function(L_,S_){return S_('ranger')==='drakewarden'&&L_('ranger')>=3?L_('ranger'):0;},
+         build:function(x){var L=x.level,pb=x.pb,el=(x.ch.element&&x.ch.element[0])||'огонь';return {name:x.owner+' — Дрейк-компаньон',size:L>=7?'Средний':'Маленький',type:'Дракон',alignment:'',ac:14+pb,acType:'природный доспех',hp:5+5*L,hpFormula:L+'d10',speed:'40 фт.'+(L>=7?', летая 40 фт.':''),
+            stats:{strength:16,dexterity:12,constitution:15,intelligence:8,wisdom:14,charisma:8},saves:{dexterity:1+pb,wisdom:2+pb},skills:{},pb:pb,cr:'0',
+            immunities:el,senses:'тёмное зрение 60 фт., пассивное Восприятие 12',languages:'Драконий',
+            notes:'Спутник следопыта '+x.owner+' (уровень '+L+'). Стихия — из «Стихия: …» в ad5_class_choices.',
+            traits:[{name:'Драконий инстинкт',description:'Действует в ход следопыта; без команды совершает Уклонение.'}],
+            actions:[{name:'Укус',attack:true,type:'Melee',range:'5 фт.',toHit:x.spellAtk,target:'одна цель',damage:'1d6+'+pb,damageType:'колющий',damage2:(L>=15?'2d6':L>=7?'1d6':''),damageType2:(L>=7?el:'')}],
+            reactions:[{name:'Вливание стихии',attack:false,range:'На себя',description:'Когда существо в 30 фт попадает атакой по дрейку или его союзнику — оружие союзника наносит +1к6 урона стихии (вручную).'}]};}}
+    ];
+    function writeCompanions(cid,comps,st){
+        var map=st.companions||{},keep={},owner=getObj('character',cid),notes=[];
+        if(typeof NPCForge==='undefined'||!NPCForge||typeof NPCForge.importData!=='function'){if(comps.length)notes.push('Спутник класса: нужен скрипт NPC Forge RU 2.7.5+.');st.companions=map;return notes;}
+        comps.forEach(function(x){
+            var m=map[x.key]||{},ch=m.id&&getObj('character',m.id),spec=x.spec;
+            if(spec.actions)spec.actions.forEach(function(a){if(a.damage2==='')delete a.damage2;if(a.damageType2==='')delete a.damageType2;});
+            var fp=JSON.stringify(spec);
+            var opts={controlledby:String(owner.get('controlledby')||''),journal:String(owner.get('inplayerjournals')||owner.get('controlledby')||'')};
+            if(!ch||m.fp!==fp){if(ch)opts.characterId=ch.id;var res=NPCForge.importData(spec,opts);ch=res[0].character;notes.push('Спутник обновлён: '+esc(spec.name)+' (хиты '+spec.hp+').');}
+            // Хиты спутника всегда максимальные (атрибут hp и связанные полосы токенов).
+            var hp=attr(ch.id,'hp');if(hp&&(String(hp.get('max'))!==String(spec.hp)||String(hp.get('current'))!==String(spec.hp)))hp.set({current:String(spec.hp),max:String(spec.hp)});
+            (findObjs({_type:'graphic',_subtype:'token',represents:ch.id})||[]).forEach(function(t){if(String(t.get('bar1_max'))!==String(spec.hp))t.set({bar1_max:String(spec.hp)});});
+            ensureCompanionToken(cid,ch,spec,notes);
+            keep[x.key]={id:ch.id,fp:fp};
+        });
+        Object.keys(map).forEach(function(k){if(!keep[k]&&map[k].id){var oc=getObj('character',map[k].id);if(oc){oc.set({controlledby:'',inplayerjournals:''});notes.push('Спутник больше не положен по уровню: лист «'+esc(oc.get('name'))+'» скрыт от игроков (не удалён).');}}});
+        st.companions=keep;return notes;
+    }
+    // Токен по умолчанию: картинка — токен владельца на любой странице; полоса 1 — хиты листа спутника.
+    function ensureCompanionToken(cid,ch,spec,notes){
+        if(String(ch.get('_defaulttoken')||'').length>2)return;
+        var src=(findObjs({_type:'graphic',_subtype:'token',represents:cid})||[])[0];
+        if(!src||typeof setDefaultTokenForCharacter!=='function'){notes.push('«'+esc(spec.name)+'»: выставьте токен владельца на карту и выполните !ad5-class sync — будет создан токен по умолчанию.');return;}
+        var hp=attr(ch.id,'hp'),cells=/больш|large/i.test(spec.size)?2:1,unit=70*cells;
+        var img=String(src.get('imgsrc')||'').replace(/\/(med|original|max)\./,'/thumb.');
+        var t=createObj('graphic',{_pageid:src.get('_pageid'),pageid:src.get('_pageid'),layer:'gmlayer',imgsrc:img,left:src.get('left'),top:src.get('top'),width:unit,height:unit,name:spec.name,represents:ch.id,controlledby:String(getObj('character',cid).get('controlledby')||''),bar1_value:String(spec.hp),bar1_max:String(spec.hp),bar1_link:hp?hp.id:'',showname:true,showplayers_name:true,showplayers_bar1:true});
+        if(!t){notes.push('«'+esc(spec.name)+'»: не удалось создать токен по умолчанию.');return;}
+        setDefaultTokenForCharacter(ch,t);t.remove();
+        notes.push('«'+esc(spec.name)+'»: токен по умолчанию готов — перетащите лист из журнала на карту.');
     }
 
     // ===== 1.4.0: кнопки-баффы (строки атак листа «На себя») =====
@@ -851,7 +913,7 @@ var AD5Classes=(function(){
     function sync(cid,reason){
         var c=getObj('character',cid);if(!c)return null;
         var r=compute(cid),st=loadState(cid),before={},beforeLv=st.levels||{},firstSync=!st.levels;(Object.keys(st.traits||{})).forEach(function(k){before[k]=1;});
-        writeFeatures(cid,r.lines,st);writeTraits(cid,r.traits,st);writeResources(cid,r.resources,st);writeActions(cid,r.actions,st);var pasNotes=writePassive(cid,r.passive,st);r.warnings=r.warnings.concat(pasNotes);
+        writeFeatures(cid,r.lines,st);writeTraits(cid,r.traits,st);writeResources(cid,r.resources,st);writeActions(cid,r.actions,st);var pasNotes=writePassive(cid,r.passive,st);r.warnings=r.warnings.concat(pasNotes);r.companionNotes=writeCompanions(cid,r.companions||[],st);
         var levels={};r.classes.forEach(function(x){levels[x.key]=x.level;});st.levels=levels;st.version=VERSION;saveState(cid,st);
         var added=r.traits.filter(function(t){return !before[t.key];}).map(function(t){return t.name;});
         var removed=Object.keys(before).filter(function(k){return !st.traits[k];}).length;
@@ -860,11 +922,12 @@ var AD5Classes=(function(){
             (r.resources.length?' Ресурсы: '+esc(r.resources.map(function(x){return x.name+' '+(x.max>=99?'∞':x.max);}).join(', '))+'.':'')+
             (r.warnings.length?'<br>⚠ '+r.warnings.join('<br>⚠ '):'');
         // Хиты за новые уровни — кнопкой, чтобы игрок выбрал среднее или бросок.
+        if(r.companionNotes&&r.companionNotes.length)html+='<br>'+r.companionNotes.join('<br>');
         var hpButtons=[];r.classes.forEach(function(x){var gain=x.level-(Number(beforeLv[x.key])||0);if(!firstSync&&gain>0){
             var id='hp'+(++hpSeq).toString(36)+Date.now().toString(36);pendingHp[id]={cid:cid,die:CLASSES[x.key].hd,count:gain,cls:CLASSES[x.key].ru};
             hpButtons.push(CLASSES[x.key].ru+' +'+gain+': [Среднее](!ad5-class hp '+id+' avg) [Бросок к'+CLASSES[x.key].hd+'](!ad5-class hp '+id+' roll)');}});
         if(hpButtons.length)html+='<br>Хиты за новые уровни: '+hpButtons.join(' · ');
-        if(reason!=='silent'&&(added.length||removed||hpButtons.length||r.warnings.length||reason==='manual'))whisperTo(cid,html);
+        if(reason!=='silent'&&(added.length||removed||hpButtons.length||r.warnings.length||(r.companionNotes&&r.companionNotes.length)||reason==='manual'))whisperTo(cid,html);
         return r;
     }
     function addHp(id,how,pid){
