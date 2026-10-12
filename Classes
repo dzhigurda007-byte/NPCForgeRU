@@ -3,7 +3,9 @@ if(typeof AD5Classes!=='undefined'&&AD5Classes) {
     log('AD5Classes: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Classes 1.5.0 — автоматическая прокачка по полям листа «D&D 5E by Roll20» (Legacy).
+ * AD5 Classes 1.6.0 — автоматическая прокачка по полям листа «D&D 5E by Roll20» (Legacy).
+ * 1.6.0: листы обновляются сами: при запуске песочницы (персонажи, не пересчитанные этой версией)
+ *        и при первой атаке персонажа (AutoDamage вызывает AD5Classes.ensure). Команда sync нужна только вручную.
  * 1.5.0: Вдохновение барда — кость вдохновения на союзнике, кнопка токена «Применить вдохновение барда» (Effect Turns 1.6.20);
  *        Проклятие ведьмовского клинка — метка цели: + БМ к урону источника по ней (Spell Effects 1.1.6).
  * 1.4.0: кнопки-баффы в листе (строки атак «На себя»: Ярость, Терпеливая оборона, Шаг ветра, Хитрое действие,
@@ -44,7 +46,7 @@ if(typeof AD5Classes!=='undefined'&&AD5Classes) {
  */
 var AD5Classes=(function(){
     'use strict';
-    var VERSION='1.5.0',SCRIPT='AD5 Классы',BEGIN='# авто:начало (AD5 Классы)',END='# авто:конец';
+    var VERSION='1.6.0',SCRIPT='AD5 Классы',BEGIN='# авто:начало (AD5 Классы)',END='# авто:конец';
     var WATCH=/^(class|base_level|subclass|custom_class|cust_classname|multiclass[1-3](?:_flag|_lvl|_subclass)?|ad5_class_choices)$/i;
     var timers={},pendingHp={},hpSeq=0;
 
@@ -848,11 +850,22 @@ var AD5Classes=(function(){
             timers[cid]=setTimeout(function(){delete timers[cid];try{sync(cid,'auto');}catch(e){log(SCRIPT+' '+VERSION+': '+(e.stack||e.message));}},800);
         }catch(e){log(SCRIPT+' '+VERSION+': '+(e.stack||e.message));}
     }
+    // 1.6.0: листы обновляются сами — без команд. Персонаж, ещё не пересчитанный этой версией скрипта,
+    // пересчитывается при запуске песочницы (по очереди, без спама в чат) и при первой своей атаке (AutoDamage → ensure).
+    function needsSync(cid){if(!root().auto)return false;var c=getObj('character',cid);if(!c||num(cid,'npc')===1)return false;if(!sheetClasses(cid).length){var raw=val(cid,'class')||val(cid,'cust_classname');if(raw&&!unknownNoticed[cid]){unknownNoticed[cid]=1;gm('<b>'+esc(who(cid))+'</b>: класс «'+esc(raw)+'» не распознан — классовые умения не выданы.');}return false;}return loadState(cid).version!==VERSION;}
+    var unknownNoticed={};
+    function ensure(cid){cid=String(cid||'');try{if(needsSync(cid)){sync(cid,'auto');return true;}}catch(e){log(SCRIPT+' '+VERSION+': '+(e.stack||e.message));}return false;}
+    function syncAllPending(){
+        var list=(findObjs({_type:'character'})||[]).map(function(c){return c.id;}).filter(function(cid){try{return needsSync(cid);}catch(e){return false;}}),done=[];
+        (function step(){var cid=list.shift();if(!cid){if(done.length)gm('Классовые умения обновлены автоматически ('+VERSION+'): '+esc(done.join(', '))+'.');return;}
+            try{sync(cid,'silent');done.push(who(cid));}catch(e){log(SCRIPT+' '+VERSION+': '+(e.stack||e.message));}setTimeout(step,250);})();
+    }
     on('ready',function(){
         root();
         on('change:attribute',onAttr);on('add:attribute',onAttr);
-        log(SCRIPT+' '+VERSION+' ready; автопрокачка '+(root().auto?'ВКЛ':'ВЫКЛ')+' (без записей при запуске).');
+        log(SCRIPT+' '+VERSION+' ready; автопрокачка '+(root().auto?'ВКЛ':'ВЫКЛ')+'.');
+        setTimeout(syncAllPending,3000);
     });
-    return {VERSION:VERSION,sync:sync,compute:compute,rest:rest};
+    return {VERSION:VERSION,sync:sync,compute:compute,rest:rest,ensure:ensure};
 })();
 }

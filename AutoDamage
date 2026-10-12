@@ -48,7 +48,7 @@ var AD5Background = (function(){
     return {put:put,isReady:function(){return ready;}};
 }());
 /*
-AutoDamage 4.3.168 / NPC Forge RU 2.7.4 — «шепот звезд».
+AutoDamage 4.3.169 / NPC Forge RU 2.7.4 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Обычная атака игрока -> Target AD5 на карте -> штатные запросы преимущества/помехи/доп. урона Roll20 -> бросок -> урон и крит. NPC/Transform сохраняют штатный Target Roll20. AutoFront заранее держит боевые токены на переднем плане. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -73,6 +73,7 @@ hp листа используется однократно как началь�
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
 4.3.163: классовые механики — атрибут листа ad5_features: КРИТ 19/18, КРИТ КОСТИ, ПЕРЕБРОС УРОНА, СКРЫТАЯ АТАКА, РАЗ В ХОД, УРОН ЗАКЛИНАНИЙ/ШКОЛЫ, ЛУЧ, ЛЕЧЕНИЕ ЗАКЛИНАНИЙ; ПОСЛЕ ПОПАДАНИЯ — кнопки с расходом ячейки или ресурса (!ad5 posthit). ЯРОСТЬ, НЕУДЕРЖИМАЯ ЯРОСТЬ (!ad5 relentless-reset), ПРИ УБИЙСТВЕ [ЗАКЛИНАНИЕМ]; метамагия (!ad5 meta: Усиленное, Продлённое, Удвоенное, Осторожное), ФОРМИРОВАНИЕ ЗАКЛИНАНИЙ; спасбросок может быть автоуспешным. Описание — docs/class-features.md.
+4.3.169: перед атакой персонажа вызывается AD5Classes.ensure — лист, ещё не пересчитанный скриптом Classes, обновляется автоматически; без Classes — подсказка ГМ.
 4.3.168: меню после попадания — карточка (Божественная кара: кнопки кругов с остатком ячеек; приёмы: расход ресурса и остаток; «Ничего не добавлять»); ячейка/ресурс списываются автоматически.
 4.3.167: «ТРАТИТ РЕСУРС: <ресурс> N» в описании действия листа — расход ресурса (Class Resource / Other Resource / Resources) при нажатии; без ресурса действие блокируется (кнопки Classes 1.4.0).
 4.3.166: РАЗ В ХОД / ПРИ ПОПАДАНИИ — опции «АТАКА» (любой бросок атаки) и «ЭФФЕКТ <название>» (только пока эффект на атакующем); ПОСЛЕ ПОПАДАНИЯ — фиксированный урон «15 некротическая»; ЛИХАЯ УДАЛЬ для Скрытой атаки; подклассы официальных дополнений (скрипт Classes 1.2.0).
@@ -785,7 +786,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.168', diagnostics = [], debug = false;
+    var VERSION = '4.3.169', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -7991,6 +7992,9 @@ var AD5 = (function () {
             if(!context){try{rememberRepeat(msg,f);}catch(ignoreRepeat){}try{hitDieOffer(msg,f);}catch(ignoreHitDie){}try{grantUsed(msg,f);}catch(ignoreGrantUse){}try{grantSelfAtCast(msg,f);}catch(ignoreGrantSelf){}}
             // 4.3.167: «ТРАТИТ РЕСУРС: Ярость 1» в описании действия листа — расход ресурса листа при использовании
             // (кнопки баффов от скрипта Classes). Нет ресурса — действие не выполняется. Строка вырезается из карточки.
+            // 4.3.169: классовые умения пишутся в лист автоматически — персонаж, ещё не пересчитанный скриптом Classes,
+            // пересчитывается до обработки атаки (иначе нет «Особенностей» и меню после попадания).
+            if(!context){try{var ensureActor=actor(f,msg);if(ensureActor&&ensureActor.id){if(typeof AD5Classes!=='undefined'&&AD5Classes&&typeof AD5Classes.ensure==='function')AD5Classes.ensure(ensureActor.id);else classesMissingNotice(ensureActor.id);}}catch(ignoreEnsure){}}
             if(!context){var spendBlock=null;try{spendBlock=actionResourceSpend(msg,f);}catch(spendErr){spendBlock=String(spendErr.message||spendErr);}if(spendBlock){reply(msg.playerid,spendBlock);delete armed[msg.playerid];delete deferred[msg.playerid];delete pending[msg.playerid];return;}}
             if(!spellMeta)spellMeta=npcSpellMetaForFields(f);
             if(!spellMeta)spellMeta=taggedPlayerSpellMetaForFields(msg,f);
@@ -9101,6 +9105,12 @@ var AD5 = (function () {
     //   НЕУДЕРЖИМАЯ ЯРОСТЬ — в ярости при падении до 0 хитов спасбросок ТЕЛ СЛ 10 (+5 за каждое срабатывание) → 1 хит;
     //   ПРИ УБИЙСТВЕ: вр хп ХАР+УРОВЕНЬ — снизив враждебное существо до 0 хитов, получить временные хиты;
     //   ПРИ УБИЙСТВЕ ЗАКЛИНАНИЕМ: лечение 2*КРУГ — убив заклинанием 1+ круга, восстановить хиты.
+    var classesNoticeShown=false;
+    function classesMissingNotice(cid){
+        if(classesNoticeShown)return;var cls=String(getAttrByName(cid,'class')||'');if(!cls||String(getAttrByName(cid,'npc')||'')==='1')return;
+        if(String(getAttrByName(cid,'ad5_features')||'').trim())return;classesNoticeShown=true;
+        gm('Классовые умения персонажа не записаны в лист: скрипт <b>Classes</b> не установлен. Добавьте его в Mod-скрипты — умения, ресурсы и кнопки появятся сами.');
+    }
     var SPEND_RE=/(?:^|\n|<br\s*\/?>)[ \t]*ТРАТИТ\s+РЕСУРС\s*[:：]\s*([^\n<]+?)\s+(\d+)[ \t]*(?=$|\n|<br)/i;
     function actionResourceSpend(msg,f){
         var keys=['desc','description'],hit=null;keys.forEach(function(k){if(!hit&&f[k]!==undefined){var m=SPEND_RE.exec(String(f[k]));if(m)hit=m;}});
