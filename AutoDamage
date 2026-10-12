@@ -48,7 +48,7 @@ var AD5Background = (function(){
     return {put:put,isReady:function(){return ready;}};
 }());
 /*
-AutoDamage 4.3.165 / NPC Forge RU 2.7.4 — «шепот звезд».
+AutoDamage 4.3.166 / NPC Forge RU 2.7.4 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Обычная атака игрока -> Target AD5 на карте -> штатные запросы преимущества/помехи/доп. урона Roll20 -> бросок -> урон и крит. NPC/Transform сохраняют штатный Target Roll20. AutoFront заранее держит боевые токены на переднем плане. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -73,6 +73,7 @@ hp листа используется однократно как началь�
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
 4.3.163: классовые механики — атрибут листа ad5_features: КРИТ 19/18, КРИТ КОСТИ, ПЕРЕБРОС УРОНА, СКРЫТАЯ АТАКА, РАЗ В ХОД, УРОН ЗАКЛИНАНИЙ/ШКОЛЫ, ЛУЧ, ЛЕЧЕНИЕ ЗАКЛИНАНИЙ; ПОСЛЕ ПОПАДАНИЯ — кнопки с расходом ячейки или ресурса (!ad5 posthit). ЯРОСТЬ, НЕУДЕРЖИМАЯ ЯРОСТЬ (!ad5 relentless-reset), ПРИ УБИЙСТВЕ [ЗАКЛИНАНИЕМ]; метамагия (!ad5 meta: Усиленное, Продлённое, Удвоенное, Осторожное), ФОРМИРОВАНИЕ ЗАКЛИНАНИЙ; спасбросок может быть автоуспешным. Описание — docs/class-features.md.
+4.3.166: РАЗ В ХОД / ПРИ ПОПАДАНИИ — опции «АТАКА» (любой бросок атаки) и «ЭФФЕКТ <название>» (только пока эффект на атакующем); ПОСЛЕ ПОПАДАНИЯ — фиксированный урон «15 некротическая»; ЛИХАЯ УДАЛЬ для Скрытой атаки; подклассы официальных дополнений (скрипт Classes 1.2.0).
 4.3.165: ПОСЛЕ ПОПАДАНИЯ — в эффекте спасброска части через «/», «урон МДР излучение» наносится только при провале (Цепи правосудия); РАЗ В ХОД / ПРИ ПОПАДАНИИ — опция «НАЗВАНИЕ <атака>» (священный клинок); директива ФЕХТОВАЛЬНОЕ: <атака> для Скрытой атаки.
 4.3.164: атаки по площади — шаблон «полукруг» (N фт полукруг), атакующий не попадает в свою область, каждая цель получает свой бросок атаки; Скрытая атака — кнопка после попадания с учётом селектора преимущества листа и оружия (фехтовальное/дальнобойное/ЛОВ); директива ПРИ ПОПАДАНИИ; блок «# авто» в ad5_features ведёт скрипт Classes.
 4.3.162: homebrew dnd.su — ПОПАДЛЕЧЕНИЕ/ПОПАДТОЛЧ со столкновением/ПОПАДСЕБЕ/ПОПАДДОСЯГ; условия «АТАКОВАН ПРОШЛЫЙ ХОД», «СХВАЧЕН ИСТОЧНИКОМ», «ДЕРЖИТ ИСТОЧНИК», «отпускает источник»; «УРОН ЕСЛИ …: Урон2» без «вместо» — добавочный; повтор промаха (!ad5 replay); ВРХП ПРОПУСКАЕТ / ВРХП СОПР; grants.add для Ока мимикрии; ДАРУЕТ не снимает строку, которая была в листе раньше.
@@ -782,7 +783,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.165', diagnostics = [], debug = false;
+    var VERSION = '4.3.166', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -4612,8 +4613,8 @@ var AD5 = (function () {
         ['кислота',/^(acid|кислот(?:а|ой|ный|ного)?)$/i],['дробящий',/^(bludgeoning|дробящ(?:ий|его|им)|дроб)$/i],
         ['холод',/^(cold|холод(?:ом|а|ный|ного)?)$/i],['огонь',/^(fire|огонь|огн[её]м|огненн(?:ый|ого|ым))$/i],
         ['силовое поле',/^(force|силов(?:ое|ого|ым) пол(?:е|я|ем))$/i],['электричество',/^(lightning|электричеств(?:о|ом|а)|молни(?:я|ей)|электрическ(?:ий|ого|им))$/i],
-        ['некротическая энергия',/^(necrotic|некротическ(?:ая энергия|ой энергией|ий|ого|им))$/i],['колющий',/^(piercing|колющ(?:ий|его|им)|кол)$/i],
-        ['яд',/^(poison|яд(?:ом|а)?|ядовит(?:ый|ого|ым))$/i],['психический',/^(psychic|психическ(?:ий|ого|им))$/i],
+        ['некротическая энергия',/^(necrotic|некротическ(?:ая энергия|ой энергией|ая|ий|ого|им))$/i],['колющий',/^(piercing|колющ(?:ий|его|им)|кол)$/i],
+        ['яд',/^(poison|яд(?:ом|а)?|ядовит(?:ый|ого|ым))$/i],['психический',/^(psychic|психическ(?:ий|ого|им|ая|ая энергия|ой энергией))$/i],
         ['излучение',/^(radiant|излучени(?:е|ем|я)|лучист(?:ый|ого|ым))$/i],['рубящий',/^(slashing|рубящ(?:ий|его|им)|руб)$/i],['магический рубящий',/^(magical slashing|маг(?:ическ(?:ий|ого|им))?\.?\s*руб(?:ящ(?:ий|его|им))?)$/i],['магический колющий',/^(magical piercing|маг(?:ическ(?:ий|ого|им))?\.?\s*кол(?:ющ(?:ий|его|им))?)$/i],['магический дробящий',/^(magical bludgeoning|маг(?:ическ(?:ий|ого|им))?\.?\s*дроб(?:ящ(?:ий|его|им))?)$/i],
         ['звук',/^(thunder|звук(?:ом|а)?|звуков(?:ой|ого|ым)|гром(?:ом)?)$/i],['лечение',/^(heal|healing|лечение|лечением|исцеление|исцелением)$/i],['временное хп',/^(?:temporary\s*(?:hp|hit\s*points?)|temp\s*hp|временн(?:ое|ые|ых)\s*(?:хп|hp|хит(?:ы|ов)?|очк(?:и|ов)?\s*хитов))$/i],['атака',/^(?:attack|attack\s*bonus|атака|бонус\s+атаки)$/i]
     ];
@@ -8960,7 +8961,9 @@ var AD5 = (function () {
             // раз в ход; оружие фехтовальное или дальнобойное (поле листа atkattr_base — Ловкость/фехтовальное, либо
             // дальнобойная атака); преимущество (в т. ч. селектор преимущества листа) или союзник в 5 фт от цели; без помехи.
             var sa=featureLine(cid,/^СКРЫТАЯ\s+АТАКА\s*[:：]\s*([0-9dдD+]+)\s*$/i);
-            if(sa&&src&&featureUsed[src.id+'|sneak']!==featureTurnSeq&&p.attackMode!=='dis'&&sneakWeapon(cid,f,ranged)&&(p.attackMode==='adv'||hasAllyNear(src,t.token))){
+            // 4.3.166: «ЛИХАЯ УДАЛЬ» (дуэлянт XGE): цель в 5 фт и рядом с вами нет других существ — Скрытая атака без преимущества.
+            var rakish=!!(sa&&src&&melee&&featureLine(cid,/^ЛИХАЯ\s+УДАЛЬ\s*$/i)&&combatRangeFeet(src,t.token)<=5.01&&!(findObjs({_type:'graphic',_pageid:src.get('_pageid'),layer:'objects'})||[]).some(function(o){if(o.id===src.id||o.id===t.token.id||!String(o.get('represents')||''))return false;var ohp=Number(o.get('bar1_value'));if(Number.isFinite(ohp)&&ohp<=0)return false;return combatRangeFeet(src,o)<=5.01;}));
+            if(sa&&src&&featureUsed[src.id+'|sneak']!==featureTurnSeq&&p.attackMode!=='dis'&&sneakWeapon(cid,f,ranged)&&(p.attackMode==='adv'||rakish||hasAllyNear(src,t.token))){
                 p.sneakOffer={dice:sa.m[1].replace(/[дД]/g,'d'),type:baseType||'колющий',key:src.id+'|sneak'};
             }
         }
@@ -8968,7 +8971,9 @@ var AD5 = (function () {
         featureLinesAll(cid,/^(РАЗ\s+В\s+ХОД|ПРИ\s+ПОПАДАНИИ)\s*[:：]\s*([0-9dдD+]+)\s+([^,]+?)\s*(?:,\s*(.*))?$/i).forEach(function(x){
             x.m=[x.m[0],x.m[2],x.m[3],x.m[4],x.m[1]];var every=/попадан/i.test(x.m[4]);
             var opts=normalizeUserText(x.m[3]||''),key=(src?src.id:cid)+'|once|'+x.index;if((!every&&featureUsed[key]===featureTurnSeq)||!(dmgTotal>0))return;
-            if(/заклинани/.test(opts)){if(!spell)return;}else if(!weapon)return;
+            // 4.3.166: «АТАКА» — любой бросок атаки (оружием или заклинанием); «ЭФФЕКТ Ярость» — только пока на атакующем этот эффект.
+            if(/(^|,\s*)атака(\s*,|$)/.test(opts)){if(!p.hasAttack)return;}else if(/заклинани/.test(opts)){if(!spell)return;}else if(!weapon)return;
+            var needFx=/эффект\s+([^,]+)/.exec(opts);if(needFx&&!(src&&tokenHasEffect(src,needFx[1].trim())))return;
             if(/рукопаш/.test(opts)&&!melee)return;if(/дальнобой/.test(opts)&&!ranged)return;
             // 4.3.165: «НАЗВАНИЕ Длинный меч» — только для атаки с таким названием (священный клинок).
             var onlyName=/название\s+([^,]+)/.exec(opts);if(onlyName&&normalizeUserText(attackName(f)||'').indexOf(onlyName[1].trim())<0)return;
@@ -9037,11 +9042,13 @@ var AD5 = (function () {
             if((m=/^макс\s+(\d+)d\d+$/i.exec(part))){cap=Number(m[1]);return;}
             if((m=/^спас\s+(сил|лов|тел|инт|мдр|хар)(?:\s+сл\s+([^:]+))?\s*:\s*(.+)$/i.exec(part))){save={ab:normalizeUserText(m[1]),dcExpr:m[2]||'',effect:m[3]};return;}
             if(!dmg&&(m=/^(\d+)d(\d+)(?:\s*\+\s*(\d+))?\s+(.+)$/i.exec(part))){dmg={n:Number(m[1]),d:Number(m[2]),bonus:Number(m[3]||0),type:m[4].trim()};return;}
+            // 4.3.166: фиксированный урон «15 некротическая» (Касание смерти).
+            if(!dmg&&(m=/^(\d+)\s+([^\d+].*)$/i.exec(part))){dmg={n:0,d:1,bonus:Number(m[1]),type:m[2].trim()};return;}
             effects.push(part);
         });
         if(dmg){
             var n=dmg.n+extra;if(cap&&n>cap)n=cap;n+=condExtra;
-            var formula=n+'d'+dmg.d,amount=rollFormulaText(formula,cid)+(rec.crit?rollFormulaText(formula,cid):0)+dmg.bonus;
+            var formula=n>0?n+'d'+dmg.d:String(dmg.bonus),amount=(n>0?rollFormulaText(n+'d'+dmg.d,cid)+(rec.crit?rollFormulaText(n+'d'+dmg.d,cid):0):0)+dmg.bonus;if(n>0&&dmg.bonus)formula+='+'+dmg.bonus;
             var ty=/^как\s+оружие$/i.test(dmg.type)?(rec.weaponType||'дробящий'):(effectType(dmg.type)||dmg.type);
             reactionDamage(tok.id,amount,ty,label,{actorId:cid,sourceTokenId:rec.sourceToken,playerId:pid,fixedDamage:true});
             lines.push(formula+(rec.crit?' (крит ×2 кости)':'')+' = '+amount+' '+ty);
@@ -9066,6 +9073,10 @@ var AD5 = (function () {
     //   НЕУДЕРЖИМАЯ ЯРОСТЬ — в ярости при падении до 0 хитов спасбросок ТЕЛ СЛ 10 (+5 за каждое срабатывание) → 1 хит;
     //   ПРИ УБИЙСТВЕ: вр хп ХАР+УРОВЕНЬ — снизив враждебное существо до 0 хитов, получить временные хиты;
     //   ПРИ УБИЙСТВЕ ЗАКЛИНАНИЕМ: лечение 2*КРУГ — убив заклинанием 1+ круга, восстановить хиты.
+    function tokenHasEffect(token,name){
+        try{var want=normalizeUserText(name),r=typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&AD5EffectTurns.snapshot?AD5EffectTurns.snapshot(token.id):null;
+            return !!(want&&r&&r.effects&&Object.keys(r.effects).some(function(k){var e=r.effects[k];return normalizeUserText(String(e&&e.label||'')).indexOf(want)>=0||normalizeUserText(String(e&&e.source&&e.source.actionName||'')).indexOf(want)>=0;}));}catch(ignoreFx){return false;}
+    }
     function tokenRaging(token){
         try{var r=typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&AD5EffectTurns.snapshot?AD5EffectTurns.snapshot(token.id):null;
             return !!(r&&r.effects&&Object.keys(r.effects).some(function(k){var e=r.effects[k];return /ярост/i.test(String(e&&e.label||''))||/ярост/i.test(String(e&&e.source&&e.source.actionName||''));}));}catch(ignoreRage){return false;}
