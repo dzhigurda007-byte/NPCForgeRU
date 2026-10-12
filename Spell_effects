@@ -5,12 +5,13 @@
  * 1.1.4: armor — a missing armorAttribute means no armour worn (Mage Armor on sheets without that field);
  *        retaliation {"noTemp":true} works without temporary HP (Fire Shield).
  * 1.1.5: retaliation {"anyAttack":true,"range":10} — any attack hit from within the range (Shadow of Moil).
+ * 1.1.6: mark {"noConcentration":true} — метка без концентрации (Проклятие ведьмовского клинка), длительность — duration в раундах.
  * 1.1.3: mark effects own the Roll20 archery-target marker for their current target; transfer/end/undo restore it safely.
  */
 if(typeof AD5SpellEffects!=='undefined'&&AD5SpellEffects){log('AD5SpellEffects: duplicate skipped');}else{
 var AD5SpellEffects=(function(){
 'use strict';
-var VERSION='1.1.5',windows=Object.create(null),MARK_MARKER='archery-target';
+var VERSION='1.1.6',windows=Object.create(null),MARK_MARKER='archery-target';
 function root(){var r=state.AD5SpellEffects=state.AD5SpellEffects||{};r.effects=r.effects||{};r.turns=r.turns||{};r.actions=r.actions||{};r.bonus=r.bonus||{};r.markMarkerBase=r.markMarkerBase&&typeof r.markMarkerBase==='object'?r.markMarkerBase:{};r.sequence=Number(r.sequence)||0;r.clock=Number(r.clock)||0;return r;}
 function uid(prefix){return prefix+(++root().sequence).toString(36);}
 function clone(x){return x==null?x:JSON.parse(JSON.stringify(x));}
@@ -107,7 +108,7 @@ function validate(description,ctx){
  var profiles=parse(description);if(!ctx||ctx.save&&ctx.success)return profiles;
  profiles=profiles.filter(function(p){return ['shield','hellish'].indexOf(p.kind)<0;}).map(function(p){
   var s=token(ctx.source),t=token(ctx.target);if(!s||!t)throw Error('AD5ЭФФ: не найден источник/цель');p=resolved(p,s);
-  if(['link','mark','duel','heroism','periodic','protection'].indexOf(p.kind)>=0&&!ctx.concentration)throw Error('AD5ЭФФ '+p.kind+': требуется концентрация карточки');
+  if(['link','mark','duel','heroism','periodic','protection'].indexOf(p.kind)>=0&&!ctx.concentration&&!(p.kind==='mark'&&p.noConcentration))throw Error('AD5ЭФФ '+p.kind+': требуется концентрация карточки');
   if(p.kind==='armor'&&numeric(value(t.get('represents'),p.armorAttribute,0),p.armorAttribute,0,1000)>0)throw Error('Доспехи мага: цель носит доспех');
   if(p.kind==='retaliation'&&p.amountFromTemporary)p.amount=ctx.temporaryAmount;
   if(p.kind==='retaliation'&&!p.noTemp&&(!ctx.temporary||ctx.temporaryAmount<=0||ctx.source!==ctx.target))throw Error('Ответный эффект требует своих временных HP от этого применения на себя');

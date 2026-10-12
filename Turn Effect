@@ -3,7 +3,8 @@ if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
     log('AD5EffectTurns: duplicate module skipped; keep one installed copy.');
 } else {
 /*
-AD5 Effect Turns 1.6.18
+AD5 Effect Turns 1.6.19
+1.6.19: модификатор «снимается кнопкой» — кнопка токена «Снять: <эффект>» (!ad5fx dropfx), появляется и убирается сама (Вдохновение барда).
 1.6.18: ПОПАДЛЕЧЕНИЕ, ПОПАДТОЛЧ (СТОЛКНОВЕНИЕ, МАКС РАЗМЕР), ПОПАДАТАКУЕТ: носитель, ПОПАДСЕБЕ, ПОПАДДОСЯГ (payloadReachFor); модификатор «повтор промаха».
 1.6.17: Warding Bond label follows the official translation («Охраняющая связь»); the old word stays an alias.
 1.6.16: modifiers «прем/пом атака …», «при движении 1d8 звук» (Booming Blade), «теряет сопр …», «урон по цели … раз в ход», «при окончании ТЕЛ15 истощение», «концентрация -1д6», «инициатива +1д8», «полёт 0», «при уроне прем атака», «переносится 60» (!ad5fx transfer); conditions «ограничен», «покрыт кислотой» / «ожог кислотой» (periodic with type), «разлом реальности» (d10 at turn start), «связь сущностей» (tetherPartners); «ПОПАД: 12 раз» counted payloads; «ПОПАДСОСЕД».
@@ -65,7 +66,7 @@ var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5
 // silently shadow every newer fix.
 var AD5EffectTurns = (function () {
     'use strict';
-    var VERSION='1.6.18', SCRIPT='AD5 Effect Turns';
+    var VERSION='1.6.19', SCRIPT='AD5 Effect Turns';
     var runtimeLastGroup=Object.create(null);
     var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
     var markerCacheRaw=null, markerCacheByName=Object.create(null);
@@ -382,6 +383,8 @@ var AD5EffectTurns = (function () {
         if(/^повтор\s+промах\S*$/i.test(text))return {type:'missReplay',positive:true,label:'Повтор промаха'};
         if(/^при\s+уроне\s+прем\S*\s+атак\S*$/i.test(text))return {type:'onDamageAdv',positive:true,label:'После урона — преимущество на следующую атаку'};
         // 1.6.16: «переносится 60» — the effect can be moved to another creature within N ft (Fizban's Platinum Shield).
+        // 1.6.19: «снимается кнопкой» — на токен носителя добавляется кнопка «Снять: <эффект>» (Вдохновение барда).
+        if(/^снимает\S*\s+кнопк\S*$/i.test(text))return {type:'droppable',positive:true,label:'Снимается кнопкой'};
         if((m=/^переносит\S*(?:\s+(\d{1,3}))?$/i.exec(text)))return {type:'transferable',range:Number(m[1]||60),positive:true,label:'Переносится ('+(m[1]||60)+' фт)'};
         // 1.6.16: «концентрация -1д6» — modifier to the bearer's concentration saves (Synaptic Static).
         if((m=/^концентраци\S*\s*([+-])\s*(\d*[dDдД]\d+|\d+)$/i.exec(text)))return {type:'concentrationSave',formula:m[2].replace(/[дД]/g,'d'),sign:m[1]==='-'?-1:1,positive:m[1]!=='-',label:'Концентрация '+m[1]+m[2]};
@@ -1776,7 +1779,7 @@ var AD5EffectTurns = (function () {
         // after the current AD5 transaction to avoid re-entrant HP writes.
         absenceChanged(token,old,newRec);
         controlChanged(token,old,newRec);
-        try{sizeChanged(token,old,newRec);flyChanged(token,old,newRec);onEndChanged(token,old,newRec);transferButtons(token,old,newRec);}catch(sizeErr){sendChat(SCRIPT,'/w gm Размер/полёт: '+esc(sizeErr.message||sizeErr),null,{noarchive:true});}
+        try{sizeChanged(token,old,newRec);flyChanged(token,old,newRec);onEndChanged(token,old,newRec);transferButtons(token,old,newRec);syncDropActions(token.get('represents'));}catch(sizeErr){sendChat(SCRIPT,'/w gm Размер/полёт: '+esc(sizeErr.message||sizeErr),null,{noarchive:true});}
         var maxHpDiff=maxHpBonusOf(newRec)-maxHpBonusOf(old);
         if(maxHpDiff&&typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.maxHpChanged==='function'){try{AD5ConditionEngine.maxHpChanged(token,maxHpDiff);}catch(maxHpError){sendChat(SCRIPT,'/w gm Максимум хитов: '+esc(maxHpError.message||maxHpError),null,{noarchive:true});}}
         try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.effectsChanged==='function')AD5Height.effectsChanged(token,old,newRec);}catch(heightEffectError){sendChat(SCRIPT,'/w gm Высота/падение: '+esc(heightEffectError.message||heightEffectError),null,{noarchive:true});}
@@ -2013,6 +2016,24 @@ var AD5EffectTurns = (function () {
         var rows=modifierRowsForToken(id,'onDamageAdv');if(!rows.length)return;
         var live=getObj('graphic',id);if(!live)return;var src=clone(rows[0].effect&&rows[0].effect.source||{});src.actionName=(src.actionName||'Эффект')+' — после урона';
         setTimeout(function(){try{applyCondition(live,'прем атака 10\nРАСХ: ЦЕЛЬ АТАКОВАЛА 1',src);}catch(err){sendChat(SCRIPT,'/w gm '+esc(err.message||err));}},0);
+    }
+    // 1.6.19: кнопки «Снять: <эффект>» для эффектов с модификатором «снимается кнопкой».
+    var DROP_PREFIX='!ad5fx dropfx @{selected|token_id} ';
+    function syncDropActions(cid){
+        cid=String(cid||'');if(!cid)return;var names={};
+        (findObjs({_type:'graphic',_subtype:'token',represents:cid})||[]).forEach(function(t){var rec=snapshot(t.id);if(!rec)return;activeModifierEntries(rec).forEach(function(r){if(r.modifier&&r.modifier.type==='droppable'){var n=String(r.effect.source&&r.effect.source.actionName||'Эффект').trim();names[n]=true;}});});
+        var have=(findObjs({_type:'ability',_characterid:cid})||[]).filter(function(a){return String(a.get('action')||'').indexOf(DROP_PREFIX)===0;});
+        have.forEach(function(a){var n=String(a.get('action')).slice(DROP_PREFIX.length);if(!names[n])a.remove();else delete names[n];});
+        Object.keys(names).forEach(function(n){createObj('ability',{characterid:cid,name:'Снять: '+n,action:DROP_PREFIX+n,istokenaction:true,description:'AD5 Effect Turns: снять эффект после использования.'});});
+    }
+    function dropEffect(token,name,pid){
+        if(!token)throw new Error('Выделите токен.');var rec=snapshot(token.id);if(!rec)throw new Error('На токене нет эффектов.');
+        var c=getObj('character',String(token.get('represents')||'')),ctl=c?String(c.get('controlledby')||'').split(','):[],own=String(token.get('controlledby')||'').split(',');
+        if(!playerIsGM(pid)&&ctl.indexOf(pid)<0&&own.indexOf(pid)<0&&ctl.indexOf('all')<0)throw new Error('Нет управления этим токеном.');
+        var want=matchNorm(name),keys={};activeModifierEntries(rec).forEach(function(r){if(r.modifier&&r.modifier.type==='droppable'&&matchNorm(String(r.effect.source&&r.effect.source.actionName||'Эффект'))===want)keys[transferKeyOf(r.effect)]=true;});
+        var after=snapshot(token.id),n=0;Object.keys(after.effects).forEach(function(k){if(keys[transferKeyOf(after.effects[k])]){delete after.effects[k];n++;}});
+        if(!n)throw new Error('Эффект «'+name+'» не найден на токене.');
+        writeRecord(token,after);sendChat(SCRIPT,'<b>'+esc(name)+'</b>: снято с '+esc(token.get('name')||'')+'.');
     }
     function transferKeyOf(e){var src=e&&e.source||{};return [src.castId||'',src.actionName||'',src.sourceToken||''].join('|');}
     function transferEffects(from,to,pid){
@@ -2791,6 +2812,7 @@ var AD5EffectTurns = (function () {
                 if(!condition)throw new Error('Не указан эффект для снятия.');
                 playerRecovery(token,condition,msg.playerid);return;
             }
+            if(sub==='dropfx'){var dt=getObj('graphic',String(parts[2]||'')||((msg.selected||[])[0]||{})._id);dropEffect(dt,parts.slice(3).join(' '),msg.playerid);return;}
             if(sub==='transfer'){var tf=getObj('graphic',String(parts[2]||'')),tt=getObj('graphic',String(parts[3]||''));if(!tf||!tt)throw new Error('Укажите токен-носитель и новую цель.');transferEffects(tf,tt,msg.playerid);return;}
             if(sub==='shake'){var sht=getObj('graphic',String(parts[2]||(msg.selected&&msg.selected[0]&&msg.selected[0]._id)||''));if(!sht)throw new Error('Выберите токен, который нужно растормошить.');shake(sht);return;}
             if(sub==='timestop'){var tst=getObj('graphic',parts[2]);if(!tst)throw new Error('Токен не найден.');timeStopTurn(tst,msg.playerid);return;}
