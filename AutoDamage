@@ -48,7 +48,7 @@ var AD5Background = (function(){
     return {put:put,isReady:function(){return ready;}};
 }());
 /*
-AutoDamage 4.3.166 / NPC Forge RU 2.7.4 — «шепот звезд».
+AutoDamage 4.3.167 / NPC Forge RU 2.7.4 — «шепот звезд».
 D&D 5e 2014 by Roll20. Рекомендуется Auto Roll Damage & Crit.
 Обычная атака игрока -> Target AD5 на карте -> штатные запросы преимущества/помехи/доп. урона Roll20 -> бросок -> урон и крит. NPC/Transform сохраняют штатный Target Roll20. AutoFront заранее держит боевые токены на переднем плане. Промах: публичное «промах».
 Попадание: урон по цели; отчёт с отменой лично GM.
@@ -73,6 +73,7 @@ hp листа используется однократно как началь�
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
 4.3.163: классовые механики — атрибут листа ad5_features: КРИТ 19/18, КРИТ КОСТИ, ПЕРЕБРОС УРОНА, СКРЫТАЯ АТАКА, РАЗ В ХОД, УРОН ЗАКЛИНАНИЙ/ШКОЛЫ, ЛУЧ, ЛЕЧЕНИЕ ЗАКЛИНАНИЙ; ПОСЛЕ ПОПАДАНИЯ — кнопки с расходом ячейки или ресурса (!ad5 posthit). ЯРОСТЬ, НЕУДЕРЖИМАЯ ЯРОСТЬ (!ad5 relentless-reset), ПРИ УБИЙСТВЕ [ЗАКЛИНАНИЕМ]; метамагия (!ad5 meta: Усиленное, Продлённое, Удвоенное, Осторожное), ФОРМИРОВАНИЕ ЗАКЛИНАНИЙ; спасбросок может быть автоуспешным. Описание — docs/class-features.md.
+4.3.167: «ТРАТИТ РЕСУРС: <ресурс> N» в описании действия листа — расход ресурса (Class Resource / Other Resource / Resources) при нажатии; без ресурса действие блокируется (кнопки Classes 1.4.0).
 4.3.166: РАЗ В ХОД / ПРИ ПОПАДАНИИ — опции «АТАКА» (любой бросок атаки) и «ЭФФЕКТ <название>» (только пока эффект на атакующем); ПОСЛЕ ПОПАДАНИЯ — фиксированный урон «15 некротическая»; ЛИХАЯ УДАЛЬ для Скрытой атаки; подклассы официальных дополнений (скрипт Classes 1.2.0).
 4.3.165: ПОСЛЕ ПОПАДАНИЯ — в эффекте спасброска части через «/», «урон МДР излучение» наносится только при провале (Цепи правосудия); РАЗ В ХОД / ПРИ ПОПАДАНИИ — опция «НАЗВАНИЕ <атака>» (священный клинок); директива ФЕХТОВАЛЬНОЕ: <атака> для Скрытой атаки.
 4.3.164: атаки по площади — шаблон «полукруг» (N фт полукруг), атакующий не попадает в свою область, каждая цель получает свой бросок атаки; Скрытая атака — кнопка после попадания с учётом селектора преимущества листа и оружия (фехтовальное/дальнобойное/ЛОВ); директива ПРИ ПОПАДАНИИ; блок «# авто» в ad5_features ведёт скрипт Classes.
@@ -783,7 +784,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.166', diagnostics = [], debug = false;
+    var VERSION = '4.3.167', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -7986,6 +7987,9 @@ var AD5 = (function () {
             var batchDraft=context&&context.batch&&drafts[context.batch];
             var spellMeta=batchDraft&&batchDraft.spellMeta?JSON.parse(JSON.stringify(batchDraft.spellMeta)):(directNativeSpellMeta||(spellSourceId?enrichSpellFields(msg,f,spellSourceId):null));
             if(!context){try{rememberRepeat(msg,f);}catch(ignoreRepeat){}try{hitDieOffer(msg,f);}catch(ignoreHitDie){}try{grantUsed(msg,f);}catch(ignoreGrantUse){}try{grantSelfAtCast(msg,f);}catch(ignoreGrantSelf){}}
+            // 4.3.167: «ТРАТИТ РЕСУРС: Ярость 1» в описании действия листа — расход ресурса листа при использовании
+            // (кнопки баффов от скрипта Classes). Нет ресурса — действие не выполняется. Строка вырезается из карточки.
+            if(!context){var spendBlock=null;try{spendBlock=actionResourceSpend(msg,f);}catch(spendErr){spendBlock=String(spendErr.message||spendErr);}if(spendBlock){reply(msg.playerid,spendBlock);delete armed[msg.playerid];delete deferred[msg.playerid];delete pending[msg.playerid];return;}}
             if(!spellMeta)spellMeta=npcSpellMetaForFields(f);
             if(!spellMeta)spellMeta=taggedPlayerSpellMetaForFields(msg,f);
             if(spellMeta&&!context){try{var metaCid=spellSourceId||(actor(f,msg)||{}).id;if(metaCid)metaAttach(msg,f,spellMeta,String(metaCid));}catch(metaErr){record('Метамагия: '+(metaErr.message||metaErr));}}
@@ -9073,6 +9077,21 @@ var AD5 = (function () {
     //   НЕУДЕРЖИМАЯ ЯРОСТЬ — в ярости при падении до 0 хитов спасбросок ТЕЛ СЛ 10 (+5 за каждое срабатывание) → 1 хит;
     //   ПРИ УБИЙСТВЕ: вр хп ХАР+УРОВЕНЬ — снизив враждебное существо до 0 хитов, получить временные хиты;
     //   ПРИ УБИЙСТВЕ ЗАКЛИНАНИЕМ: лечение 2*КРУГ — убив заклинанием 1+ круга, восстановить хиты.
+    var SPEND_RE=/(?:^|\n|<br\s*\/?>)[ \t]*ТРАТИТ\s+РЕСУРС\s*[:：]\s*([^\n<]+?)\s+(\d+)[ \t]*(?=$|\n|<br)/i;
+    function actionResourceSpend(msg,f){
+        var keys=['desc','description'],hit=null;keys.forEach(function(k){if(!hit&&f[k]!==undefined){var m=SPEND_RE.exec(String(f[k]));if(m)hit=m;}});
+        if(!hit){var mc=SPEND_RE.exec(String(msg.content||'').replace(/}}\s*{{/g,'\n'));if(mc)hit=mc;}
+        if(!hit)return null;
+        var src=actor(f,msg),cid=src&&src.id?String(src.id):'';if(!cid)return 'Не найден лист для расхода ресурса.';
+        var name=hit[1].trim(),cost=Number(hit[2])||1,r=sheetResource(cid,name);
+        if(!r)return '<b>'+esc(attackName(f)||'Действие')+'</b>: в листе нет ресурса «'+esc(name)+'».';
+        if(r.left<cost)return '<b>'+esc(attackName(f)||'Действие')+'</b>: не хватает ресурса «'+esc(name)+'» (осталось '+r.left+', нужно '+cost+').';
+        r.attr.set('current',String(r.left-cost));
+        var strip=function(t){return String(t).replace(/(^|\n|<br\s*\/?>)[ \t]*ТРАТИТ\s+РЕСУРС\s*[:：][^\n<}]*/ig,'$1');};
+        keys.forEach(function(k){if(f[k]!==undefined)f[k]=strip(f[k]);});msg.content=strip(msg.content||'');
+        reply(msg.playerid,'<b>'+esc(attackName(f)||'Действие')+'</b>: '+esc(name)+' −'+cost+' (осталось '+(r.left-cost)+').');
+        return null;
+    }
     function tokenHasEffect(token,name){
         try{var want=normalizeUserText(name),r=typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&AD5EffectTurns.snapshot?AD5EffectTurns.snapshot(token.id):null;
             return !!(want&&r&&r.effects&&Object.keys(r.effects).some(function(k){var e=r.effects[k];return normalizeUserText(String(e&&e.label||'')).indexOf(want)>=0||normalizeUserText(String(e&&e.source&&e.source.actionName||'')).indexOf(want)>=0;}));}catch(ignoreFx){return false;}

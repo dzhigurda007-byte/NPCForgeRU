@@ -3,7 +3,12 @@ if(typeof AD5Classes!=='undefined'&&AD5Classes) {
     log('AD5Classes: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Classes 1.3.0 — автоматическая прокачка по полям листа «D&D 5E by Roll20» (Legacy).
+ * AD5 Classes 1.4.0 — автоматическая прокачка по полям листа «D&D 5E by Roll20» (Legacy).
+ * 1.4.0: кнопки-баффы в листе (строки атак «На себя»: Ярость, Терпеливая оборона, Шаг ветра, Хитрое действие,
+ *        Второе дыхание, Священное оружие, Песнь клинка, Мощь великана, Боевой дух) с расходом ресурса;
+ *        пассивные бонусы в штатных полях: особый КД, скорость, владение спасбросками, «Мастер на все руки»,
+ *        глобальные модификаторы КД/спасбросков/атаки/урона, сопротивления и иммунитеты, максимум хитов.
+ *        Правки игрока (строки блока «# авто», максимумы ресурсов, описания кнопок, значения модификаторов) сохраняются.
  * 1.3.0: класс Изобретатель (Artificer, TCE) и его подклассы: Алхимик, Артиллерист, Боевой кузнец, Бронник.
  * 1.2.0: подклассы официальных дополнений — DMG, SCAG, XGE, TCE, EGW, VRGR, FToD, BGG, SotDQ (75 шт.):
  *        умения, ресурсы и боевые директивы (Божественный гнев, Касание смерти, Психические клинки,
@@ -37,7 +42,7 @@ if(typeof AD5Classes!=='undefined'&&AD5Classes) {
  */
 var AD5Classes=(function(){
     'use strict';
-    var VERSION='1.3.0',SCRIPT='AD5 Классы',BEGIN='# авто:начало (AD5 Классы)',END='# авто:конец';
+    var VERSION='1.4.0',SCRIPT='AD5 Классы',BEGIN='# авто:начало (AD5 Классы)',END='# авто:конец';
     var WATCH=/^(class|base_level|subclass|custom_class|cust_classname|multiclass[1-3](?:_flag|_lvl|_subclass)?|ad5_class_choices)$/i;
     var timers={},pendingHp={},hpSeq=0;
 
@@ -55,8 +60,9 @@ var AD5Classes=(function(){
     function rowId(){
         var a='-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz',t=Date.now(),s='';
         for(var i=0;i<8;i++){s=a.charAt(t%64)+s;t=Math.floor(t/64);}
+        // 1.4.0: id строки в нижнем регистре — worker листа пишет атрибуты строки в нижнем регистре.
         for(var j=0;j<12;j++)s+=a.charAt(randomInteger(64)-1);
-        return s.replace(/_/g,'Z');
+        return s.replace(/_/g,'z').toLowerCase();
     }
     function mod(cid,ab){return Math.floor(num(cid,ab+'_mod'));}
 
@@ -557,14 +563,98 @@ var AD5Classes=(function(){
         if(hasStyle&&has(ch.style,/большим оруж|great weapon/))lines.push('ПЕРЕБРОС УРОНА: 2');
         if(hasStyle&&ch.style&&ch.style.length)addTrait('common|style','Стиль','Боевой стиль: '+ch.style.join(', '),'Выбранный стиль. Автоматизирован: Сражение большим оружием (переброс 1–2), Защита (реакция).');
         if(extra>=2)addTrait('common|extra','Мультикласс','Дополнительная атака','Атак за действие Атака: '+extra+'. При мультиклассе не складывается.');
-        return {classes:cls,traits:traits,lines:lines,resources:Object.keys(res).map(function(k){return res[k];}),warnings:warn,pb:pb};
+        // ----- 1.4.0: кнопки-баффы и пассивные бонусы в штатных полях листа -----
+        var acts=[],pas={ac:null,speed:0,saves:{},jack:false,acmods:[],savemods:[],tohit:[],dmgmods:[],resist:[],immune:[],condImmune:[],hpMax:0},lv={};
+        cls.forEach(function(c){lv[c.key]=c;});
+        var L_=function(k){return lv[k]?lv[k].level:0;},S_=function(k){return lv[k]?lv[k].sub:'';};
+        var act=function(key,name,desc,o){o=o||{};acts.push({key:key,name:name,desc:desc,dmg:o.dmg||'',dmgType:o.type||'',range:o.range||'На себя',atk:o.atk||'',dmgAttr:o.dmgAttr||'0',save:o.save||null});};
+        var DC=function(ab){return '(@{'+ab+'_mod}+8+@{pb})';},AB={str:'@{strength_mod}',dex:'@{dexterity_mod}',wis:'@{wisdom_mod}',cha:'@{charisma_mod}',int:'@{intelligence_mod}'};
+        var intM=mod(cid,'intelligence'),conM=mod(cid,'constitution');
+        if(L_('barbarian')>=1)act('rage','Ярость','Бонусное действие, 1 минута. Пока действует: бонус к урону Силой и сопротивление.\nсопр руб/кол/дроб 10\nПРЕМ СИЛ 10\nТРАТИТ РЕСУРС: Ярость 1');
+        if(L_('monk')>=2){act('patient','Терпеливая оборона','Бонусное действие: Уклонение до начала вашего хода.\nуклонение 1\nТРАТИТ РЕСУРС: Ки 1');act('stepwind','Шаг ветра','Бонусное действие: Отход (и Рывок) в этом ходу.\nотход 1\nТРАТИТ РЕСУРС: Ки 1');}
+        if(L_('rogue')>=2)act('cunning','Хитрое действие: Отход','Бонусное действие: Отход в этом ходу.\nотход 1');
+        if(L_('fighter')>=1)act('secondwind','Второе дыхание','Бонусное действие: восстановление хитов.\nТРАТИТ РЕСУРС: Второе дыхание 1',{dmg:'1d10+'+L_('fighter'),type:'лечение'});
+        if(S_('paladin')==='devotion'&&L_('paladin')>=3)act('sacredweapon','Священное оружие','Канал божественности, 1 минута: + ХАР к броскам атаки оружием.\nАтака '+Math.max(1,cha)+' 10\nТРАТИТ РЕСУРС: Канал божественности 1');
+        if(S_('wizard')==='bladesinging'&&L_('wizard')>=2)act('bladesong','Песнь клинка','Бонусное действие, 1 минута: + ИНТ к КД (и скорость, Акробатика, концентрация — вручную).\nКД '+Math.max(1,intM)+' 10\nТРАТИТ РЕСУРС: Песнь клинка 1');
+        if(S_('fighter')==='runeknight'&&L_('fighter')>=3)act('giantmight','Мощь великана','Бонусное действие, 1 минута: размер Большой, преимущество Силы, доп. урон раз в ход.\nПРЕМ СИЛ 10\nТРАТИТ РЕСУРС: Мощь великана 1');
+        if(S_('fighter')==='samurai'&&L_('fighter')>=3){var fsTh=L_('fighter')>=15?15:L_('fighter')>=10?10:5;act('fightspirit','Боевой дух','Бонусное действие: преимущество на атаки оружием до конца хода и временные хиты.\nпрем атака 1\nТРАТИТ РЕСУРС: Боевой дух 1',{dmg:String(fsTh),type:'временное хп'});}
+        // ----- Умения с прямым эффектом — строки «Атаки» листа (урон, спасбросок, состояние, изгнание) -----
+        var maD=function(l){return l>=17?10:l>=11?8:l>=5?6:4;};
+        if(L_('cleric')>=2)act('turnundead','Изгнание нежити','Действие, Канал божественности: нежить в 30 фт, видящая или слышащая вас, — спасбросок МДР; при провале изгнана (бежит от вас) на 1 минуту или до получения урона.\nВКР круг 30 фт\nТОЛЬКО ЕСЛИ: ТИП нежить\nПРВ: испуган 10\nТРАТИТ РЕСУРС: Канал божественности 1',{save:{ab:'Wisdom',dc:DC('wisdom')}});
+        if(L_('paladin')>=1)act('layonhands','Наложение рук (5)','Действие, касание: восстанавливает хиты из запаса. Число в уроне и в строке расхода можно менять.\nТРАТИТ РЕСУРС: Наложение рук 5',{range:'Касание',dmg:'5',type:'лечение'});
+        if(L_('monk')>=1)act('unarmed','Безоружный удар (боевые искусства)','Атака безоружным ударом монаха; бонусным действием после Атаки — ещё один.',{range:'5 фт',atk:AB.dex,dmg:'1d'+maD(L_('monk')),dmgAttr:AB.dex,type:'дробящий'});
+        if(L_('monk')>=2)act('flurry','Шквал ударов','Бонусное действие после Атаки, 1 ки: два безоружных удара (второй — кнопкой «Безоружный удар»).\nТРАТИТ РЕСУРС: Ки 1',{range:'5 фт',atk:AB.dex,dmg:'1d'+maD(L_('monk')),dmgAttr:AB.dex,type:'дробящий'});
+        var cdSave=function(key,name,txt,sub,cls,minL,ab,dcAb,body){if(S_(cls)===sub&&L_(cls)>=minL)act(key,name,txt+'\n'+body+'\nТРАТИТ РЕСУРС: Канал божественности 1',{save:{ab:ab,dc:DC(dcAb)}});};
+        cdSave('cd_dawn','Сияние рассвета','Канал божественности: враги в 30 фт — спасбросок ТЕЛ, 2к10 + уровень жреца излучением, при успехе половина.','light','cleric',2,'Constitution','wisdom','ВКР круг 30 фт\nУСП: половина урона');
+        if(S_('cleric')==='light'&&L_('cleric')>=2){var dw=acts[acts.length-1];dw.dmg='2d10+'+L_('cleric');dw.dmgType='излучение';}
+        cdSave('cd_order','Требование порядка','Канал божественности: существа в 30 фт — спасбросок МДР, при провале очарованы до конца вашего следующего хода.','order','cleric',2,'Wisdom','wisdom','ВКР круг 30 фт\nПРВ: очарован 1');
+        cdSave('cd_unholy','Изгнание нечестивых','Канал божественности: исчадия и нежить в 30 фт — спасбросок МДР, при провале изгнаны на 1 минуту.','devotion','paladin',3,'Wisdom','charisma','ВКР круг 30 фт\nТОЛЬКО ЕСЛИ: ТИП исчадие/нежить\nПРВ: испуган 10');
+        cdSave('cd_abjure','Отречение врага','Канал божественности: существо в 60 фт — спасбросок МДР, при провале испугано и скорость 0 на 1 минуту.','vengeance','paladin',3,'Wisdom','charisma','ПРВ: испуган 10');
+        if(S_('paladin')==='vengeance'&&L_('paladin')>=3)acts[acts.length-1].range='60 фт';
+        cdSave('cd_wrath','Гнев природы','Канал божественности: существо в 10 фт — спасбросок СИЛ или ЛОВ, при провале опутано на 1 минуту.','ancients','paladin',3,'Strength','charisma','ПРВ: опутан 10');
+        if(S_('paladin')==='ancients'&&L_('paladin')>=3)acts[acts.length-1].range='10 фт';
+        cdSave('cd_conquer','Завоевательное присутствие','Канал божественности: существа в 30 фт — спасбросок МДР, при провале испуганы на 1 минуту.','conquest','paladin',3,'Wisdom','charisma','ВКР круг 30 фт\nПРВ: испуган 10');
+        cdSave('cd_dread','Ужасающий облик','Канал божественности: существа в 30 фт — спасбросок МДР, при провале испуганы на 1 минуту.','oathbreaker','paladin',3,'Wisdom','charisma','ВКР круг 30 фт\nПРВ: испуган 10');
+        cdSave('cd_extraplanar','Изгнание иноземцев','Канал божественности: аберрации, небожители, элементали, феи и исчадия в 30 фт — спасбросок МДР, при провале испуганы на 1 минуту.','watchers','paladin',3,'Wisdom','charisma','ВКР круг 30 фт\nТОЛЬКО ЕСЛИ: ТИП аберрация/небожитель/элементаль/фея/исчадие\nПРВ: испуган 10');
+        cdSave('cd_taint','Изгнание скверны','Канал божественности: нежить и существа Царства теней в 30 фт — спасбросок МДР, при провале изгнаны на 1 минуту или до получения урона.','radiance','paladin',3,'Wisdom','charisma','ВКР круг 30 фт\nТОЛЬКО ЕСЛИ: ТИП нежить\nПРВ: изгнан 10');
+        if(S_('monk')==='longdeath'&&L_('monk')>=6)act('reaping','Час жатвы','Действие: существа в 30 фт — спасбросок МДР, при провале испуганы до конца вашего следующего хода.\nВКР круг 30 фт\nПРВ: испуган 1',{save:{ab:'Wisdom',dc:DC('wisdom')}});
+        if(S_('monk')==='sunsoul'&&L_('monk')>=3)act('sunbolt','Луч сияющего солнца','Дальнобойная атака 30 фт излучением; после Атаки бонусным действием, 1 ки — ещё два.',{range:'30 фт',atk:AB.dex,dmg:'1d'+maD(L_('monk')),dmgAttr:AB.dex,type:'излучение'});
+        if(S_('monk')==='mercy'&&L_('monk')>=3)act('handheal','Исцеляющая рука','1 ки, касание: лечение кость боевых искусств + МДР.\nТРАТИТ РЕСУРС: Ки 1',{range:'Касание',dmg:'1d'+maD(L_('monk')),dmgAttr:AB.wis,type:'лечение'});
+        if(S_('monk')==='dragon'&&L_('monk')>=3){var de=(ch.element&&ch.element[0])||'огонь';act('dragonbreath','Дыхание дракона','Вместо атаки: конус 20 фт (или линия 30 фт), спасбросок ЛОВ, при успехе половина. Тип урона — из «Стихия: …».\nУСП: половина урона\nТРАТИТ РЕСУРС: Дыхание дракона 1',{range:'20 фт конус',dmg:'2d'+maD(L_('monk')),type:de,save:{ab:'Dexterity',dc:DC('wisdom')}});}
+        if(S_('druid')==='stars'&&L_('druid')>=2)act('stararcher','Звёздный облик: Лучник','В облике Лучника, бонусным действием: дальнобойная атака заклинанием 60 фт.',{range:'60 фт',atk:'spell',dmg:(L_('druid')>=10?'2d8':'1d8'),dmgAttr:AB.wis,type:'излучение'});
+        if(L_('barbarian')>=3&&S_('barbarian')==='beast'){act('beastbite','Форма зверя: укус','В ярости. При попадании, если хитов меньше половины, — лечение БМ раз в ход (вручную).',{range:'5 фт',atk:AB.str,dmg:'1d8',dmgAttr:AB.str,type:'колющий'});act('beastclaw','Форма зверя: когти','В ярости. Атакуя когтями действием Атака, один раз — ещё атака когтями.',{range:'5 фт',atk:AB.str,dmg:'1d6',dmgAttr:AB.str,type:'рубящий'});act('beasttail','Форма зверя: хвост','В ярости, досягаемость 10 фт.',{range:'10 фт',atk:AB.str,dmg:'1d8',dmgAttr:AB.str,type:'колющий'});}
+        if(S_('rogue')==='soulknife'&&L_('rogue')>=3){act('psiblade','Психический клинок','Фехтовальное, метательное 60 фт; Скрытая атака доступна.',{range:'60 фт',atk:AB.dex,dmg:'1d6',dmgAttr:AB.dex,type:'психический'});act('psiblade2','Психический клинок (бонусный)','Бонусным действием после атаки клинком.',{range:'60 фт',atk:AB.dex,dmg:'1d4',dmgAttr:AB.dex,type:'психический'});}
+        if(S_('warlock')==='fathomless'&&L_('warlock')>=1)act('tentacle','Щупальце из глубин','Бонусное действие: рукопашная атака заклинанием (щупальце в 60 фт), при попадании скорость −10 фт до вашего следующего хода.\nЗамедление 10 1\nТРАТИТ РЕСУРС: Щупальце из глубин 1',{range:'60 фт',atk:'spell',dmg:(L_('warlock')>=10?'2d8':'1d8'),type:'холод'});
+        if(S_('warlock')==='celestial')act('healinglight','Лечащий свет (1к6)','Бонусное действие, 60 фт: лечение из пула к6 (кость за нажатие; число костей можно менять).\nТРАТИТ РЕСУРС: Лечащий свет (к6) 1',{range:'60 фт',dmg:'1d6',type:'лечение'});
+        if(S_('warlock')==='undead')act('dreadform','Ужасающий облик','Бонусное действие, 1 минута: временные хиты; иммунитет к испугу; раз в ход при попадании — испуг цели (спасбросок МДР, вручную).\nимм испуган 10\nТРАТИТ РЕСУРС: Ужасающий облик 1',{dmg:'1d10+'+L_('warlock'),type:'временное хп'});
+        if(S_('ranger')==='drakewarden'&&L_('ranger')>=11){addRes('Дыхание дрейка',1,'long');act('drakebreath','Дыхание дрейка','Действие: конус 30 фт, спасбросок ЛОВ, при успехе половина урона.\nУСП: половина урона\nТРАТИТ РЕСУРС: Дыхание дрейка 1',{range:'30 фт конус',dmg:(L_('ranger')>=15?'10d6':'8d6'),type:(ch.element&&ch.element[0])||'огонь',save:{ab:'Dexterity',dc:'(@{spell_save_dc})'}});}
+        if(S_('wizard')==='chronurgy'&&L_('wizard')>=6){addRes('Кратковременный стазис',Math.max(1,intM),'long');act('stasis','Кратковременный стазис','Действие, 60 фт: Большое или меньшее существо — спасбросок ТЕЛ, при провале недееспособно и скорость 0 до конца вашего следующего хода.\nПРВ: недееспособен 1\nТРАТИТ РЕСУРС: Кратковременный стазис 1',{range:'60 фт',save:{ab:'Constitution',dc:'(@{spell_save_dc})'}});}
+        if(S_('artificer')==='artillerist'&&L_('artificer')>=3){var cd=L_('artificer')>=9?'3d8':'2d8';act('cannonfire','Пушка: огнемёт','Бонусным действием пушка выдыхает огонь: конус 15 фт, спасбросок ЛОВ, при успехе половина.\nУСП: половина урона',{range:'15 фт конус',dmg:cd,type:'огонь',save:{ab:'Dexterity',dc:'(@{spell_save_dc})'}});act('cannonforce','Пушка: силовая баллиста','Бонусным действием: дальнобойная атака заклинанием 120 фт, при попадании цель отталкивается на 5 фт.\nТОЛЧ 5',{range:'120 фт',atk:'spell',dmg:cd,type:'силовое поле'});}
+        if(S_('artificer')==='armorer'&&L_('artificer')>=3){var md=norm((ch.armor||[])[0]||'');if(/страж|guard/.test(md))act('gauntlets','Громовые перчатки','Рукопашная атака доспехом (ИНТ); цель с помехой атакует других до начала вашего хода.',{range:'5 фт',atk:AB.int,dmg:'1d8',dmgAttr:AB.int,type:'звук'});if(/лазутч|infiltr/.test(md))act('launcher','Молниемёт','Дальнобойная атака доспехом 90/300 фт (ИНТ); раз в ход +1к6 электричеством (автоматически).',{range:'90 фт',atk:AB.int,dmg:'1d6',dmgAttr:AB.int,type:'электричество'});}
+        // Пассивные: особый КД (только от первого класса), скорость, спасброски, модификаторы, сопротивления.
+        var first=cls[0]&&cls[0].key;
+        if(first==='barbarian')pas.ac={base:10,p1:'Dexterity',p2:'Constitution',why:'Защита без доспехов (варвар)'};
+        else if(first==='monk')pas.ac={base:10,p1:'Dexterity',p2:'Wisdom',why:'Защита без доспехов (монах)'};
+        else if(first==='sorcerer'&&S_('sorcerer')==='draconic')pas.ac={base:13,p1:'Dexterity',p2:'none',why:'Драконья устойчивость'};
+        if(L_('barbarian')>=5)pas.speed+=10;
+        if(L_('monk')>=2){var mL=L_('monk');pas.speed+=mL>=18?30:mL>=14?25:mL>=10?20:mL>=6?15:10;}
+        if(S_('rogue')==='scout'&&L_('rogue')>=9)pas.speed+=10;
+        if(L_('monk')>=14)['strength','dexterity','constitution','intelligence','wisdom','charisma'].forEach(function(ab){pas.saves[ab]=1;});
+        if(L_('rogue')>=15)pas.saves.wisdom=1;
+        if((S_('fighter')==='samurai'&&L_('fighter')>=7)||(S_('ranger')==='gloom'&&L_('ranger')>=7))pas.saves.wisdom=1;
+        if(L_('bard')>=2)pas.jack=true;
+        if(hasStyle&&has(ch.style,/^защит|defense/))pas.acmods.push({key:'defense',name:'Стиль: Защита (в доспехе)',val:'1'});
+        if(hasStyle&&has(ch.style,/стрельб|archery/))pas.tohit.push({key:'archery',name:'Стиль: Стрельба (только дальнобойное)',val:'2'});
+        if(hasStyle&&has(ch.style,/дуэл|dueling/))pas.dmgmods.push({key:'dueling',name:'Стиль: Дуэлянт (одноручное в одной руке)',val:'2'});
+        if(L_('paladin')>=6)pas.savemods.push({key:'auraprot',name:'Аура защиты',val:String(Math.max(1,cha))});
+        if(S_('sorcerer')==='draconic')pas.hpMax+=L_('sorcerer');
+        var R=function(k,sb,minL,list){if(S_(k)===sb&&L_(k)>=minL)list.forEach(function(x){pas.resist.push(x);});};
+        R('cleric','forge',6,['огонь']);R('warlock','celestial',6,['излучение']);R('warlock','fathomless',6,['холод']);R('sorcerer','aberrant',6,['психическая энергия']);
+        R('warlock','undead',10,['некротическая энергия']);R('wizard','necromancy',10,['некротическая энергия']);R('paladin','radiance',15,['некротическая энергия']);
+        R('fighter','psiwarrior',10,['психическая энергия']);R('artificer','alchemist',15,['кислота','яд']);
+        if(S_('sorcerer')==='storm'&&L_('sorcerer')>=6&&L_('sorcerer')<18)pas.resist.push('электричество','звук');
+        if(S_('sorcerer')==='storm'&&L_('sorcerer')>=18)pas.immune.push('электричество','звук');
+        if(S_('cleric')==='forge'&&L_('cleric')>=17){pas.resist=pas.resist.filter(function(x){return x!=='огонь';});pas.immune.push('огонь');}
+        if(L_('monk')>=10){pas.immune.push('яд');pas.condImmune.push('отравлен');}
+        if(S_('artificer')==='alchemist'&&L_('artificer')>=15)pas.condImmune.push('отравлен');
+        if(S_('warlock')==='archfey'&&L_('warlock')>=10)pas.condImmune.push('очарован');
+        if(S_('druid')==='spores'&&L_('druid')>=14)pas.condImmune.push('ослеплён','оглохший','испуган','отравлен');
+        return {classes:cls,traits:traits,lines:lines,resources:Object.keys(res).map(function(k){return res[k];}),warnings:warn,pb:pb,actions:acts,passive:pas};
     }
 
     // ===== Запись в лист =====
     function loadState(cid){try{return JSON.parse(val(cid,'ad5_class_state')||'{}')||{};}catch(e){return {};}}
     function saveState(cid,st){setAttr(cid,'ad5_class_state',JSON.stringify(st));}
-    function writeFeatures(cid,lines){
-        var cur=val(cid,'ad5_features').replace(/<br\s*\/?>/gi,'\n'),bi=cur.indexOf(BEGIN),ei=cur.indexOf(END);
+    // Ключ строки — текст без чисел: правка игрока («СКРЫТАЯ АТАКА: 4d6» вместо 3d6) узнаётся и сохраняется.
+    function lineKey(l){return norm(l).replace(/\d+/g,'#');}
+    function writeFeatures(cid,lines,st){
+        var cur0=val(cid,'ad5_features').replace(/<br\s*\/?>/gi,'\n'),b0=cur0.indexOf(BEGIN),e0=cur0.indexOf(END),prev={},inBlock={},kept=[];
+        (st&&st.lines||[]).forEach(function(l){prev[lineKey(l)]=l;});
+        if(b0>=0&&e0>b0)cur0.slice(b0+BEGIN.length,e0).split('\n').map(function(x){return x.trim();}).filter(Boolean).forEach(function(l){inBlock[lineKey(l)]=l;});
+        var gen=lines.slice();
+        lines=lines.map(function(l){var k=lineKey(l),was=prev[k],now=inBlock[k];if(was!==undefined&&now!==undefined&&now!==was){kept.push(now);return now;}return l;});
+        if(st){st.lines=gen.map(function(l,i){var k=lineKey(l),was=prev[k],now=inBlock[k];return (was!==undefined&&now!==undefined&&now!==was)?was:l;});st.keptLines=kept;}
+        var cur=cur0,bi=b0,ei=e0;
         var manual=bi>=0?(cur.slice(0,bi)+(ei>bi?cur.slice(ei+END.length):'')):cur;manual=manual.replace(/\n{3,}/g,'\n\n').replace(/^\s+|\s+$/g,'');
         var block=lines.length?BEGIN+'\n'+lines.join('\n')+'\n'+END:'',next=(manual?manual+(block?'\n':''):'')+block;
         if(next!==cur)setAttr(cid,'ad5_features',next);
@@ -601,11 +691,91 @@ var AD5Classes=(function(){
             }
             var a=attr(cid,base),oldMax=a?Number(a.get('max')):NaN,cur=a?Number(a.get('current')):NaN;
             var next=(fresh||!a||String(a.get('current'))===''||!Number.isFinite(cur)||(Number.isFinite(oldMax)&&cur>=oldMax))?r.max:Math.min(cur,r.max);
+            var m0=managed[r.name],userMax=!fresh&&a&&m0&&m0.wrote!==undefined&&String(a.get('max'))!==''&&String(a.get('max'))!==String(m0.wrote);
+            if(userMax){keep[r.name]={base:base,rest:r.rest,wrote:m0.wrote};return;}
             if(!a||String(a.get('max'))!==String(r.max)||String(a.get('current'))!==String(next))setAttr(cid,base,next,r.max);
-            keep[r.name]={base:base,rest:r.rest};
+            keep[r.name]={base:base,rest:r.rest,wrote:r.max};
         });
         Object.keys(managed).forEach(function(n){if(keep[n])return;var b=managed[n].base;if(norm(val(cid,b+'_name'))===norm(n)){setAttr(cid,b+'_name','');setAttr(cid,b,'','');}});
         st.res=keep;
+    }
+
+    // ===== 1.4.0: кнопки-баффы (строки атак листа «На себя») =====
+    // Строка атаки: atkname, atkrange «На себя», atk_desc — эффекты Effect Turns и «ТРАТИТ РЕСУРС: …» (AutoDamage 4.3.167);
+    // atkflag выкл., урон — только для лечения/временных хитов. Правку описания или урона игроком скрипт не перезаписывает.
+    function writeActions(cid,acts,st){
+        var map=st.actions||{},keep={};
+        acts.forEach(function(x){
+            var m=map[x.key]||{},id=m.row,p,fresh=false;
+            if(!id||!attr(cid,'repeating_attack_'+id+'_atkname')){id=rowId();fresh=true;}
+            p='repeating_attack_'+id+'_';
+            var curDesc=val(cid,p+'atk_desc'),curDmg=val(cid,p+'dmgbase'),changed=fresh;
+            var userDesc=!fresh&&m.desc!==undefined&&curDesc!==m.desc,userDmg=!fresh&&m.dmg!==undefined&&curDmg!==m.dmg;
+            if(fresh){
+                setAttr(cid,p+'atkflag',x.atk?'{{attack=1}}':'0');setAttr(cid,p+'atkattr_base',x.atk||'0');if(x.atk)setAttr(cid,p+'atkprofflag','(@{pb})');
+                setAttr(cid,p+'atkrange',x.range);setAttr(cid,p+'atkcritrange','20');setAttr(cid,p+'dmg2flag','0');setAttr(cid,p+'dmgattr',x.dmgAttr||'0');setAttr(cid,p+'options-flag','0');setAttr(cid,p+'ad5class_key',x.key);
+                if(x.save){setAttr(cid,p+'saveflag','{{save=1}} {{saveattr=@{saveattr}}} {{savedesc=@{saveeffect}}} {{savedc=[[[[@{savedc}]][SAVE]]]}}');setAttr(cid,p+'saveattr',x.save.ab);setAttr(cid,p+'savedc',x.save.dc);setAttr(cid,p+'saveeffect','');}
+                else setAttr(cid,p+'saveflag','0');
+            }
+            if(!userDesc&&curDesc!==x.desc){setAttr(cid,p+'atk_desc',x.desc);changed=true;}
+            if(!userDmg){
+                if(x.dmg){if(curDmg!==x.dmg){setAttr(cid,p+'dmgbase',x.dmg);changed=true;}if(val(cid,p+'dmgflag')!=='{{damage=1}} {{dmg1flag=1}}')setAttr(cid,p+'dmgflag','{{damage=1}} {{dmg1flag=1}}');if(val(cid,p+'dmgtype')!==x.dmgType)setAttr(cid,p+'dmgtype',x.dmgType);}
+                else if(fresh)setAttr(cid,p+'dmgflag','0');
+            }
+            var na=attr(cid,p+'atkname');
+            if(changed||!na||String(na.get('current'))!==x.name){if(!na)na=createObj('attribute',{characterid:cid,name:p+'atkname',current:''});if(typeof na.setWithWorker==='function')na.setWithWorker({current:x.name});else na.set('current',x.name);}
+            keep[x.key]={row:id,desc:userDesc?m.desc:x.desc,dmg:userDmg?m.dmg:(x.dmg||curDmg)};
+        });
+        Object.keys(map).forEach(function(k){if(!keep[k]&&map[k].row)removeRow(cid,'repeating_attack_'+map[k].row+'_');});
+        st.actions=keep;
+    }
+    // ===== 1.4.0: пассивные бонусы в штатных полях листа =====
+    function setW(cid,name,v){var a=attr(cid,name);if(!a)a=createObj('attribute',{characterid:cid,name:name,current:''});if(String(a.get('current'))===String(v))return;if(typeof a.setWithWorker==='function')a.setWithWorker({current:String(v)});else a.set('current',String(v));}
+    function modRows(cid,section,prefix,list,stKey,st){
+        // section: acmod/savemod/tohitmod/damagemod; поля global_<prefix>_name / _val|_roll|_damage / _active_flag
+        var map=(st.mods||{})[stKey]||{},keep={},F={acmod:['global_ac_name','global_ac_val','global_ac_active_flag'],savemod:['global_save_name','global_save_roll','global_save_active_flag'],tohitmod:['global_attack_name','global_attack_roll','global_attack_active_flag'],damagemod:['global_damage_name','global_damage_damage','global_damage_active_flag']}[section];
+        list.forEach(function(x){
+            var m=map[x.key]||{},id=m.row,fresh=false;if(!id||!attr(cid,'repeating_'+section+'_'+id+'_'+F[0])){id=rowId();fresh=true;}
+            var p='repeating_'+section+'_'+id+'_',cur=val(cid,p+F[1]),user=!fresh&&m.val!==undefined&&cur!==m.val;
+            if(fresh){setAttr(cid,p+F[0],x.name);setAttr(cid,p+'options-flag','0');setW(cid,p+F[2],'1');if(section==='damagemod')setAttr(cid,p+'global_damage_type',x.name);}
+            if(!user&&cur!==x.val)setW(cid,p+F[1],x.val);
+            keep[x.key]={row:id,val:user?m.val:x.val};
+        });
+        Object.keys(map).forEach(function(k){if(!keep[k]&&map[k].row){removeRow(cid,'repeating_'+section+'_'+map[k].row+'_');var t=attr(cid,section==='acmod'?'custom_ac_flag':'pb');if(t&&typeof t.setWithWorker==='function')t.setWithWorker({current:t.get('current')});}});
+        st.mods=st.mods||{};st.mods[stKey]=keep;
+    }
+    function listField(cid,name,mine,prevMine){
+        // Поле-список через запятую: наши элементы добавляются/убираются, остальное (вписанное вручную) не трогаем.
+        var items=String(val(cid,name)||'').split(/[,;]/).map(function(x){return x.trim();}).filter(Boolean),pn=(prevMine||[]).map(norm);
+        items=items.filter(function(x){return pn.indexOf(norm(x))<0;});
+        mine.forEach(function(x){if(!items.some(function(y){return norm(y)===norm(x);}))items.push(x);});
+        var next=items.join(', ');if(next!==val(cid,name))setAttr(cid,name,next);
+    }
+    function writePassive(cid,pas,st){
+        var ps=st.passive||{},out={},notes=[];
+        // Особый КД (Custom AC листа): ставим, только если игрок не настроил его сам.
+        var flag=val(cid,'custom_ac_flag'),ours=ps.ac&&flag==='1'&&val(cid,'custom_ac_base')===String(ps.ac.base)&&val(cid,'custom_ac_part1')===ps.ac.p1&&val(cid,'custom_ac_part2')===ps.ac.p2;
+        if(pas.ac&&(flag===''||flag==='0'||ours)){setAttr(cid,'custom_ac_base',String(pas.ac.base));setAttr(cid,'custom_ac_part1',pas.ac.p1);setAttr(cid,'custom_ac_part2',pas.ac.p2);setW(cid,'custom_ac_flag','1');out.ac=pas.ac;}
+        else if(!pas.ac&&ours){setW(cid,'custom_ac_flag','0');}
+        else if(pas.ac){out.ac=null;notes.push(pas.ac.why+': особый КД листа уже настроен вручную — не меняю.');}
+        // Скорость: прибавка от классов поверх значения листа.
+        var sp=parseInt(val(cid,'speed'),10),was=Number(ps.speed)||0;
+        if(Number.isFinite(sp)){if(was!==pas.speed)setAttr(cid,'speed',String(sp-was+pas.speed));out.speed=pas.speed;}else out.speed=was;
+        // Владение спасбросками.
+        var savesOut={};['strength','dexterity','constitution','intelligence','wisdom','charisma'].forEach(function(ab){var nm=ab+'_save_prof',cur=val(cid,nm);
+            if(pas.saves[ab]){if(cur===''||cur==='0'){setW(cid,nm,'(@{pb})');savesOut[ab]=1;}else if(ps.saves&&ps.saves[ab])savesOut[ab]=1;}
+            else if(ps.saves&&ps.saves[ab]&&cur==='(@{pb})')setW(cid,nm,'0');});
+        out.saves=savesOut;
+        if(pas.jack&&val(cid,'jack_of_all_trades')!=='@{jack}'&&!ps.jack){setW(cid,'jack_of_all_trades','@{jack}');}
+        if(!pas.jack&&ps.jack&&val(cid,'jack_of_all_trades')==='@{jack}')setW(cid,'jack_of_all_trades','0');out.jack=pas.jack;
+        modRows(cid,'acmod','ac',pas.acmods,'ac',st);modRows(cid,'savemod','save',pas.savemods,'save',st);modRows(cid,'tohitmod','attack',pas.tohit,'attack',st);modRows(cid,'damagemod','damage',pas.dmgmods,'damage',st);
+        // Сопротивления/иммунитеты — поля, которые AutoDamage читает и у персонажей.
+        listField(cid,'npc_resistances',pas.resist,ps.resist);listField(cid,'npc_immunities',pas.immune,ps.immune);listField(cid,'npc_condition_immunities',pas.condImmune,ps.condImmune);
+        out.resist=pas.resist;out.immune=pas.immune;out.condImmune=pas.condImmune;
+        // Максимум хитов (Драконья устойчивость): прибавка поверх значения листа.
+        var hpA=attr(cid,'hp'),hw=Number(ps.hpMax)||0;if(hpA&&hw!==pas.hpMax){var mx=Number(hpA.get('max'))||0,cu=Number(hpA.get('current'))||0;hpA.set({max:String(mx-hw+pas.hpMax),current:String(Math.max(0,cu-hw+pas.hpMax))});}
+        out.hpMax=hpA?pas.hpMax:hw;
+        st.passive=out;return notes;
     }
 
     // ===== Синхронизация =====
@@ -618,7 +788,7 @@ var AD5Classes=(function(){
     function sync(cid,reason){
         var c=getObj('character',cid);if(!c)return null;
         var r=compute(cid),st=loadState(cid),before={},beforeLv=st.levels||{},firstSync=!st.levels;(Object.keys(st.traits||{})).forEach(function(k){before[k]=1;});
-        writeFeatures(cid,r.lines);writeTraits(cid,r.traits,st);writeResources(cid,r.resources,st);
+        writeFeatures(cid,r.lines,st);writeTraits(cid,r.traits,st);writeResources(cid,r.resources,st);writeActions(cid,r.actions,st);var pasNotes=writePassive(cid,r.passive,st);r.warnings=r.warnings.concat(pasNotes);
         var levels={};r.classes.forEach(function(x){levels[x.key]=x.level;});st.levels=levels;st.version=VERSION;saveState(cid,st);
         var added=r.traits.filter(function(t){return !before[t.key];}).map(function(t){return t.name;});
         var removed=Object.keys(before).filter(function(k){return !st.traits[k];}).length;
