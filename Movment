@@ -458,6 +458,10 @@ var AD5Movement=(function(){
         try{
             var cellOf=function(x,y){var st=gridStep(page)||70;return Math.round((x-st/2)/st+1)+','+Math.round((y-st/2)/st+1);};
             sendChat(SCRIPT,'/w gm <b>'+(kind==='pull'?'ТЯГ':'ТОЛЧ')+' '+feet+' фт</b>: '+esc(target.get('name')||'цель')+' ['+cellOf(start.left,start.top)+'] → ['+cellOf(plan.left,plan.top)+'], источник '+esc(source.get('name')||source.id)+' ['+cellOf(sx,sy)+'].',null,{noarchive:true});
+            // Если позицию после этого изменил другой скрипт — сообщаем, где токен оказался.
+            var planL=plan.left,planT=plan.top;
+            setTimeout(function(){var live=getObj('graphic',key);if(!live)return;var ll=Number(live.get('left')),lt=Number(live.get('top'));
+                if(Math.abs(ll-planL)>1||Math.abs(lt-planT)>1)sendChat(SCRIPT,'/w gm <b>'+(kind==='pull'?'ТЯГ':'ТОЛЧ')+'</b>: после перемещения токен '+esc(live.get('name')||'цели')+' сдвинут другим скриптом в ['+cellOf(ll,lt)+'].',null,{noarchive:true});},300);
         }catch(ignoreReport){}
         setTimeout(function(){
             try{
