@@ -27,7 +27,7 @@ var NPCGroupInitiative = NPCGroupInitiative || (function () {
     'use strict';
 
     var SCRIPT = 'NPC Group Initiative';
-    var VERSION = '1.3.3';
+    var VERSION = '1.3.4';
     var STATE_KEY = 'NPCGroupInitiative';
 
     function stateData() {
@@ -74,14 +74,12 @@ var NPCGroupInitiative = NPCGroupInitiative || (function () {
         return Campaign().get('playerpageid');
     }
 
+    // 1.3.4: запрос по имени вместо чтения всех атрибутов листа (groupKey вызывается
+    // при каждом перемещении и смене хода); регистр имени — запасным запросом.
     function getAttrs(cid, name) {
-        var needle = String(name || '').toLowerCase();
-        return findObjs({
-            _type: 'attribute',
-            _characterid: cid
-        }).filter(function (a) {
-            return String(a.get('name') || '').toLowerCase() === needle;
-        });
+        var q = { _type: 'attribute', _characterid: cid, name: String(name || '') };
+        var exact = findObjs(q);
+        return exact.length ? exact : findObjs(q, { caseInsensitive: true });
     }
 
     function attrValue(cid, name) {

@@ -49,7 +49,7 @@ if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine) {
  */
 var AD5ConditionEngine=(function(){
     'use strict';
-    var VERSION='1.2.18',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
+    var VERSION='1.2.19',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
     var MARKERS={
         blinded:'bleeding-eye',charmed:'chained-heart',deafened:'half-haze',frightened:'screaming',
         grappled:'grab',incapacitated:'broken-shield',no_reactions:'interdiction',invisible:'ninja-mask',paralyzed:'padlock',
@@ -270,7 +270,17 @@ var AD5ConditionEngine=(function(){
         try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.tokenIdsWithCondition==='function')return AD5EffectTurns.tokenIdsWithCondition(condition).map(function(id){return getObj('graphic',id);}).filter(isToken);}catch(ignore){}
         return allTokens();
     }
-    function syncCharacter(cid){if(!cid||syncing[cid])return;syncing[cid]=true;try{allTokens().forEach(function(t){if(characterId(t)===String(cid)||representedId(t)===String(cid))syncToken(t);});}finally{delete syncing[cid];}}
+    // 1.2.19: токены персонажа ищутся по represents, превращённые — по записям AD5 Transform;
+    // раньше каждое изменение хитов листа перебирало все токены кампании.
+    function syncCharacter(cid){
+        if(!cid||syncing[cid])return;cid=String(cid);syncing[cid]=true;
+        try{
+            var seen=Object.create(null);
+            (findObjs({_type:'graphic',_subtype:'token',represents:cid})||[]).filter(isToken).forEach(function(t){seen[t.id]=true;syncToken(t);});
+            var act=(state.AD5Transform&&state.AD5Transform.active)||{};
+            Object.keys(act).forEach(function(tid){if(seen[tid]||!act[tid]||String(act[tid].originalCharId)!==cid)return;var t=getObj('graphic',tid);if(isToken(t)){seen[tid]=true;syncToken(t);}});
+        }finally{delete syncing[cid];}
+    }
     function setExhaustion(token,level){
         if(!isToken(token)||!representedId(token))throw new Error('Нужен токен с листом персонажа.');level=clampLevel(level);tickMemo=null;var cid=characterId(token),a=cid&&attr(cid,'exhaustion_level');
         if(a){a.set('current',level);syncCharacter(cid);return level;}

@@ -1,6 +1,7 @@
 /* Disable old Areas before installing this guarded module. */
 if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skipped.');}else{
-/* AD5 Areas 2.30.0 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
+/* AD5 Areas 2.30.1 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
+ * 2.30.1: область, чей путь или носитель исчез при выключенной песочнице, снимает свои ПАСС-эффекты и внешнюю область Environment.
  * 2.30.0: шаблон «полукруг» (10 фт полукруг — взмах вокруг атакующего, центр в центре токена); атака по области
  *          (бросок атаки по каждой цели) не задевает атакующего.
  * 2.29.2: МУВ — ход по кругу с возвратом в исходную клетку засчитывается; на границе зоны допуск
@@ -91,7 +92,7 @@ if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skip
  */
 var AD5Areas=(function(){
     'use strict';
-    var VERSION='2.30.0';
+    var VERSION='2.30.1';
     var resolutionSequence=0;
     function nextResolutionId(prefix){return String(prefix||'area')+':'+Date.now().toString(36)+':'+(++resolutionSequence);}
     function root(){
@@ -1621,11 +1622,22 @@ var AD5Areas=(function(){
     function containsAt(a,path,left,top,elevation){
         return containsGeometry(a,path,left,top,pathLeft(path),pathTop(path),a&&a.kind==='aura'?0:pathRotation(path))&&verticalContainsValue(a,elevation===undefined?0:elevation);
     }
+    // Запись области, чей путь или носитель ауры исчез без события удаления (песочница
+    // была выключена): снимаются ПАСС-эффекты участников и внешняя область Environment.
+    // ОКОН-фазы не запускаются — это не окончание заклинания, а потерянный объект.
+    function dropOrphanArea(rec){
+        if(!rec)return;
+        try{unsyncEnvironmentArea(rec);}catch(ignoreEnv){}
+        if(rec.rules&&rec.rules.passive&&typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.removePassiveByScopeToken==='function'){
+            var ids=Object.keys(rec.occupancy||{});Object.keys(rec.affected||{}).forEach(function(id){if(ids.indexOf(id)<0)ids.push(id);});
+            ids.forEach(function(id){try{AD5EffectTurns.removePassiveByScopeToken(id,rec.id);}catch(ignorePassive){}});
+        }
+    }
     function persistentAreas(pageId){
         var store=persistentDb(),out=[];
         Object.keys(store).forEach(function(id){
             var rec=store[id],controller=getAreaPath(id,rec);
-            if(!rec||!controller){delete store[id];return;}
+            if(!rec||!controller){dropOrphanArea(rec);delete store[id];return;}
             if(rec.kind==='aura'){
                 rec.page=String(controller.get('_pageid')||rec.page||'');
                 syncAuraVisual(rec);
@@ -3276,7 +3288,7 @@ var AD5Areas=(function(){
         var store=persistentDb();
         Object.keys(store).slice().forEach(function(id){
             var rec=store[id],path=getAreaPath(id,rec);
-            if(!rec||!path){if(rec&&rec.kind==='aura')removeAuraOffAbility(rec);delete store[id];return;}
+            if(!rec||!path){if(rec&&rec.kind==='aura')removeAuraOffAbility(rec);dropOrphanArea(rec);delete store[id];return;}
             if(rec.kind==='aura'){syncAuraVisual(rec);ensureAuraOffAbility(rec);return;}
             if(isJumpgate()&&pathObjectType(path)!=='pathv2')path=migratePersistentToNativeJumpgate(rec,path);
             rec.pathType=pathObjectType(path);if(!Number.isFinite(Number(rec.baseElevation)))refreshAreaBaseElevation(rec,path);stylePersistentPath(path);syncEnvironmentArea(rec,path);

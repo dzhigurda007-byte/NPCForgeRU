@@ -3,7 +3,9 @@ if(typeof AD5Reactions!=='undefined'&&AD5Reactions) {
     log('AD5Reactions: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Reactions v1.6.13 — Generic Resource Binding / Countershot / Sheet First
+ * AD5 Reactions v1.6.15 — Generic Resource Binding / Countershot / Sheet First
+ * 1.6.15: карточка заклинания игрока в чате не сканирует все листы: только персонажи с
+ *         токеном на странице боя, атрибуты читаются один раз; убран пустой change:graphic.
  * 1.6.13: РЕЗ «КОПИЯ ЗАКЛИНАНИЯ» (Око мимикрии) — заклинание источника в лист реагирующего на 10 ходов, 1 использование.
  * 1.6.12: РЕЗ «СОПРОТИВЛЕНИЕ ТИПУ кислота/холод/…» — half of the triggering damage of that type, then
  *         resistance and +1d6 on the next melee hit (Absorb Elements); РЕЗ «СДВИГ ИСТОЧНИКА» — the attack or
@@ -44,7 +46,7 @@ if(typeof AD5Reactions!=='undefined'&&AD5Reactions) {
 var AD5Reactions = (function(){
     'use strict';
 
-    var VERSION='1.6.14', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
+    var VERSION='1.6.15', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
     var opportunityPending=Object.create(null);
     var runtimePending=Object.create(null), seq=0, recentMove=Object.create(null), lastAreaCheck=null, movementHookRegistered=false, featherCollecting=Object.create(null), reactionRowCache=Object.create(null);
     // 1.4.2 Fast Fall: cache Feather Fall card discovery per character.
@@ -1533,26 +1535,35 @@ var AD5Reactions = (function(){
         Object.keys(groups).forEach(function(k){var g=groups[k];if(g.name&&hasSpellTag(g.description))out.push(g);});return out;
     }
 
-    function playerSpellRows(cid){
+    // 1.6.15: одно чтение атрибутов персонажа; детали заклинания — из того же списка
+    // (раньше по 4 findObjs на каждое заклинание). want — только заклинания с этим именем.
+    function playerSpellRows(cid,want){
         if(!cid||characterIsNpc(cid))return [];
-        var attrs=findObjs({_type:'attribute',_characterid:String(cid)}),groups=Object.create(null),out=[];
+        var attrs=findObjs({_type:'attribute',_characterid:String(cid)}),groups=Object.create(null),out=[],byName=Object.create(null);
         attrs.forEach(function(a){
-            var n=String(a.get('name')||''),m=/^(repeating_spell-(cantrip|[0-9]|npc)_.+_)(spellname|spellname_base)$/i.exec(n);if(!m)return;
+            var n=String(a.get('name')||'');byName[n.toLowerCase()]=a;
+            var m=/^(repeating_spell-(cantrip|[0-9]|npc)_.+_)(spellname|spellname_base)$/i.exec(n);if(!m)return;
             var g=groups[m[1]]||(groups[m[1]]={prefix:m[1],level:m[2],name:'',base:''});
             if(/spellname_base$/i.test(n))g.base=String(a.get('current')||'').trim();else g.name=String(a.get('current')||'').trim();
         });
+        function val(n){var a=byName[String(n).toLowerCase()];return a?String(a.get('current')||'').trim():'';}
         Object.keys(groups).forEach(function(k){
             var g=groups[k],name=g.name||g.base;if(!name)return;
-            var attackId=String(attrVal(cid,g.prefix+'spellattackid')||'').trim(),attackPrefix=attackId?('repeating_attack_'+attackId+'_'):'';
-            out.push({prefix:g.prefix,attackPrefix:attackPrefix,name:name,level:g.level==='cantrip'?0:(/^\d+$/.test(g.level)?Number(g.level):null),castingTime:attrVal(cid,g.prefix+'spellcastingtime'),range:attrVal(cid,g.prefix+'spellrange'),description:(typeof AD5Text!=='undefined'?AD5Text.mechanics(attrVal(cid,g.prefix+'spelldescription')):attrVal(cid,g.prefix+'spelldescription'))});
+            if(want!==undefined&&norm(name)!==want)return;
+            var attackId=val(g.prefix+'spellattackid'),attackPrefix=attackId?('repeating_attack_'+attackId+'_'):'';
+            out.push({prefix:g.prefix,attackPrefix:attackPrefix,name:name,level:g.level==='cantrip'?0:(/^\d+$/.test(g.level)?Number(g.level):null),castingTime:val(g.prefix+'spellcastingtime'),range:val(g.prefix+'spellrange'),description:(typeof AD5Text!=='undefined'?AD5Text.mechanics(val(g.prefix+'spelldescription')):val(g.prefix+'spelldescription'))});
         });
         return out;
     }
+    // 1.6.15: токены страницы боя читаются один раз; листы без токена на ней не сканируются.
+    function partyTokensByCharacter(){
+        var by=Object.create(null);combatTokens(partyPageId()).forEach(function(t){var cid=String(t.get('represents')||'');if(cid)(by[cid]||(by[cid]=[])).push(t);});return by;
+    }
     function playerSourceTokenForTrait(msg,name,desc){
-        var matches=[];
+        var matches=[],by=partyTokensByCharacter(),want=norm(name);
         controlledCharacters(msg.playerid).forEach(function(c){
-            if(characterIsNpc(c.id))return;
-            traitRows(c.id).forEach(function(r){if(norm(r.name)!==norm(name)||!hasSpellTag(r.description||desc))return;combatTokens(partyPageId()).forEach(function(t){if(t.get('represents')===c.id)matches.push(t);});});
+            if(!by[c.id]||characterIsNpc(c.id))return;
+            traitRows(c.id).forEach(function(r){if(norm(r.name)!==want||!hasSpellTag(r.description||desc))return;by[c.id].forEach(function(t){matches.push(t);});});
         });
         var selected=(msg.selected||[]).map(function(x){return x._type==='graphic'&&getObj('graphic',x._id);}).filter(Boolean);
         var picked=matches.filter(function(t){return selected.some(function(s){return s.id===t.id;});});
@@ -1568,10 +1579,10 @@ var AD5Reactions = (function(){
     }
 
     function playerSourceTokenForSpell(msg,name){
-        var matches=[];
+        var matches=[],by=partyTokensByCharacter(),want=norm(name);
         controlledCharacters(msg.playerid).forEach(function(c){
-            if(characterIsNpc(c.id))return;
-            playerSpellRows(c.id).forEach(function(r){if(norm(r.name)!==norm(name))return;combatTokens(partyPageId()).forEach(function(t){if(t.get('represents')===c.id)matches.push({token:t,row:r});});});
+            if(!by[c.id]||characterIsNpc(c.id))return;
+            playerSpellRows(c.id,want).forEach(function(r){by[c.id].forEach(function(t){matches.push({token:t,row:r});});});
         });
         var selected=(msg.selected||[]).map(function(x){return x._type==='graphic'&&getObj('graphic',x._id);}).filter(Boolean);
         var picked=matches.filter(function(x){return selected.some(function(s){return s.id===x.token.id;});});
@@ -2229,15 +2240,8 @@ var AD5Reactions = (function(){
     // Feather Fall caches now refresh lazily by TTL or explicit invalidateCharacter().
     on('destroy:character',function(c){if(!c)return;var cid=String(c.id||'');if(featherRebuildTimers[cid]){clearTimeout(featherRebuildTimers[cid]);delete featherRebuildTimers[cid];}delete featherRowCache[cid];delete featherCasterIndex[cid];delete featherDirty[cid];delete featherCacheStamp[cid];delete reactionRowCache[cid];});
     on('change:campaign:turnorder',turnChanged);
-    on('change:graphic',function(token,prev){
-        // Movement Engine 2.x owns the trajectory. This fallback exists only for
-        // campaigns where AD5 Movement is not installed.
-        try{
-            if(typeof AD5Movement!=='undefined'&&AD5Movement&&typeof AD5Movement.onMove==='function')return;
-            if(!prev||Number(prev.left)===Number(token.get('left'))&&Number(prev.top)===Number(token.get('top')))return;
-            return; // Movement Engine 2.x required for movement reactions.
-        }catch(e){sendChat(SCRIPT,'/w gm <b>'+SCRIPT+' movement:</b> '+esc(e.message||e),null,{noarchive:true});}
-    });
+    // 1.6.15: реакции на перемещение обрабатывает AD5 Movement 2.x (onMove); пустой
+    // обработчик change:graphic, вызывавшийся на каждое изменение объекта, удалён.
     on('destroy:graphic',function(t){delete root().used[t.id];delete root().shields[t.id];delete root().countershots[t.id];delete root().turnEpoch[t.id];delete recentMove[t.id];});
     on('ready',function(){
         root();

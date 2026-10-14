@@ -52,7 +52,7 @@ if(typeof AD5Floors!=='undefined'&&AD5Floors) {
  */
 var AD5Floors=(function(){
     'use strict';
-    var VERSION='1.2.7',SCRIPT='AD5 Floors',teleporting=Object.create(null),pending=Object.create(null),portalLayerGuard=Object.create(null),patched=false,originals={};
+    var VERSION='1.2.8',SCRIPT='AD5 Floors',teleporting=Object.create(null),pending=Object.create(null),portalLayerGuard=Object.create(null),patched=false,originals={};
 
     var portalsMigrated=false;
     function root(){
@@ -166,8 +166,16 @@ var AD5Floors=(function(){
     function scaleOf(o,name){var n=Number(o&&o.get&&o.get(name));return Number.isFinite(n)&&Math.abs(n)>1e-9?Math.abs(n):1;}
     function objLeft(o){return Number(objectType(o)==='pathv2'?o.get('x'):o.get('left'))||0;}
     function objTop(o){return Number(objectType(o)==='pathv2'?o.get('y'):o.get('top'))||0;}
+    // 1.2.8: разобранные точки контура кэшируются по исходной строке — sameFloor вызывается
+    // на каждую проверку дистанции и разбирал JSON каждого этажа по 4 раза.
+    var pointsCache=Object.create(null);
     function rawPathPoints(o){
-        var ty=objectType(o),raw=[],out=[];try{raw=JSON.parse(ty==='pathv2'?(o.get('points')||'[]'):(o.get('_path')||'[]'))||[];}catch(ignore){raw=[];}
+        var ty=objectType(o),src=String((ty==='pathv2'?o.get('points'):o.get('_path'))||'[]'),hit=pointsCache[o.id];
+        if(hit&&hit.src===src)return hit.pts;
+        var pts=parsePathPoints(src);pointsCache[o.id]={src:src,pts:pts};return pts;
+    }
+    function parsePathPoints(src){
+        var raw=[],out=[];try{raw=JSON.parse(src)||[];}catch(ignore){raw=[];}
         raw.forEach(function(pt){if(!Array.isArray(pt)||pt.length<2)return;if(typeof pt[0]==='number'&&typeof pt[1]==='number'){out.push([Number(pt[0]),Number(pt[1])]);return;}var nums=pt.slice(1).map(Number).filter(Number.isFinite);if(nums.length>=2)out.push([nums[nums.length-2],nums[nums.length-1]]);});
         return out.filter(function(pt){return Number.isFinite(pt[0])&&Number.isFinite(pt[1]);});
     }
@@ -413,6 +421,7 @@ var AD5Floors=(function(){
         }catch(e){gm('<b>Автопереход:</b> '+esc(e.message||e));}
     }
     function destroyed(o){
+        if(o&&o.id)delete pointsCache[o.id];
         var r=root(),portalHit=portalByEndpointObjectId(o&&o.id),partner=null,portalUid='';
         // Delete the portal record first. When partner.remove() emits its own destroy
         // event, no portal record remains, so the cascade cannot recurse forever.

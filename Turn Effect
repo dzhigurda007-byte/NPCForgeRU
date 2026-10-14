@@ -3,7 +3,8 @@ if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
     log('AD5EffectTurns: duplicate module skipped; keep one installed copy.');
 } else {
 /*
-AD5 Effect Turns 1.6.22
+AD5 Effect Turns 1.6.23
+1.6.23: бонус «инициатива +1д8» больше не передаёт ход при пересортировке трекера; изменения маркеров без заметок не читают лист; одна проверка условных связей на пачку перемещений.
 1.6.22: строки AD5 Counters («СЧЁТ…:») не применяются как прямой эффект и не попадают в ПРВ/УСП.
 1.6.21: tokenIdsWithCondition; проверка «ПОКА» без лишнего клонирования.
 1.6.20: «кость вдохновения 1d8» — кнопка токена «Применить вдохновение барда» (!ad5fx inspire): кость к следующему броску атаки или спасброску, затем бафф пропадает.
@@ -69,7 +70,7 @@ var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5
 // silently shadow every newer fix.
 var AD5EffectTurns = (function () {
     'use strict';
-    var VERSION='1.6.22', SCRIPT='AD5 Effect Turns';
+    var VERSION='1.6.23', SCRIPT='AD5 Effect Turns';
     var runtimeLastGroup=Object.create(null);
     var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
     var markerCacheRaw=null, markerCacheByName=Object.create(null);
@@ -2015,10 +2016,10 @@ var AD5EffectTurns = (function () {
     }
     function moveDamageCheck(token){
         var rec=root().tokens[token.id];if(!rec)return;
-        var order=[];try{order=JSON.parse(Campaign().get('turnorder')||'[]')||[];}catch(ignoreOrder){}
-        if(!order.length||String(order[0].id)!==String(token.id))return;
         var hits=[];Object.keys(rec.effects||{}).forEach(function(k){var e=rec.effects[k];var md=e&&e.modifier;if(md&&md.type==='moveDamage')hits.push({key:k,e:e});});
         if(!hits.length)return;
+        var order=[];try{order=JSON.parse(Campaign().get('turnorder')||'[]')||[];}catch(ignoreOrder){}
+        if(!order.length||String(order[0].id)!==String(token.id))return;
         var after=snapshot(token.id);hits.forEach(function(h){delete after.effects[h.key];});writeRecord(token,after);
         hits.forEach(function(h){var md=h.e.modifier,amount=rollFormula(md.formula),src=h.e.source||{};
             if(typeof AD5!=='undefined'&&AD5&&AD5.reaction&&typeof AD5.reaction.damage==='function'){
@@ -2642,13 +2643,17 @@ var AD5EffectTurns = (function () {
         if(typeof AD5TokenEffects==='undefined'||!AD5TokenEffects||typeof AD5TokenEffects.list!=='function'||typeof AD5TokenEffects.set!=='function')return false;
         reconcileGuard[token.id]=true;
         try{
-            var notes=AD5TokenEffects.list(token.id)||[],kept=[],changed=false,before=snapshot(token.id),after=cleanRecord(before),immunities=sheetConditionImmunities(token),applied=[],blocked=[];
+            var notes=AD5TokenEffects.list(token.id)||[];
+            // 1.6.23: без заметок нечего переносить — снимок и иммунитеты листа не нужны.
+            if(!notes.length)return false;
+            var kept=[],changed=false,after=cleanRecord(snapshot(token.id)),immunities=null,applied=[],blocked=[];
             notes.forEach(function(note){
                 var consumed=false;
                 directSegments(note).forEach(function(part){
                     var candidate=String(part||'').replace(/^(?:ПРВ|УСП|при\s+провале|при\s+успехе)\s*[:：—–-]?\s*/i,'').trim();
                     var e=parseEffect(candidate);
                     if(!e||!e.periodic)return;
+                    immunities=immunities||sheetConditionImmunities(token);
                     if(mergeEffectIntoPlan(token,after,e,immunities,{},applied,blocked)){consumed=true;changed=true;}
                 });
                 if(!consumed)kept.push(note);
@@ -2937,15 +2942,24 @@ var AD5EffectTurns = (function () {
             order.forEach(function(x){
                 var id=String(x.id||'');if(!id||id==='-1'||had[id])return;
                 var rows=modifierRowsForToken(id,'initiative');if(!rows.length)return;
+                // Ключ — инициатива после бонуса: повторное событие с уже изменённой записью бонус не удваивает.
                 var key=id+':'+String(x.pr);if(applied[id]===key)return;
                 var bonus=0;rows.forEach(function(row){bonus+=row.modifier.sign*rollFormula(row.modifier.formula);});
                 var pr=Number(x.pr);if(!Number.isFinite(pr))return;x.pr=pr+bonus;applied[id]=id+':'+String(x.pr);changed=true;
                 var t=getObj('graphic',id);notes.push(esc(t&&t.get('name')||id)+' '+(bonus>=0?'+':'')+bonus);
             });
-            if(changed){order.sort(function(a,b){return Number(b.pr)-Number(a.pr);});Campaign().set('turnorder',JSON.stringify(order));sendChat(SCRIPT,'/w gm Инициатива: '+notes.join(', ')+'.');}
+            // 1.6.23: после сортировки текущий ход остаётся первым — order[0] в Roll20 и есть
+            // активный ход; раньше сортировка молча передавала ход самому высокому.
+            if(changed){var current=order[0];order.sort(function(a,b){return Number(b.pr)-Number(a.pr);});var ci=order.indexOf(current);if(ci>0)order=order.slice(ci).concat(order.slice(0,ci));Campaign().set('turnorder',JSON.stringify(order));sendChat(SCRIPT,'/w gm Инициатива: '+notes.join(', ')+'.');}
         }catch(ignoreInit){}
     });
     on('change:campaign:playerpageid',function(){clearAllRecoveryAbilities();runtimeLastGroup=Object.create(null);initCurrentTurn();migrateLegacyDirectEffects();});
+    // 1.6.23: одна проверка условных связей на пачку изменений (групповое перетаскивание).
+    var conditionalQueued=false;
+    function queueConditional(){
+        if(conditionalQueued)return;conditionalQueued=true;
+        setTimeout(function(){conditionalQueued=false;try{проверитьУсловныеСвязи();}catch(ignoreConditional){}},0);
+    }
     on('change:graphic',function(t,prev){
         try{
             if(!t||t.get('_subtype')!=='token'||t.get('isdrawing')||t.get('_pageid')!==partyPageId())return;
@@ -2953,14 +2967,14 @@ var AD5EffectTurns = (function () {
                 reconcilePeriodicLegacyToken(t);
                 var rec=snapshot(t.id);if(rec)syncMarkers(t,rec,rec);
             }
-            var moved=!!prev&&(Number(prev.left)!==Number(t.get('left'))||Number(prev.top)!==Number(t.get('top'))||Number(prev.bar3_value)!==Number(t.get('bar3_value'))||Number(prev.bar4_value)!==Number(t.get('bar4_value')));
+            var moved=!!prev&&(Number(prev.left)!==Number(t.get('left'))||Number(prev.top)!==Number(t.get('top'))||String(prev.bar3_value)!==String(t.get('bar3_value'))||String(prev.bar4_value)!==String(t.get('bar4_value')));
             var tempChanged=!!prev&&String(prev.bar2_value)!==String(t.get('bar2_value'));
             if(tempChanged&&Number(t.get('bar2_value'))<=0)установитьВладельцаВременныхХитов(t.id,null);
-            if(moved||tempChanged)setTimeout(function(){try{проверитьУсловныеСвязи();}catch(ignoreConditional){}},0);
+            if(moved||tempChanged)queueConditional();
             if(prev&&(Number(prev.left)!==Number(t.get('left'))||Number(prev.top)!==Number(t.get('top'))))moveDamageCheck(t);
         }catch(ignore){}
     });
-    on('destroy:graphic',function(t){var db=root().tokens;if(db[t.id])delete db[t.id];delete root().tempHpOwners[t.id];try{clearRecoveryAbilitiesForCharacter(t.get('represents'));}catch(ignore){}});
+    on('destroy:graphic',function(t){var db=root().tokens;if(db[t.id])delete db[t.id];delete root().tempHpOwners[t.id];if(root().initiativeApplied)delete root().initiativeApplied[t.id];try{clearRecoveryAbilitiesForCharacter(t.get('represents'));}catch(ignore){}});
     on('chat:message',command);
     on('ready',function(){
         root();clearAllRecoveryAbilities();initCurrentTurn();var lifecycleMigration=migrateLifecycleConditions();refreshAll();migrateLegacyDirectEffects();подключитьУсловныеСобытия();проверитьУсловныеСвязи();

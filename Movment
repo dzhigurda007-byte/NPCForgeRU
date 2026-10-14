@@ -629,7 +629,7 @@ var AD5Movement=(function(){
     function infoFromRow(row){var page=partyPageId();if(!row||!page)return null;if(row.id&&row.id!=='-1'){var t=getObj('graphic',row.id);if(t&&combatToken(t,page))return {page:page,key:groupKey(t)};}if(row.id==='-1'&&row.custom)return {page:page,key:'npc:'+groupName(row.custom)};return null;}
     function turnChanged(campaign,prev){var after=parseRows(Campaign().get('turnorder')),now=after.length?infoFromRow(after[0]):null;if(!now)return;var last=runtimeLastGroup[now.page]||'';if(!last){runtimeLastGroup[now.page]=now.key;resetGroup(now.page,now.key);return;}if(last===now.key)return;runtimeLastGroup[now.page]=now.key;resetGroup(now.page,now.key);}
     function initializeTurnRuntime(){var info=currentTurnInfo();if(info)runtimeLastGroup[info.page]=info.key;}
-    function cleanupDestroyed(token){if(!token)return;var r=root(),s=r.tokens[token.id];if(s&&s.proxyId)removeLegacyProxyById(s.proxyId);delete r.tokens[token.id];delete r.lastByToken[token.id];}
+    function cleanupDestroyed(token){if(!token)return;var r=root(),s=r.tokens[token.id];if(s&&s.proxyId)removeLegacyProxyById(s.proxyId);delete r.tokens[token.id];delete r.lastByToken[token.id];delete recentMoveByToken[token.id];}
 
     function command(msg){
         if(msg.type!=='api'||!/^!ad5move(?:\s|$)/i.test(msg.content))return;

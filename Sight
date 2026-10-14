@@ -3,7 +3,7 @@ if(typeof AD5Sight!=='undefined'&&AD5Sight) {
     log('AD5Sight: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Sight 1.0.0 — линия видимости по стенам динамического освещения и освещённость.
+ * AD5 Sight 1.0.1 — линия видимости по стенам динамического освещения и освещённость.
  *
  * Стены: пути (path/pathv2) на слое walls, закрытые двери (door) и окна со ставнями
  * (window, isShuttered). Тип преграды: wall — блокирует, transparent — нет,
@@ -29,7 +29,7 @@ if(typeof AD5Sight!=='undefined'&&AD5Sight) {
  */
 var AD5Sight=AD5Sight||(function(){
     'use strict';
-    var VERSION='1.0.0',SCRIPT='AD5 Sight',CELL=280,EPS=1e-9;
+    var VERSION='1.0.1',SCRIPT='AD5 Sight',CELL=280,EPS=1e-9;
     var cache=Object.create(null),stamp=0;
     // Дневной свет: доля ≥ BRIGHT — яркий, ≥ DIM — тусклый.
     var DAYLIGHT_BRIGHT=0.75,DAYLIGHT_DIM=0.25;
@@ -164,14 +164,22 @@ var AD5Sight=AD5Sight||(function(){
     function pxPerFoot(pageId){var p=getObj('page',pageId),snap=num(p&&p.get('snapping_increment'),1)||1,scale=num(p&&p.get('scale_number'),5)||5;return 70*snap/scale;}
     function radius(t){return Math.max(num(t.get('width'),70),num(t.get('height'),70))/2;}
     function edgeFeet(a,b){var ca=center(a),cb=center(b),d=Math.sqrt(Math.pow(ca.x-cb.x,2)+Math.pow(ca.y-cb.y,2));return Math.max(0,d-radius(a)-radius(b))/pxPerFoot(pageOf(a));}
+    // 1.0.1: результаты, не зависящие от наблюдателя (свет у цели, чувства листа), живут
+    // до конца текущего события: ход группы NPC × несколько скрытых целей больше не
+    // сканирует страницу заново для каждой пары.
+    var memo=null;
+    function tickMemo(key,fn){
+        if(!memo){memo=Object.create(null);setTimeout(function(){memo=null;},0);}
+        return key in memo?memo[key]:(memo[key]=fn());
+    }
     function senseFeet(observer,re){
         var cid=String(observer.get('represents')||'');if(!cid)return 0;
-        var a=findObjs({_type:'attribute',_characterid:cid,name:'npc_senses'})[0],txt=String(a&&a.get('current')||'');
+        var txt=tickMemo('senses:'+cid,function(){var a=findObjs({_type:'attribute',_characterid:cid,name:'npc_senses'})[0];return String(a&&a.get('current')||'');});
         var m=re.exec(txt);if(!m)return 0;var n=Number(String(m[1]).replace(',','.'));
-        return /(?:м\b|метр)/i.test(m[2]||'')?n/0.3048:n;
+        return /^(?:м|метр)/i.test(m[2]||'')?n/0.3048:n;
     }
-    var DARKVISION=/(?:darkvision|т[её]мное\s+зрение)\s*[:—-]?\s*(\d+(?:[.,]\d+)?)\s*(фт|фут\w*|ft|feet|м\b|метр\w*)?/i;
-    var BLINDSENSE=/(?:blindsight|tremorsense|слепое\s+зрение|чувство\s+вибрации|чувство\s+колебаний)\s*[:—-]?\s*(\d+(?:[.,]\d+)?)\s*(фт|фут\w*|ft|feet|м\b|метр\w*)?/i;
+    var DARKVISION=/(?:darkvision|т[её]мное\s+зрение)\s*[:—-]?\s*(\d+(?:[.,]\d+)?)\s*(фт|фут\w*|ft|feet|метр[а-яё]*|м(?![а-яёa-z]))?/i;
+    var BLINDSENSE=/(?:blindsight|tremorsense|слепое\s+зрение|чувство\s+вибрации|чувство\s+колебаний)\s*[:—-]?\s*(\d+(?:[.,]\d+)?)\s*(фт|фут\w*|ft|feet|метр[а-яё]*|м(?![а-яёa-z]))?/i;
     function darkvisionFeet(observer){
         if(!observer)return 0;
         if(bool(observer.get('has_night_vision')))return Math.max(num(observer.get('night_vision_distance'),0),senseFeet(observer,DARKVISION));
@@ -202,7 +210,7 @@ var AD5Sight=AD5Sight||(function(){
     }
     // Освещённость цели для конкретного наблюдателя (тёмное и слепое зрение).
     function illumination(target,observer){
-        var base=lightAt(target);if(!observer||base==='bright')return base;
+        var base=tickMemo('light:'+target.id,function(){return lightAt(target);});if(!observer||base==='bright')return base;
         var dist=edgeFeet(observer,target);
         if(senseFeet(observer,BLINDSENSE)>=dist-1e-6)return 'bright';
         if(darkvisionFeet(observer)>=dist-1e-6)return base==='dark'?'dim':'bright';
@@ -218,7 +226,8 @@ var AD5Sight=AD5Sight||(function(){
     ['path','pathv2','door','window'].forEach(function(t){
         on('add:'+t,function(o){touch(o);});
         on('change:'+t,function(o,prev){touch(o,prev);});
-        on('destroy:'+t,function(o){touch(o,{layer:'walls'});});
+        // Удалённый объект сохраняет свой слой: шаблоны областей на слое объектов кэш стен не сбрасывают.
+        on('destroy:'+t,function(o){touch(o);});
     });
     on('ready',function(){
         on('chat:message',function(msg){

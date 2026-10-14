@@ -2,7 +2,8 @@
 if(typeof AD5Phases!=='undefined'&&AD5Phases) {
     log('AD5Phases: duplicate module skipped; keep one installed copy.');
 } else {
-/* AD5 Phases 1.1.5 — КАСТ, НАЧК/НАЧИ, НАЧТ, КНЦИ, КНЦТ, ОКОН, ОСВОБ, ВХОД, ВЫХОД, ОБЛН, ОБЛК, ПАСС, МУВ.
+/* AD5 Phases 1.1.6 — КАСТ, НАЧК/НАЧИ, НАЧТ, КНЦИ, КНЦТ, ОКОН, ОСВОБ, ВХОД, ВЫХОД, ОБЛН, ОБЛК, ПАСС, МУВ.
+ * 1.1.6: эффект, у которого удалены все токены-цели, завершается.
  * 1.1.5: «РОСТ 1д6» in a phase adds that much damage for every turn the caster has kept
  * concentration (Delayed Blast Fireball: «ОКОН: ПРВ: Урон1, РОСТ 1д6; УСП: Урон1, половина урона, РОСТ 1д6»).
  * 1.1.2: explicit НАЧТ overrides legacy «Каждый ход»; НАЧК is the preferred
@@ -13,7 +14,7 @@ if(typeof AD5Phases!=='undefined'&&AD5Phases) {
  */
 var AD5Phases=(function(){
     'use strict';
-    var VERSION='1.1.5',seq=0,ending={},boundaryQueues={};
+    var VERSION='1.1.6',seq=0,ending={},boundaryQueues={};
     var labels={cast:'КАСТ',sourceStart:'НАЧК',turn:'НАЧТ',sourceEnd:'КНЦИ',targetEnd:'КНЦТ',end:'ОКОН',entry:'ВХОД',exit:'ВЫХОД',areaStart:'ОБЛН',areaEnd:'ОБЛК',passive:'ПАСС',move:'МУВ',recovery:'ОСВОБ'};
     function copy(x){return x==null?x:JSON.parse(JSON.stringify(x));}
     function text(s){
@@ -280,6 +281,15 @@ var AD5Phases=(function(){
                 var player=getObj('player',msg.playerid);if(player)sendChat('AD5 Phases','/w "'+String(player.get('_displayname')).replace(/["\r\n]/g,'')+'" '+(list.map(function(id){return id+' [Завершить](!ad5phase end '+id+')';}).join('<br>')||'Нет активных эффектов.'));
             }
         }catch(e){sendChat('AD5 Phases','/w gm '+String(e.message).replace(/[<>]/g,''));}
+    });
+    // 1.1.6: удалённый токен-цель убирается из эффекта; эффект без целей завершается
+    // (раньше запись без ЭФФ N и концентрации оставалась в state навсегда).
+    on('destroy:graphic',function(t){
+        var all=root().instances;
+        Object.keys(all).forEach(function(id){
+            var r=all[id],i=r&&Array.isArray(r.targets)?r.targets.indexOf(t.id):-1;if(i<0)return;
+            r.targets.splice(i,1);if(!r.targets.length)end(id);
+        });
     });
     on('ready',function(){root();log('AD5 Phases '+VERSION+' ready');});
     return {version:VERSION,historyChange:function(rec,redo){if(redo&&!rec.castOnly)root().instances[rec.id]=copy(rec);else delete root().instances[rec.id];},parse:parse,has:has,validate:validate,run:run,enqueueBoundary:enqueueBoundary,standalone:standalone,applied:applied,failed:boundaryApplied,isActive:isActive,end:end,endConcentration:endConcentration,endingPhase:endingPhase,effectsChanged:effectsChanged,conditionPresent:conditionPresent,labels:labels,_test:{branch:branch,phase:phase,turnChanged:turnChanged}};

@@ -204,7 +204,7 @@ var AD5Concentration=(function(){
     function elapsed(id){var rec=root().active[String(id||'')];return rec?(Number(rec.elapsed)||0):(Number(endedElapsed[String(id||'')])||0);}
     function endById(id,reason,silent){
         var r=root(),rec=r.active[String(id||'')];if(!rec)return null;
-        delete r.active[rec.id];if(r.owners[rec.ownerKey]===rec.id)delete r.owners[rec.ownerKey];endedElapsed[rec.id]=Number(rec.elapsed)||0;
+        delete r.active[rec.id];if(r.owners[rec.ownerKey]===rec.id)delete r.owners[rec.ownerKey];endedElapsed[rec.id]=Number(rec.elapsed)||0;(function(id){setTimeout(function(){delete endedElapsed[id];},600000);})(rec.id);
         var summary=cleanup(rec);
         Object.keys(rec.markerTokens||{}).forEach(function(tid){var token=getObj('graphic',tid);restoreMarkerEntry(token,rec.markerTokens[tid]);refreshTooltip(token);});
         syncConcentrationAction(rec.actorId);

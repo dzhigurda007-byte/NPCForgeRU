@@ -3,7 +3,8 @@ if(typeof AD5Environment!=='undefined'&&AD5Environment) {
     log('AD5Environment: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Environment 1.6.9
+ * AD5 Environment 1.7.1
+ * 1.7.1: области других страниц отсекаются без чтения объекта; геометрия области — один раз на 9 точек опоры.
  * 1.6.9: a SOLID volume containing the target's centre (a wall panel's durability token) gives it no cover.
  * 1.6.8: body data from the character sheet — «Рост» (height, feet), «Вес» (weight, pounds), «Размер» (size);
  *        a bare number is feet / pounds; «6'2\"», «6 фт», «180 фунтов» also work. Order for height:
@@ -77,7 +78,7 @@ if(typeof AD5Environment!=='undefined'&&AD5Environment) {
  */
 var AD5Environment=(function(){
     'use strict';
-    var VERSION='1.7.0',SCRIPT='AD5 Environment',HEIGHT_HOOKED=false,BROWN='#8b4513',HEIGHT_LAYER='gmlayer',pendingTokenMoves=Object.create(null),forcedMoveGuards=Object.create(null),forcedMoveSequence=0;
+    var VERSION='1.7.1',SCRIPT='AD5 Environment',HEIGHT_HOOKED=false,BROWN='#8b4513',HEIGHT_LAYER='gmlayer',pendingTokenMoves=Object.create(null),forcedMoveGuards=Object.create(null),forcedMoveSequence=0;
     var COVER_RULES={quarter:{key:'quarter',label:'1/4 укрытия',ac:1,dex:1},half:{key:'half',label:'1/2 укрытия',ac:2,dex:2},threeQuarter:{key:'threeQuarter',label:'3/4 укрытия',ac:5,dex:5},full:{key:'full',label:'полное укрытие',ac:0,dex:0,full:true}};
     var TYPE_LABELS={phys:'ФИЗ',zaslow:'ЗАСЛОУ',zashigh:'ЗАСХАЙ',solid:'СОЛИД'};
     var POSTURE_MARKERS={crouch:'027-Blindsiding',lie:'302-Ambushing'};
@@ -330,7 +331,9 @@ var AD5Environment=(function(){
         return pts.map(function(pt){return {x:(pt[0]-cx)*d.w/bw,y:(pt[1]-cy)*d.h/bh};});
     }
     function pointInPolygon(p,poly){var inside=false;for(var i=0,j=poly.length-1;i<poly.length;j=i++){var a=poly[i],b=poly[j],hit=((a.y>p.y)!==(b.y>p.y))&&(p.x<(b.x-a.x)*(p.y-a.y)/((b.y-a.y)||1e-12)+a.x);if(hit)inside=!inside;}return inside;}
-    function containsPointArea(area,x,y){var r=geomInfo(area.obj,area.rec),p=localPoint(r,x,y);if(r.shape==='circle'){var nx=p.x/Math.max(0.5,r.hw),ny=p.y/Math.max(0.5,r.hh);return nx*nx+ny*ny<=1.0001;}if(r.shape==='polygon'){var poly=polygonLocalPoints(area.obj,area.rec);return poly.length>=3?pointInPolygon(p,poly):false;}return Math.abs(p.x)<=r.hw+0.01&&Math.abs(p.y)<=r.hh+0.01;}
+    function containsPointArea(area,x,y){var r=geomInfo(area.obj,area.rec);return containsPointInfo(r,r.shape==='polygon'?polygonLocalPoints(area.obj,area.rec):null,x,y);}
+    // 1.7.1: геометрия области считается один раз на серию точек (см. supportOverlap).
+    function containsPointInfo(r,poly,x,y){var p=localPoint(r,x,y);if(r.shape==='circle'){var nx=p.x/Math.max(0.5,r.hw),ny=p.y/Math.max(0.5,r.hh);return nx*nx+ny*ny<=1.0001;}if(r.shape==='polygon'){return poly&&poly.length>=3?pointInPolygon(p,poly):false;}return Math.abs(p.x)<=r.hw+0.01&&Math.abs(p.y)<=r.hh+0.01;}
     function lineRectIntervalInfo(r,x0,y0,x1,y1){var a=localPoint(r,x0,y0),b=localPoint(r,x1,y1),dx=b.x-a.x,dy=b.y-a.y,t0=0,t1=1;function slab(p,d,min,max){if(Math.abs(d)<1e-9)return p>=min&&p<=max;var u=(min-p)/d,v=(max-p)/d;if(u>v){var z=u;u=v;v=z;}if(u>t0)t0=u;if(v<t1)t1=v;return t0<=t1;}if(!slab(a.x,dx,-r.hw,r.hw)||!slab(a.y,dy,-r.hh,r.hh))return null;return {enter:Math.max(0,t0),exit:Math.min(1,t1)};}
     function lineEllipseIntervalInfo(r,x0,y0,x1,y1){var a=localPoint(r,x0,y0),b=localPoint(r,x1,y1),rx=Math.max(0.5,r.hw),ry=Math.max(0.5,r.hh),ax=a.x/rx,ay=a.y/ry,dx=(b.x-a.x)/rx,dy=(b.y-a.y)/ry,A=dx*dx+dy*dy,B=2*(ax*dx+ay*dy),C=ax*ax+ay*ay-1;if(A<1e-12){return C<=0?{enter:0,exit:1}:null;}var disc=B*B-4*A*C;if(disc<0)return C<=0?{enter:0,exit:1}:null;var s=Math.sqrt(Math.max(0,disc)),u=(-B-s)/(2*A),v=(-B+s)/(2*A);if(u>v){var q=u;u=v;v=q;}var e=Math.max(0,u),x=Math.min(1,v);if(x<0||e>1||e>x)return null;return {enter:e,exit:x};}
     function linePolygonIntervalInfo(r,poly,x0,y0,x1,y1){
@@ -370,7 +373,8 @@ var AD5Environment=(function(){
         return {blocked:true,left:stop.left,top:stop.top,points:clipped,segment:best.segment,entryT:best.enter,areaId:best.solid.rec.objectId||best.solid.obj.id,areaName:objectName(best.solid.obj,best.solid.rec),message:'невозможно встать в эту область'};
     }
     function areaContainsToken(area,token){return !!(area&&token&&pageIdOf(area.obj)===pageIdOf(token)&&containsPointArea(area,Number(token.get('left'))||0,Number(token.get('top'))||0));}
-    function pageAreas(pageId){var out=[];Object.keys(root().areas).forEach(function(id){var a=areaRecord(id);if(a&&pageIdOf(a.obj)===String(pageId||''))out.push(a);});return out;}
+    // 1.7.1: записи других страниц отсекаются по сохранённому pageId до чтения объекта.
+    function pageAreas(pageId){var pid=String(pageId||''),areas=root().areas,out=[];Object.keys(areas).forEach(function(id){var rec=areas[id];if(rec&&rec.pageId&&String(rec.pageId)!==pid)return;var a=areaRecord(id);if(a&&pageIdOf(a.obj)===pid)out.push(a);});return out;}
 
     // ---------- Area presentation / height hint ----------
     function formatFeet(n){n=Number(n)||0;return Math.abs(n-Math.round(n))<1e-9?String(Math.round(n)):String(Math.round(n*100)/100);}
@@ -593,8 +597,8 @@ var AD5Environment=(function(){
         ];
     }
     function supportOverlap(area,token,x,y){
-        var pts=tokenFootprintSamples(token,x,y),inside=0,center=false;
-        pts.forEach(function(p,i){if(containsPointArea(area,p.x,p.y)){inside++;if(i===0)center=true;}});
+        var pts=tokenFootprintSamples(token,x,y),inside=0,center=false,r=geomInfo(area.obj,area.rec),poly=r.shape==='polygon'?polygonLocalPoints(area.obj,area.rec):null;
+        pts.forEach(function(p,i){if(containsPointInfo(r,poly,p.x,p.y)){inside++;if(i===0)center=true;}});
         // Centre-in preserves the historical behavior. Majority footprint overlap is
         // a robust fallback for edge-aligned tokens and migrated PathV2 rectangles.
         return {inside:center||inside>=5,center:center,count:inside,total:pts.length,ratio:inside/pts.length};

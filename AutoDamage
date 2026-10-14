@@ -73,6 +73,7 @@ hp листа используется однократно как началь�
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
 4.3.163: классовые механики — атрибут листа ad5_features: КРИТ 19/18, КРИТ КОСТИ, ПЕРЕБРОС УРОНА, СКРЫТАЯ АТАКА, РАЗ В ХОД, УРОН ЗАКЛИНАНИЙ/ШКОЛЫ, ЛУЧ, ЛЕЧЕНИЕ ЗАКЛИНАНИЙ; ПОСЛЕ ПОПАДАНИЯ — кнопки с расходом ячейки или ресурса (!ad5 posthit). ЯРОСТЬ, НЕУДЕРЖИМАЯ ЯРОСТЬ (!ad5 relentless-reset), ПРИ УБИЙСТВЕ [ЗАКЛИНАНИЕМ]; метамагия (!ad5 meta: Усиленное, Продлённое, Удвоенное, Осторожное), ФОРМИРОВАНИЕ ЗАКЛИНАНИЙ; спасбросок может быть автоуспешным. Описание — docs/class-features.md.
+4.3.175: ресурсы, заряды и метамагия списываются после проверки «можно ли колдовать» и не повторяются при повторе/перескоке; Удвоенное — по уровню ячейки; «урон по цели раз в ход» снова срабатывает каждый раунд; раны: верные прежние хиты после синхронизации листа, без записей для токенов без ран, без ложной раны при правке единственной записи трекера; без AutoFront на каждое перемещение и без двойной перерисовки подсказки; спасброски не разбираются без ожидающих запросов; кнопки, которые никто не нажал, удаляются из памяти.
 4.3.174: событие «ПОЛУЧЕН УРОН» несёт типыУрона; вызов AD5 FX при лечении.
 4.3.173: AD5 Counters — бонусы «СЧЁТНАКОП» к атаке/урону, строки счётчиков в подсказке токена, блок «СЧЁТЧИК:»/«СЧЁТЗАВЕРШИТЬ:» передаётся модулю счётчиков после применения способности.
 4.3.172: производительность — подсказка ран не пересобирается при перемещении, AutoFront поднимает только перекрытые токены.
@@ -590,7 +591,9 @@ var AD5Wounds = (function () {
     function observe(t,value){observed[t.id]=hp(value===undefined?t.get('bar1_value'):value);}
     function changed(t,prev){
         if(!t||t.get('_subtype')!=='token'||t.get('isdrawing'))return;
-        var current=hp(t.get('bar1_value')),before=Object.prototype.hasOwnProperty.call(observed,t.id)?observed[t.id]:hp(prev&&prev.bar1_value);
+        var current=hp(t.get('bar1_value')),before=Object.prototype.hasOwnProperty.call(observed,t.id)?observed[t.id]:null;
+        // 4.3.175: пустое наблюдение (токен добавлен с пустой полосой) — берём prev из события.
+        if(before===null)before=hp(prev&&prev.bar1_value);
         // Always observe the latest HP so switching the Party Ribbon later cannot
         // retroactively create a wound from changes that happened on an inactive map.
         observe(t);
@@ -651,7 +654,9 @@ var AD5Wounds = (function () {
     }
     function sync(t) {
         if(!t||t.get('_subtype')!=='token'||t.get('isdrawing'))return;
-        var c=counts(t.id);db()[t.id]=c;
+        var c=counts(t.id);
+        // 4.3.175: пустые записи не хранятся — раньше запуск заводил запись на каждый токен кампании.
+        if(c.light||c.medium||c.heavy||(c.limbs&&c.limbs.length)||c.showZero)db()[t.id]=c;else delete db()[t.id];
         AD5TokenEffects.render(t,text(c));
         // Do not clear a manually placed fist on a token with no AD5 limb loss.
         // Once AD5 has a recorded loss, however, the marker is guaranteed present.
@@ -760,9 +765,9 @@ var AD5Wounds = (function () {
 var AD5HealthView = (function () {
     'use strict';
     var managed = Object.create(null);
-    function update(t) {
+    function update(t, skipWounds) {
         if (!t || t.get('_subtype') !== 'token' || t.get('isdrawing')) return;
-        AD5Wounds.sync(t);
+        if (!skipWounds) AD5Wounds.sync(t);
         var cid = t.get('represents'), c = getObj('character', cid);
         if (!c) return;
         var npcAttrs = findObjs({ _type: 'attribute', _characterid: cid, name:'npc' },{caseInsensitive:true});
@@ -799,7 +804,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.174', diagnostics = [], debug = false;
+    var VERSION = '4.3.175', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -3506,7 +3511,6 @@ var AD5 = (function () {
                 return a.id===hp.id || (blank(cur)&&blank(max)) || (cur===beforeCurrent&&max===beforeMax);
             });
             var syncIds=Object.create(null);syncHp.forEach(function(a){syncIds[a.id]=true;});
-            findObjs({_type:'graphic',_subtype:'token',represents:t.cid}).forEach(function(token){var link=token.get('bar1_link');if(!link||link==='hp'||syncIds[link])AD5Wounds.observe(token,plan.value);});
             syncHp.forEach(function(a){a.set('current',plan.value);});
             findObjs({_type:'graphic',_subtype:'token',represents:t.cid}).forEach(function(token){
                 var link=token.get('bar1_link');if(link&&link!=='hp'&&!syncIds[link])return;
@@ -3639,7 +3643,12 @@ var AD5 = (function () {
         if(Object.keys(changes).length){
             var diff={};
             Object.keys(changes).forEach(function(k){if(String(token.get(k))!==String(changes[k]))diff[k]=changes[k];});
-            if(Object.keys(diff).length)token.set(diff);
+            if(Object.keys(diff).length){
+                token.set(diff);
+                // Запись API не порождает change:graphic: раны должны знать новые хиты,
+                // иначе следующее ручное изменение сравнивается со старым значением.
+                if('bar1_value' in diff)AD5Wounds.observe(token,diff.bar1_value);
+            }
         }
         syncTempTokenFromSheet(token);
         AD5HealthView.update(token);
@@ -4583,8 +4592,11 @@ var AD5 = (function () {
         text=text.replace(/saving\s+throw|saving|throw|save|спасбросок|спасброски|спас\.?\s*бросок|проверка\s+характеристики|проверка|ability\s+check|check/gi,' ').replace(/\bu\b/g,'').replace(/[():]/g,' ').replace(/\s+/g,' ').trim();
         try{return saveAbility(text);}catch(e){return null;}
     }
+    // 4.3.175: без ожидающих спасбросков карточку не разбираем (каждый бросок навыка).
+    function hasWaitingSave(kind){var now=Date.now();return Object.keys(saveRequests).some(function(id){var q=saveRequests[id];return q&&q.status==='waiting'&&q.expires>now&&(!kind||q.kind===kind);});}
     function acceptSheetSave(msg){
         if(['simple','npc','npcsave'].indexOf(msg.rolltemplate)<0)return false;
+        if(!hasWaitingSave())return false;
         var f=fields(msg.content), ability=sheetSaveAbility(f.rname||f.check||f.saveattr||'');
         if(!ability || !f.r1)return false;
         var candidates=Object.keys(saveRequests).filter(function(id){var q=saveRequests[id];return q.status==='waiting'&&q.expires>Date.now()&&q.spec.ability===ability&&controlsSave(q,msg.playerid);});
@@ -4645,6 +4657,7 @@ var AD5 = (function () {
         }catch(ignore){return null;}
     }
     function acceptPlainSanctuarySave(msg){
+        if(!hasWaitingSave('sanctuary'))return false;
         var raw=plainRollTotal(msg);if(!raw)return false;
         var ids=Object.keys(saveRequests).filter(function(id){var q=saveRequests[id];return q.kind==='sanctuary'&&q.status==='waiting'&&q.expires>Date.now()&&controlsSave(q,msg.playerid);});
         if(!ids.length)return false;
@@ -5538,7 +5551,7 @@ var AD5 = (function () {
         setTimeout(function(){reply(msg.playerid,'<b>'+esc(name)+'</b>: выберите существо, которое тратит кость хитов — [Кость хитов](!ad5 hitdie '+id+' &#64;{target|Кто лечится|token_id})');},2000);
     }
     function hitDieCommand(pid,id,targetId){
-        var rec=hitDieOffers[String(id||'')];if(!rec)throw new Error('Кнопка устарела.');if(rec.pid!==pid&&!playerIsGM(pid))throw new Error('Выбрать может только заклинатель.');
+        var rec=hitDieOffers[String(id||'')];if(!rec||rec.expires<Date.now())throw new Error('Кнопка устарела.');if(rec.pid!==pid&&!playerIsGM(pid))throw new Error('Выбрать может только заклинатель.');
         var tok=getObj('graphic',String(targetId||''));if(!tok)throw new Error('Токен не найден.');var cid=String(tok.get('represents')||'');if(!cid)throw new Error('Токен без листа.');
         var hd=attr(cid,'hit_dice',true),left=hd?Number(hd.get('current')):NaN;if(!Number.isFinite(left)||left<1)throw new Error('У существа не осталось костей хитов (атрибут hit_dice).');
         var sides=Number(String(getAttrByName(cid,'hitdietype')||getAttrByName(cid,'hit_die')||'8').replace(/[^\d]/g,''))||8,spend=Math.min(rec.count,left),total=0;
@@ -5828,7 +5841,8 @@ var AD5 = (function () {
                     var ibRows=AD5EffectTurns.modifierRowsForToken(t.token.id,'incomingBonus');p.incomingBonus=[];
                     if(ibRows.length){
                         var ibState=state.AD5IncomingBonus=state.AD5IncomingBonus||{},turnKey='';
-                        try{var ord=JSON.parse(Campaign().get('turnorder')||'[]')||[];turnKey=ord.length?String(ord[0].id)+':'+String(ord[0].pr):'';}catch(ignoreTurn){}
+                        try{var ord=JSON.parse(Campaign().get('turnorder')||'[]')||[];turnKey=ord.length?'t'+featureTurnSeq+':'+String(ord[0].id):'';}catch(ignoreTurn){}
+                        // 4.3.175: ключ хода — счётчик ходов, а не «id:инициатива» (тот же каждый раунд).
                         if(!turnKey||ibState[t.token.id]!==turnKey){
                             ibState[t.token.id]=turnKey;
                             ibRows.forEach(function(row){var md=row.modifier,total=0;String(md.formula).split('+').forEach(function(part){var mm=/^(\d*)d(\d+)$/i.exec(part.trim());if(mm){for(var di=0;di<Number(mm[1]||1);di++)total+=randomInteger(Number(mm[2]));}else if(/^\d+$/.test(part.trim()))total+=Number(part.trim());});
@@ -7635,6 +7649,8 @@ var AD5 = (function () {
     function lightWoundTurnStart(campaign,prev){
         var after=parseTurnOrder(Campaign().get('turnorder')),before=parseTurnOrder(prev&&prev.turnorder);
         if(!after.length||!isNextTurnRotation(before,after))return;
+        // 4.3.175: одна запись в трекере «поворачивается» в саму себя при любой правке — это не новый ход.
+        if(after.length===1&&String(after[0].pr)!==String(before[0]&&before[0].pr))return;
         var row=after[0];
         if(!row||!row.id||row.id==='-1')return;
         var token=getObj('graphic',row.id);
@@ -8053,16 +8069,16 @@ var AD5 = (function () {
             var spellSourceId=(f.ad5attackrow||f.ad5spellprefix)?spellActorId(msg,f):null;
             var batchDraft=context&&context.batch&&drafts[context.batch];
             var spellMeta=batchDraft&&batchDraft.spellMeta?JSON.parse(JSON.stringify(batchDraft.spellMeta)):(directNativeSpellMeta||(spellSourceId?enrichSpellFields(msg,f,spellSourceId):null));
-            if(!context){try{rememberRepeat(msg,f);}catch(ignoreRepeat){}try{hitDieOffer(msg,f);}catch(ignoreHitDie){}try{grantUsed(msg,f);}catch(ignoreGrantUse){}try{grantSelfAtCast(msg,f);}catch(ignoreGrantSelf){}}
+            // 4.3.175: разовые побочные действия (ресурсы, заряды, метамагия) выполняются после
+            // проверки «можно ли колдовать» и не повторяются при повторе/перескоке/ПОВТОР.
+            var replayedCard=active(f,'ad5replay')||active(f,'ad5chain')||active(f,'ad5repeatconc');
             // 4.3.167: «ТРАТИТ РЕСУРС: Ярость 1» в описании действия листа — расход ресурса листа при использовании
             // (кнопки баффов от скрипта Classes). Нет ресурса — действие не выполняется. Строка вырезается из карточки.
             // 4.3.169: классовые умения пишутся в лист автоматически — персонаж, ещё не пересчитанный скриптом Classes,
             // пересчитывается до обработки атаки (иначе нет «Особенностей» и меню после попадания).
             if(!context){try{var ensureActor=actor(f,msg);if(ensureActor&&ensureActor.id){if(typeof AD5Classes!=='undefined'&&AD5Classes&&typeof AD5Classes.ensure==='function')AD5Classes.ensure(ensureActor.id);else classesMissingNotice(ensureActor.id);}}catch(ignoreEnsure){}}
-            if(!context){var spendBlock=null;try{spendBlock=actionResourceSpend(msg,f);}catch(spendErr){spendBlock=String(spendErr.message||spendErr);}if(spendBlock){reply(msg.playerid,spendBlock);delete armed[msg.playerid];delete deferred[msg.playerid];delete pending[msg.playerid];return;}}
             if(!spellMeta)spellMeta=npcSpellMetaForFields(f);
             if(!spellMeta)spellMeta=taggedPlayerSpellMetaForFields(msg,f);
-            if(spellMeta&&!context){try{var metaCid=spellSourceId||(actor(f,msg)||{}).id;if(metaCid)metaAttach(msg,f,spellMeta,String(metaCid));}catch(metaErr){record('Метамагия: '+(metaErr.message||metaErr));}}
             // 4.3.158: a caster inside «ТИШИНА» cannot cast a spell with a verbal component; a feebleminded
             // creature cannot cast spells at all.
             if(spellMeta&&!context&&!active(f,'ad5repeatconc')){
@@ -8083,6 +8099,12 @@ var AD5 = (function () {
                     ' · '+spellLevelDescribe({baseLevel:spellMeta.baseSpellLevel,castLevel:spellMeta.castLevel})+
                     ' · источник='+resolvedLevels.source);
             }
+            if(!context&&!replayedCard){var spendBlock=null;try{spendBlock=actionResourceSpend(msg,f);}catch(spendErr){spendBlock=String(spendErr.message||spendErr);}if(spendBlock){reply(msg.playerid,spendBlock);delete armed[msg.playerid];delete deferred[msg.playerid];delete pending[msg.playerid];return;}}
+            // Повтор запоминается после вырезания «ТРАТИТ РЕСУРС», иначе каждый повтор тратил бы ресурс снова.
+            if(!context){try{rememberRepeat(msg,f);}catch(ignoreRepeat){}}
+            if(!context&&!replayedCard){try{hitDieOffer(msg,f);}catch(ignoreHitDie){}try{grantUsed(msg,f);}catch(ignoreGrantUse){}try{grantSelfAtCast(msg,f);}catch(ignoreGrantSelf){}}
+            // Удвоенное заклинание стоит по уровню, которым колдуют (castLevel уже определён).
+            if(spellMeta&&!context&&!replayedCard){try{var metaCid=spellSourceId||(actor(f,msg)||{}).id;if(metaCid)metaAttach(msg,f,spellMeta,String(metaCid));}catch(metaErr){record('Метамагия: '+(metaErr.message||metaErr));}}
             if(spellMeta&&spellMeta.structured&&!spellValueActive(spellMeta.attack)&&!spellValueActive(spellMeta.damage1)&&!spellValueActive(spellMeta.damage2)&&!spellValueActive(spellMeta.healing)&&!spellValueActive(spellMeta.save)&&!spellHasAd5Syntax(spellMeta.description)){return;}
             var spellDslRuntime=spellMeta?spellDslApplyRuntime(f,spellMeta):{active:false,targetDirective:false,durationDirective:false,targets:null,duration:null,context:{delta:0}};
             if(spellDslRuntime.active)record('Spell DSL: '+spellLevelDescribe({baseLevel:spellMeta.baseSpellLevel,castLevel:spellMeta.castLevel})+' · ПОВ='+spellDslRuntime.context.delta+(spellDslRuntime.targets!==null?' · целей='+spellDslRuntime.targets:'')+(spellDslRuntime.duration!==null?' · длительность='+spellDslRuntime.duration:''));
@@ -9244,6 +9266,23 @@ var AD5 = (function () {
     //   (Удвоенное — по кругу заклинания, заговор 1); РЕСУРС МЕТАМАГИИ: Единицы чародейства — имя ресурса листа.
     //   !ad5 meta — меню; выбранный вариант применяется к следующему заклинанию персонажа (2 минуты).
     //   ФОРМИРОВАНИЕ ЗАКЛИНАНИЙ — союзники в области вашего заклинания воплощения (до 1 + круг) не задеты.
+    // 4.3.175: кнопки, которые никто не нажал, раньше оставались в памяти навсегда
+    // (missReplays и chains — с полной копией сообщения). Раз в 10 минут удаляются
+    // истёкшие записи; пулы лечения и отметки метамагии без срока — через час.
+    var sweepSeen=Object.create(null);
+    function sweepAged(map,prefix,ttl,now){
+        Object.keys(map).forEach(function(k){var sk=prefix+k;if(!sweepSeen[sk])sweepSeen[sk]=now;else if(now-sweepSeen[sk]>ttl){delete map[k];delete sweepSeen[sk];}});
+    }
+    setInterval(function(){
+        try{
+            var now=Date.now();
+            [missReplays,hitDieOffers,chains,postHits].forEach(function(m){Object.keys(m).forEach(function(k){if(!m[k]||!(m[k].expires>now))delete m[k];});});
+            Object.keys(postHitGroups).forEach(function(k){if(!(postHitGroups[k]||[]).some(function(x){return postHits[x];}))delete postHitGroups[k];});
+            [nativeMultiOwnWriteUntil,autoButtonIgnoreUntil].forEach(function(m){if(m)Object.keys(m).forEach(function(k){if(!(Number(m[k])>now))delete m[k];});});
+            sweepAged(healPools,'h:',3600000,now);sweepAged(metaUsed,'m:',3600000,now);
+            Object.keys(sweepSeen).forEach(function(sk){var map=sk.charAt(0)==='h'?healPools:metaUsed;if(!(sk.slice(2) in map))delete sweepSeen[sk];});
+        }catch(ignoreSweep){}
+    },600000);
     var metaArmed={},metaUsed={},metaSeq=0,META_KINDS={'усиленн':'heighten','продлённ':'extend','продленн':'extend','удвоенн':'twin','осторожн':'careful'},META_LABEL={heighten:'Усиленное',extend:'Продлённое',twin:'Удвоенное',careful:'Осторожное'};
     function metaOptions(cid){var l=featureLine(cid,/^МЕТАМАГИЯ\s*[:：]\s*(.+)$/i);if(!l)return [];return l.m[1].split(/\s*,\s*/).map(function(x){var m=/^(\S+)(?:\s+(\d+))?/.exec(x.trim());if(!m)return null;var k=null;Object.keys(META_KINDS).forEach(function(p){if(normalizeUserText(m[1]).indexOf(p)===0)k=META_KINDS[p];});return k?{kind:k,cost:m[2]===undefined?null:Number(m[2])}:null;}).filter(Boolean);}
     function metaResourceName(cid){var l=featureLine(cid,/^РЕСУРС\s+МЕТАМАГИИ\s*[:：]\s*(.+)$/i);return l?l.m[1].trim():'Единицы чародейства';}
@@ -9659,10 +9698,14 @@ var AD5 = (function () {
         // Pure position/rotation changes cannot change health presentation.
         var keys=['represents','_subtype','isdrawing','statusmarkers','bar1_value','bar1_max','bar2_value','bar2_max','tooltip','show_tooltip','showplayers_bar1','showplayers_bar2','playersedit_bar1','playersedit_bar2','bar1_num_permission','bar2_num_permission','bar_location','compact_bar'];
         if(prev&&!keys.some(function(k){return String(prev[k])!==String(token.get(k));}))return;
-        AD5HealthView.update(token);
+        // 4.3.175: AD5Wounds.changed уже перерисовал подсказку для этих полей на активной карте.
+        var woundKeys=['bar1_value','bar1_max','bar3_value','bar4_value','tooltip','show_tooltip','statusmarkers','represents','layer','_pageid'];
+        var woundsDone=!!prev&&token.get('_pageid')===Campaign().get('playerpageid')&&woundKeys.some(function(k){return String(prev[k])!==String(token.get(k));});
+        AD5HealthView.update(token,woundsDone);
     });
-    on('change:graphic:left', function(token){try{rememberPhysicalSourceToken(token,null);}catch(ignore){}scheduleCombatFront('move');});
-    on('change:graphic:top', function(token){try{rememberPhysicalSourceToken(token,null);}catch(ignore){}scheduleCombatFront('move');});
+    // 4.3.175: перемещение не меняет порядок слоёв — AutoFront на каждое перетаскивание не нужен.
+    on('change:graphic:left', function(token){try{rememberPhysicalSourceToken(token,null);}catch(ignore){}});
+    on('change:graphic:top', function(token,prev){if(prev&&String(prev.left)!==String(token.get('left')))return;try{rememberPhysicalSourceToken(token,null);}catch(ignore){}});
     on('change:graphic:layer', function(){scheduleCombatFront('layer');});
     on('change:graphic:represents', function(token){scheduleTokenBarSync(token);scheduleCombatFront('represents');});
     // Any new/moved/edited path can visually cover tokens. Reassert combat-token

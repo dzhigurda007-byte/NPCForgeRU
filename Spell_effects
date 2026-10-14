@@ -6,12 +6,13 @@
  *        retaliation {"noTemp":true} works without temporary HP (Fire Shield).
  * 1.1.5: retaliation {"anyAttack":true,"range":10} — any attack hit from within the range (Shadow of Moil).
  * 1.1.6: mark {"noConcentration":true} — метка без концентрации (Проклятие ведьмовского клинка), длительность — duration в раундах.
+ * 1.1.7: перемещения и изменения атрибутов проверяют только эффекты нужного вида/токена; записи удалённых токенов (действия, бонусы, ходы) удаляются.
  * 1.1.3: mark effects own the Roll20 archery-target marker for their current target; transfer/end/undo restore it safely.
  */
 if(typeof AD5SpellEffects!=='undefined'&&AD5SpellEffects){log('AD5SpellEffects: duplicate skipped');}else{
 var AD5SpellEffects=(function(){
 'use strict';
-var VERSION='1.1.6',windows=Object.create(null),MARK_MARKER='archery-target';
+var VERSION='1.1.7',windows=Object.create(null),MARK_MARKER='archery-target';
 function root(){var r=state.AD5SpellEffects=state.AD5SpellEffects||{};r.effects=r.effects||{};r.turns=r.turns||{};r.actions=r.actions||{};r.bonus=r.bonus||{};r.markMarkerBase=r.markMarkerBase&&typeof r.markMarkerBase==='object'?r.markMarkerBase:{};r.sequence=Number(r.sequence)||0;r.clock=Number(r.clock)||0;return r;}
 function uid(prefix){return prefix+(++root().sequence).toString(36);}
 function clone(x){return x==null?x:JSON.parse(JSON.stringify(x));}
@@ -35,6 +36,9 @@ function canAct(t){var r=AD5.conditionRules.canAct(t);if(!r.allowed)throw Error(
 function distance(a,b){if(!a||!b||a.get('_pageid')!==b.get('_pageid'))return Infinity;return AD5.conditionRules.rangeFeet(a,b);}
 function activeSource(r){var s=token(r.source);if(!s)return false;if(!r.concentration)return true;var c=AD5Concentration.currentForToken(s);return !!c&&c.id===r.concentration;}
 function records(tid){return Object.keys(root().effects).map(function(k){return root().effects[k];}).filter(function(r){return (!tid||r.target===tid)&&activeSource(r);});}
+// Отбор по виду/токену до проверки концентрации: перемещения и изменения атрибутов
+// не вызывают AD5Concentration для каждого действующего эффекта.
+function where(p){var e=root().effects;return Object.keys(e).map(function(k){return e[k];}).filter(function(r){return r&&p(r)&&activeSource(r);});}
 function markerEntries(t,marker){return String(t&&t.get('statusmarkers')||'').split(',').filter(function(x){return x&&x.replace(/@[^,]+$/,'')===marker;});}
 function syncMarkMarker(tid){
  var t=token(tid);if(!t)return;
@@ -148,7 +152,7 @@ function protectionBlocks(t,condition,sourceContext){
 function protectionRecovery(t,e){return !!e&&protectionBlocks(t,e.condition,e.source);}
 function immune(tid){var out={};records(tid).forEach(function(r){if(r.kind==='heroism')out.frightened=true;});return out;}
 function armor(t,base){records(t.id).forEach(function(r){if(r.kind!=='armor')return;var cid=t.get('represents'),worn=numeric(value(cid,r.armorAttribute,0),r.armorAttribute,0,1000);if(worn>0){end(r.id,'надет доспех');return;}var dex=numeric(value(cid,'dexterity_mod',NaN),'dexterity_mod',-20,100),shield=r.shieldAttribute?numeric(value(cid,r.shieldAttribute,0),r.shieldAttribute,0,100):0,extra=r.bonusAttribute?numeric(value(cid,r.bonusAttribute,0),r.bonusAttribute,-100,100):0;base=Math.max(base,(r.base===undefined?13:r.base)+dex+shield+extra);});return base;}
-function onAction(source,kind,except){if(kind==='bonus'){root().bonus[source]=epoch(token(source));return;}if(kind!=='action')return;records().slice().forEach(function(r){if(r.source===source&&r.kind==='link'&&r.id!==except)end(r.id,'использовано другое действие');});root().actions[source]=epoch(token(source));}
+function onAction(source,kind,except){if(kind==='bonus'){root().bonus[source]=epoch(token(source));return;}if(kind!=='action')return;where(function(r){return r.source===source&&r.kind==='link'&&r.id!==except;}).forEach(function(r){end(r.id,'использовано другое действие');});root().actions[source]=epoch(token(source));}
 function actionFromCard(source,casting,description,reaction){if(!source||reaction)return;var m=/^\s*AD5ДЕЙСТВИЕ\s*:\s*(action|bonus|free|reaction)\s*$/im.exec(description||'');var kind=m?m[1]:/реакц|reaction/i.test(casting)?'reaction':/бонус|bonus/i.test(casting)?'bonus':'action';onAction(source,kind);}
 function tempOwnerChanged(tid,owner){
  Object.keys(root().effects).forEach(function(id){var r=root().effects[id];if(r.target===tid&&r.kind==='retaliation'&&!r.noTemp&&(!owner||owner.castId!==r.tempOwner))end(id,'временные HP заменены или исчерпаны');});
@@ -205,7 +209,7 @@ function gateMove(t,prev,route){
   check(r,t,r.ability||'wisdom',false,function(ok){r.movePending=false;if(ok){r.allowedEpoch=root().clock;notify(t,'Проверка выхода успешна: повторите перемещение.');}else if(ok!==null)notify(t,'Выход за дистанцию не разрешён.');});
  });return denied;
 }
-function moved(t){records().slice().forEach(function(r){if(r.kind==='link'&&(r.source===t.id||r.target===t.id)&&!validLink(r))end(r.id,'дальность/полное укрытие');});}
+function moved(t){where(function(r){return r.kind==='link'&&(r.source===t.id||r.target===t.id);}).forEach(function(r){if(!validLink(r))end(r.id,'дальность/полное укрытие');});}
 // Read the actual character card when the window opens AND when clicked.
 function reactionProfiles(t,kind){
  if(!t||typeof AD5Reactions==='undefined')return [];
@@ -259,9 +263,9 @@ on('chat:message',function(msg){if(msg.type!=='api'||!/^!ad5spell(?:\s|$)/.test(
  }catch(e){tell(msg.playerid,esc(e.message));}});
 on('change:campaign:turnorder',turn);
 on('change:graphic',function(t,prev){if(prev&&String(prev.bar2_value)!==String(t.get('bar2_value')))manualTempChange(t,prev.bar2_value,t.get('bar2_value'));if(prev&&(prev.left!==t.get('left')||prev.top!==t.get('top')||prev._pageid!==t.get('_pageid')))moved(t);});
-on('destroy:graphic',function(t){Object.keys(root().effects).forEach(function(id){var r=root().effects[id];if(r.source===t.id||r.target===t.id)end(id,'токен удалён');});delete root().markMarkerBase[t.id];});
+on('destroy:graphic',function(t){Object.keys(root().effects).forEach(function(id){var r=root().effects[id];if(r.source===t.id||r.target===t.id)end(id,'токен удалён');});delete root().markMarkerBase[t.id];var R=root();delete R.actions[t.id];delete R.bonus[t.id];delete R.turns[t.id];});
 on('ready',function(){
- on('change:attribute',function(a,prev){var cid=a.get('_characterid'),name=String(a.get('name')||'');records().slice().forEach(function(r){var t=token(r.target);if(r.kind==='armor'&&t&&t.get('represents')===cid&&r.armorAttribute===name&&Number(a.get('current'))>0)end(r.id,'надет доспех');if(r.kind==='retaliation'&&t&&prev&&t.get('represents')===cid&&(name==='hp_temp'||t.get('bar2_link')===a.id))manualTempChange(t,prev.current,a.get('current'));});});
+ on('change:attribute',function(a,prev){var cid=a.get('_characterid'),name=String(a.get('name')||'');where(function(r){return r.kind==='armor'||r.kind==='retaliation';}).forEach(function(r){var t=token(r.target);if(r.kind==='armor'&&t&&t.get('represents')===cid&&r.armorAttribute===name&&Number(a.get('current'))>0)end(r.id,'надет доспех');if(r.kind==='retaliation'&&t&&prev&&t.get('represents')===cid&&(name==='hp_temp'||t.get('bar2_link')===a.id))manualTempChange(t,prev.current,a.get('current'));});});
  root();Object.keys(root().effects).forEach(function(k){var r=root().effects[k];delete r.movePending;if(!activeSource(r)||!token(r.target))end(k,'источник отсутствует',true);else if(r.kind==='retaliation'&&!r.noTemp&&!ownsTemp(r,token(r.target)))end(k,'временные HP отсутствуют',true);});var markTargets={};records().forEach(function(r){if(r.kind==='mark')markTargets[r.target]=true;});Object.keys(markTargets).forEach(syncMarkMarker);log('AD5 Spell Effects '+VERSION+' ready');});
 return {version:VERSION,canStand:function(t){return !records(t.id).some(function(r){return r.preventStanding;});},strip:strip,hasConcentration:function(id){return records().some(function(r){return r.concentration===id;});},parse:parse,releaseRestrained:function(tid){records(tid).slice().forEach(function(r){if(AD5EffectTurns.conditionKey(r.condition)==='restrained')end(r.id,'опутывание снято GM');});},creatureType:creatureType,protectedFrom:protectedFrom,protectionBlocks:protectionBlocks,protectionRecovery:protectionRecovery,validate:validate,applied:applied,immune:immune,armor:armor,onAction:onAction,actionFromCard:actionFromCard,preHit:preHit,hitCommitted:hitCommitted,markComponents:markComponents,afterDamage:afterDamage,harmful:harmful,attackRule:attackRule,checkDisadvantage:checkDisadvantage,gateMove:gateMove,removeConcentration:removeConcentration,offerShield:offerShield,missile:missile,snapshot:snapshot,historyCheck:historyCheck,restore:restore,
  tempOwnerChanged:tempOwnerChanged,_test:{add:add,end:end,records:records,repeat:repeat,transfer:transfer,turn:turn,gateMove:gateMove,grant:grant,check:check,decide:decide,windows:function(){return windows;},reactionProfiles:reactionProfiles,resources:resources,epoch:epoch}};
