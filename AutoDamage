@@ -589,8 +589,11 @@ var AD5Wounds = (function () {
         var activePage=Campaign().get('playerpageid')||'';
         if(!activePage||t.get('_pageid')!==activePage)return;
         if(current!==null&&before!==null&&current<before){var p=plan(t,before,current,false);set(t,p.after);announce(t,p);}
-        else sync(t);
+        else if(!prev||SYNC_KEYS.some(function(k){return String(prev[k])!==String(t.get(k));}))sync(t);
     }
+    // A pure move/resize/rotation cannot change the wound tooltip or the limb
+    // marker. Rebuilding the tooltip queries every effect module, so skip it.
+    var SYNC_KEYS=['bar1_value','bar1_max','bar3_value','bar4_value','tooltip','show_tooltip','statusmarkers','represents','layer','_pageid'];
     function db() {
         if(!state.AD5Wounds)state.AD5Wounds={version:2,tokens:{}};
         if(!state.AD5Wounds.tokens)state.AD5Wounds.tokens={};
@@ -788,7 +791,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.171', diagnostics = [], debug = false;
+    var VERSION = '4.3.172', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -1329,6 +1332,28 @@ var AD5 = (function () {
         var pageId=partyPageId();
         return pageId?[pageId]:[];
     }
+    // Every toFront() rewrites the page z-order and is sent to every client, so
+    // raising all combat tokens on each move costs O(N²). Read the z-order once and
+    // raise only the combat tokens lying below the topmost other Objects-layer
+    // object, in their current relative order. Without a z-order, raise all.
+    function zorderObject(id){return getObj('graphic',id)||getObj('path',id)||getObj('pathv2',id)||getObj('text',id)||null;}
+    function combatTokensBelowCover(tokens){
+        if(!tokens.length)return tokens;
+        var page=getObj('page',tokens[0].get('_pageid')),raw=String(page&&page.get('_zorder')||'');
+        if(!raw)return tokens;
+        var order=raw.split(','),index=Object.create(null),combat=Object.create(null),cover=-1;
+        tokens.forEach(function(t){combat[t.id]=true;});
+        for(var i=order.length-1;i>=0;i--){
+            var id=order[i];if(!id||combat[id])continue;
+            var o=zorderObject(id);
+            // An object of unknown type is treated as cover (the old full pass).
+            if(!o||String(o.get('layer')||'objects')==='objects'){cover=i;break;}
+        }
+        order.forEach(function(id,i){if(combat[id]&&index[id]===undefined)index[id]=i;});
+        // A token missing from the z-order list may be anywhere: raise it too.
+        return tokens.filter(function(t){var i=index[t.id];return i===undefined||i<cover;})
+            .sort(function(a,b){var ia=index[a.id],ib=index[b.id];return (ia===undefined?-1:ia)-(ib===undefined?-1:ib);});
+    }
     function maintainCombatFront(reason){
         var tokens=[],seen=Object.create(null);
         campaignActivePages().forEach(function(pageId){
@@ -1337,6 +1362,7 @@ var AD5 = (function () {
                 seen[t.id]=true;tokens.push(t);
             });
         });
+        tokens=combatTokensBelowCover(tokens);
         tokens.forEach(function(t){try{toFront(t);}catch(e){record('AutoFront '+t.id+': '+e.message);}});
         record('AutoFront '+(reason||'')+': поднято боевых токенов='+tokens.length);
         return tokens.length;

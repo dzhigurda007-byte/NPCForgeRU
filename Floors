@@ -52,8 +52,9 @@ if(typeof AD5Floors!=='undefined'&&AD5Floors) {
  */
 var AD5Floors=(function(){
     'use strict';
-    var VERSION='1.2.6',SCRIPT='AD5 Floors',teleporting=Object.create(null),pending=Object.create(null),portalLayerGuard=Object.create(null),patched=false,originals={};
+    var VERSION='1.2.7',SCRIPT='AD5 Floors',teleporting=Object.create(null),pending=Object.create(null),portalLayerGuard=Object.create(null),patched=false,originals={};
 
+    var portalsMigrated=false;
     function root(){
         if(!state.AD5Floors||typeof state.AD5Floors!=='object')state.AD5Floors={};
         var r=state.AD5Floors;r.version=VERSION;
@@ -62,6 +63,11 @@ var AD5Floors=(function(){
         r.tokenFloor=r.tokenFloor&&typeof r.tokenFloor==='object'?r.tokenFloor:{};
         r.portalLatch=r.portalLatch&&typeof r.portalLatch==='object'?r.portalLatch:{};
         r.sequence=Number(r.sequence)||0;
+        // root() runs several times on every change:graphic. New portals are
+        // created fully normalized, so the legacy migration below is needed only
+        // once per sandbox start.
+        if(portalsMigrated)return r;
+        portalsMigrated=true;
         // 1.1.0 migration: old name-keyed portals remain valid, but every pair gets
         // a stable internal pair ID plus endpoint IDs. No manual portal name is required.
         var maxSeq=r.sequence;
@@ -237,7 +243,7 @@ var AD5Floors=(function(){
         if(!floor)return 0;var n=0;findObjs({_type:'graphic',_subtype:'token',_pageid:floor.page}).filter(function(t){return isTerrainCombatToken(t)&&!isPortalEndpointObjectId(t.id);}).forEach(function(t){var f=floorAtPoint(floor.page,Number(t.get('left'))||0,Number(t.get('top'))||0,root().tokenFloor[t.id]);if(f&&f.key===floor.key){setTokenFloor(t,f);syncTokenTerrain(t);n++;}});return n;
     }
 
-    function portalEndpoints(){var out=[];Object.keys(root().portals).forEach(function(k){var p=root().portals[k];if(!p)return;(p.ends||[]).forEach(function(ep,i){out.push({key:k,portal:p,end:ep,index:i});});});return out;}
+    function portalEndpoints(){var out=[],portals=root().portals;Object.keys(portals).forEach(function(k){var p=portals[k];if(!p)return;(p.ends||[]).forEach(function(ep,i){out.push({key:k,portal:p,end:ep,index:i});});});return out;}
     function portalByEndpointObjectId(id){var found=null;portalEndpoints().some(function(x){if(x.end&&String(x.end.id)===String(id)){found=x;return true;}return false;});return found;}
     function isPortalEndpointObjectId(id){return !!portalByEndpointObjectId(id);}
     function nextPortalUid(){var r=root(),uid,key;do{r.sequence++;uid=portalUid(r.sequence);key=uid.toLowerCase();}while(Object.keys(r.portals).some(function(k){var p=r.portals[k];return p&&String(p.uid||'').toLowerCase()===key;}));return uid;}
@@ -399,7 +405,9 @@ var AD5Floors=(function(){
 
     function tokenMoved(token,prev){
         try{
-            if(!isToken(token)||isPortalEndpointObjectId(token.id)||isTeleporting(token.id))return;var bx=Number(prev&&prev.left),by=Number(prev&&prev.top),nx=Number(token.get('left')),ny=Number(token.get('top'));if(!Number.isFinite(bx)||!Number.isFinite(by)||!Number.isFinite(nx)||!Number.isFinite(ny)||Math.abs(bx-nx)<.01&&Math.abs(by-ny)<.01)return;
+            // Cheap position test first: most graphic changes are not moves.
+            if(!isToken(token))return;var bx=Number(prev&&prev.left),by=Number(prev&&prev.top),nx=Number(token.get('left')),ny=Number(token.get('top'));if(!Number.isFinite(bx)||!Number.isFinite(by)||!Number.isFinite(nx)||!Number.isFinite(ny)||Math.abs(bx-nx)<.01&&Math.abs(by-ny)<.01)return;
+            if(isPortalEndpointObjectId(token.id)||isTeleporting(token.id))return;
             var f=floorAtPoint(pageIdOf(token),nx,ny,root().tokenFloor[token.id]);if(f)setTokenFloor(token,f);clearLatchIfLeft(token);if(pending[token.id])return;var hit=portalEndpointAtToken(token),latch=String(root().portalLatch&&root().portalLatch[token.id]||'');if(!hit||(latch&&latch===hit.end.id))return;
             pending[token.id]=true;setTimeout(function(){delete pending[token.id];var live=getObj('graphic',token.id);if(live&&!isTeleporting(live.id))try{usePortal(live,'auto');}catch(e){gm('<b>Переход:</b> '+esc(e.message||e));}},0);
         }catch(e){gm('<b>Автопереход:</b> '+esc(e.message||e));}

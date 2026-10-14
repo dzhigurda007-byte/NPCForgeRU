@@ -13,7 +13,7 @@ if(typeof AD5Sides!=='undefined'&&AD5Sides) {
  */
 var AD5Sides=(function(){
     'use strict';
-    var VERSION='1.1.1',markerRaw=null,karmaTags={},refreshPending={},refreshTimer=null;
+    var VERSION='1.1.2',markerRaw=null,karmaTags={},refreshPending={},refreshTimer=null;
     function root(){state.AD5Sides=state.AD5Sides||{};state.AD5Sides.karma=state.AD5Sides.karma||{};return state.AD5Sides;}
     function esc(s){return String(s).replace(/[&<>"'\r\n]/g,function(c){return '&#'+c.charCodeAt(0)+';';});}
     function gm(s){sendChat('AD5 стороны','/w gm '+s,null,{noarchive:true});}
@@ -211,9 +211,12 @@ var AD5Sides=(function(){
         if(!token||token.get('_subtype')!=='token')return;
         // Ignore HP, tooltip and unrelated status changes. Cache only an observed
         // signature, never the authorization decision used by filter functions.
+        // The side can change only through markers, token control or Represents
+        // (character control is handled by characterChanged). Test that first:
+        // signature() reads several sheet attributes and moves are very frequent.
+        if(prev&&prev.statusmarkers===token.get('statusmarkers')&&prev.controlledby===token.get('controlledby')&&prev.represents===token.get('represents'))return;
         var next=signature(token),old=observed[token.id];observed[token.id]=next;
         if(old!==undefined&&next===old)return;
-        if(old===undefined&&prev&&prev.statusmarkers===token.get('statusmarkers')&&prev.controlledby===token.get('controlledby')&&prev.represents===token.get('represents'))return;
         refresh(token);
     }
     function characterChanged(c){

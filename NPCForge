@@ -10,7 +10,7 @@ if(typeof NPCForge!=='undefined'&&NPCForge) {
 var NPCForge = NPCForge || (function () {
     'use strict';
 
-    var VERSION = '2.7.5';
+    var VERSION = '2.7.6';
     var STARTUP_SCHEMA_MIN = '2.6.5'; // UI-only version bumps must not rebuild every NPC sheet.
     var SCRIPT = 'NPC Forge RU';
     function tokenActionName(rank,label){return Array(Math.max(0,Number(rank)||0)+1).join('\u200b')+String(label||'').replace(/^\u200b+/,'');}
@@ -986,7 +986,11 @@ var NPCForge = NPCForge || (function () {
     }
     function configureAllTokens(charId){
         var count=0;
-        findObjs({_type:'graphic',_subtype:'token'}).forEach(function(t){
+        // Called on every hp change of any sheet (linked token bars). A player
+        // character has no tokens to configure: check the sheet once instead of
+        // scanning every token in the campaign, and query only its own tokens.
+        if(charId&&!isNpcCharacter(charId))return 0;
+        findObjs(charId?{_type:'graphic',_subtype:'token',represents:charId}:{_type:'graphic',_subtype:'token'}).forEach(function(t){
             if((!charId||t.get('represents')===charId)&&configureToken(t)){count++;}
         });return count;
     }

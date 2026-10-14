@@ -49,7 +49,7 @@ if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine) {
  */
 var AD5ConditionEngine=(function(){
     'use strict';
-    var VERSION='1.2.17',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
+    var VERSION='1.2.18',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
     var MARKERS={
         blinded:'bleeding-eye',charmed:'chained-heart',deafened:'half-haze',frightened:'screaming',
         grappled:'grab',incapacitated:'broken-shield',no_reactions:'interdiction',invisible:'ninja-mask',paralyzed:'padlock',
@@ -263,6 +263,13 @@ var AD5ConditionEngine=(function(){
         if(!isToken(token)||!representedId(token))return false;var level=exhaustionLevel(token);setStatusMarker(token,MARKERS.exhaustion,level||false);syncHpLimit(token,level);syncDeath(token,level);return true;
     }
     function allTokens(){return (findObjs({_type:'graphic',_subtype:'token'})||[]).filter(isToken);}
+    // Only tokens whose Effect Turns record carries this condition. Grapple
+    // cleanup runs on every move; scanning and cloning every token of the
+    // campaign there was the main cost. Falls back to all tokens for old builds.
+    function tokensWithCondition(condition){
+        try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.tokenIdsWithCondition==='function')return AD5EffectTurns.tokenIdsWithCondition(condition).map(function(id){return getObj('graphic',id);}).filter(isToken);}catch(ignore){}
+        return allTokens();
+    }
     function syncCharacter(cid){if(!cid||syncing[cid])return;syncing[cid]=true;try{allTokens().forEach(function(t){if(characterId(t)===String(cid)||representedId(t)===String(cid))syncToken(t);});}finally{delete syncing[cid];}}
     function setExhaustion(token,level){
         if(!isToken(token)||!representedId(token))throw new Error('Нужен токен с листом персонажа.');level=clampLevel(level);tickMemo=null;var cid=characterId(token),a=cid&&attr(cid,'exhaustion_level');
@@ -355,7 +362,7 @@ var AD5ConditionEngine=(function(){
     function grapplesOf(target){return effectEntries(target,'grappled').filter(function(x){return !!String(x.source&&x.source.sourceToken||'');});}
     function grappledTargetsOf(grappler){
         var out=[];if(!isToken(grappler))return out;
-        allTokens().forEach(function(target){grapplesOf(target).forEach(function(ref){if(String(ref.source.sourceToken||'')===String(grappler.id))out.push({target:target,ref:ref});});});
+        tokensWithCondition('grappled').forEach(function(target){grapplesOf(target).forEach(function(ref){if(String(ref.source.sourceToken||'')===String(grappler.id))out.push({target:target,ref:ref});});});
         return out;
     }
     function relationExists(target,relationshipKey){return effectEntries(target,'grappled').some(function(x){return String(x.source.relationshipKey||'')===String(relationshipKey||'');});}
@@ -397,7 +404,7 @@ var AD5ConditionEngine=(function(){
     }
     function syncEscapeActionForCharacter(cid,neededOverride){
         cid=String(cid||'');if(!cid||!getObj('character',cid))return;
-        var needed=neededOverride;if(needed===undefined)needed=allTokens().some(function(t){return representedId(t)===cid&&grapplesOf(t).length>0;});
+        var needed=neededOverride;if(needed===undefined)needed=tokensWithCondition('grappled').some(function(t){return representedId(t)===cid&&grapplesOf(t).length>0;});
         var list=escapeActionAbilities(cid);
         if(!needed){list.forEach(function(a){try{a.remove();}catch(ignore){}});return;}
         var props={name:tokenActionName(20,'Освободиться'),action:ESCAPE_ACTION,description:ESCAPE_MARKER,istokenaction:true},a=list[0];
@@ -444,7 +451,7 @@ var AD5ConditionEngine=(function(){
         applyManagedCondition(target,'Опутан',ctxT);applyManagedCondition(grappler,'Опутан',ctxG);return rel;
     }
     function removePinsByParent(parentKey){
-        if(!parentKey)return 0;var n=0;allTokens().forEach(function(t){effectEntries(t,'restrained').forEach(function(x){if(String(x.source.parentRelationshipKey||'')===String(parentKey)){var r=removeManagedCondition(t,'restrained',{effectKey:x.effectKey});n+=Number(r&&r.removed)||0;}});});return n;
+        if(!parentKey)return 0;var n=0;tokensWithCondition('restrained').forEach(function(t){effectEntries(t,'restrained').forEach(function(x){if(String(x.source.parentRelationshipKey||'')===String(parentKey)){var r=removeManagedCondition(t,'restrained',{effectKey:x.effectKey});n+=Number(r&&r.removed)||0;}});});return n;
     }
     function removeGrappleRef(target,ref,reason){
         if(!target||!ref)return false;var rel=String(ref.source.relationshipKey||''),opts={effectKey:ref.effectKey};if(rel)opts.relationshipKey=rel;else if(ref.source.sourceToken)opts.sourceToken=ref.source.sourceToken;
@@ -452,7 +459,7 @@ var AD5ConditionEngine=(function(){
     }
     function findGrapple(target,grapplerId){var list=grapplesOf(target);if(grapplerId)list=list.filter(function(x){return String(x.source.sourceToken||'')===String(grapplerId);});return list[0]||null;}
     function cleanupRelationships(){
-        relationshipCleanupPending=false;allTokens().forEach(function(target){grapplesOf(target).forEach(function(ref){if(ref.source.relationshipType!=='grapple')return;var g=getObj('graphic',String(ref.source.sourceToken||''));if(!isToken(g)){removeGrappleRef(target,ref,'хватающий токен отсутствует');return;}if(incapacitatedLike(g)){removeGrappleRef(target,ref,'хватающий недееспособен');return;}var hold=Number(ref.source.holdDistance);if(!Number.isFinite(hold)||hold<=0)hold=GRAPPLE_HOLD_FEET;if(rangeFeet(g,target)>hold+0.01)removeGrappleRef(target,ref,'цель вышла дальше '+hold+' фт от хватающего');});});
+        relationshipCleanupPending=false;tokensWithCondition('grappled').forEach(function(target){grapplesOf(target).forEach(function(ref){if(ref.source.relationshipType!=='grapple')return;var g=getObj('graphic',String(ref.source.sourceToken||''));if(!isToken(g)){removeGrappleRef(target,ref,'хватающий токен отсутствует');return;}if(incapacitatedLike(g)){removeGrappleRef(target,ref,'хватающий недееспособен');return;}var hold=Number(ref.source.holdDistance);if(!Number.isFinite(hold)||hold<=0)hold=GRAPPLE_HOLD_FEET;if(rangeFeet(g,target)>hold+0.01)removeGrappleRef(target,ref,'цель вышла дальше '+hold+' фт от хватающего');});});
     }
     function scheduleRelationshipCleanup(){if(relationshipCleanupPending)return;relationshipCleanupPending=true;setTimeout(cleanupRelationships,0);}
 
@@ -534,7 +541,7 @@ var AD5ConditionEngine=(function(){
         var list=grapplesOf(target);if(grapplerId)list=list.filter(function(x){return String(x.source.sourceToken||'')===String(grapplerId);});if(!list.length)throw new Error('На токене нет захвата с известным хватающим.');if(list.length===1){var g=getObj('graphic',String(list[0].source.sourceToken||''));if(!isToken(g))throw new Error('Хватающий токен не найден.');return startContest('escape',target,g,pid,{reach:Number(list[0].source.reach)||5});}
         var html='<b>Освободиться:</b> выберите захват — '+list.map(function(x){var g=getObj('graphic',String(x.source.sourceToken||''));return g?btn(tokenName(g),'!ad5cond escape '+target.id+' '+g.id):'';}).filter(Boolean).join(' ');if(!whisperControllers(target,html))gm(html);return null;
     }
-    function releaseGrapple(grappler,targetId){var n=0;allTokens().forEach(function(t){if(targetId&&String(t.id)!==String(targetId))return;grapplesOf(t).forEach(function(ref){if(String(ref.source.sourceToken||'')===String(grappler.id)&&removeGrappleRef(t,ref,'хватающий отпустил цель'))n++;});});return n;}
+    function releaseGrapple(grappler,targetId){var n=0;tokensWithCondition('grappled').forEach(function(t){if(targetId&&String(t.id)!==String(targetId))return;grapplesOf(t).forEach(function(ref){if(String(ref.source.sourceToken||'')===String(grappler.id)&&removeGrappleRef(t,ref,'хватающий отпустил цель'))n++;});});return n;}
     function cleanupContests(){var now=Date.now(),r=root();Object.keys(r.contests).forEach(function(k){var c=r.contests[k];if(!c||now-Number(c.created||0)>10*60*1000)delete r.contests[k];});}
     function ensureContestMacros(){
         try{(findObjs({_type:'player'})||[]).forEach(function(pl){

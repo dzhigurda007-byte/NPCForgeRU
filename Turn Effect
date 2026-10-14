@@ -67,7 +67,7 @@ var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5
 // silently shadow every newer fix.
 var AD5EffectTurns = (function () {
     'use strict';
-    var VERSION='1.6.20', SCRIPT='AD5 Effect Turns';
+    var VERSION='1.6.21', SCRIPT='AD5 Effect Turns';
     var runtimeLastGroup=Object.create(null);
     var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
     var markerCacheRaw=null, markerCacheByName=Object.create(null);
@@ -199,6 +199,16 @@ var AD5EffectTurns = (function () {
     function snapshot(tokenId){
         var rec=root().tokens[tokenId];
         return rec?cleanRecord(rec):null;
+    }
+    // Read-only index for callers that only need to know WHICH tokens carry a
+    // condition (grapple cleanup on every move): no per-token clone.
+    function tokenIdsWithCondition(condition){
+        var db=root().tokens,out=[];condition=String(condition||'');
+        Object.keys(db).forEach(function(id){
+            var effects=db[id]&&db[id].effects;if(!effects||typeof effects!=='object')return;
+            if(Object.keys(effects).some(function(k){var e=effects[k];return !!(e&&e.kind==='condition'&&e.condition===condition);}))out.push(id);
+        });
+        return out;
     }
     function stable(rec){
         if(!rec)return '';
@@ -1391,7 +1401,11 @@ var AD5EffectTurns = (function () {
     function проверитьУсловныеСвязи(){
         var db=root().tokens,changed=0,removed=0,концентрацииКЗавершению={};
         Object.keys(db).slice().forEach(function(tokenId){
-            var token=getObj('graphic',tokenId);if(!token){delete db[tokenId];return;}var before=snapshot(tokenId),after=cleanRecord(before),touched=false;
+            var token=getObj('graphic',tokenId);if(!token){delete db[tokenId];return;}
+            // Most records carry no «ПОКА» clauses: check the raw record before cloning it.
+            var raw=db[tokenId],rawEffects=raw&&raw.effects;
+            if(!rawEffects||!Object.keys(rawEffects).some(function(k){var e=rawEffects[k];return !!(e&&e.условный&&e.условный.пока&&e.условный.пока.length);}))return;
+            var after=snapshot(tokenId),touched=false;
             Object.keys(after.effects).forEach(function(k){var e=after.effects[k];if(!e||!e.условный)return;var failedWhile=первоеЛожноеПока(e,token);if(!failedWhile)return;if(failedWhile.тип!=='концентрация')поставитьЗавершениеКонцентрации(концентрацииКЗавершению,e,'нарушено ПОКА');delete after.effects[k];touched=true;removed++;});
             if(touched){changed++;writeRecord(token,after);}
         });
@@ -2969,6 +2983,7 @@ var AD5EffectTurns = (function () {
         removeCondition:removeCondition,
         migrateLifecycleConditions:migrateLifecycleConditions,
         snapshot:snapshot,
+        tokenIdsWithCondition:tokenIdsWithCondition,
         equals:equals,
         tooltipLines:tooltipLines,
         describePlan:describePlan,

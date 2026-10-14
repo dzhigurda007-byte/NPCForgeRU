@@ -77,12 +77,13 @@ if(typeof AD5Environment!=='undefined'&&AD5Environment) {
  */
 var AD5Environment=(function(){
     'use strict';
-    var VERSION='1.6.9',SCRIPT='AD5 Environment',HEIGHT_HOOKED=false,BROWN='#8b4513',HEIGHT_LAYER='gmlayer',pendingTokenMoves=Object.create(null),forcedMoveGuards=Object.create(null),forcedMoveSequence=0;
+    var VERSION='1.6.10',SCRIPT='AD5 Environment',HEIGHT_HOOKED=false,BROWN='#8b4513',HEIGHT_LAYER='gmlayer',pendingTokenMoves=Object.create(null),forcedMoveGuards=Object.create(null),forcedMoveSequence=0;
     var COVER_RULES={quarter:{key:'quarter',label:'1/4 укрытия',ac:1,dex:1},half:{key:'half',label:'1/2 укрытия',ac:2,dex:2},threeQuarter:{key:'threeQuarter',label:'3/4 укрытия',ac:5,dex:5},full:{key:'full',label:'полное укрытие',ac:0,dex:0,full:true}};
     var TYPE_LABELS={phys:'ФИЗ',zaslow:'ЗАСЛОУ',zashigh:'ЗАСХАЙ',solid:'СОЛИД'};
     var POSTURE_MARKERS={crouch:'027-Blindsiding',lie:'302-Ambushing'};
     var COVER_LATERAL_SAMPLES=[-0.9,-0.45,0,0.45,0.9],SOURCE_AIM_FRACTION=0.75;
 
+    var areasNormalized=false;
     function root(){
         if(!state.AD5Environment||typeof state.AD5Environment!=='object')state.AD5Environment={};
         var r=state.AD5Environment;r.version=VERSION;
@@ -91,6 +92,10 @@ var AD5Environment=(function(){
         // Terrain is mirrored in state so movement/fall code always has a stable
         // pre-move snapshot. Roll20 bar4_value remains the visible/native value.
         r.terrain=r.terrain&&typeof r.terrain==='object'?r.terrain:{};
+        // root() is called many times per change:graphic. addArea() always writes
+        // normalized properties, so the legacy repair below runs once per sandbox.
+        if(areasNormalized)return r;
+        areasNormalized=true;
         Object.keys(r.areas).forEach(function(id){var rec=r.areas[id];if(!rec)return;rec.properties=rec.properties&&typeof rec.properties==='object'?rec.properties:{};if(!rec.properties.type)rec.properties.type='phys';delete rec.properties.pixelWidth;delete rec.properties.pixelHeight;});
         return r;
     }
