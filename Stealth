@@ -3,7 +3,9 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
     log('AD5Visibility: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Visibility 1.0.0 — скрытность игроков и зрение NPC.
+ * AD5 Visibility 1.0.1 — скрытность игроков и зрение NPC.
+ *
+ * Маркер: «603-Stealthy» из набора Earthdawn Fourth Edition Token Marker Set.
  *
  * Скрытность
  * - Игрок бросает «Скрытность» из листа персонажа или кнопкой токена «Скрытность».
@@ -42,7 +44,7 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
  */
 var AD5Visibility=AD5Visibility||(function(){
     'use strict';
-    var VERSION='1.0.0',SCRIPT='AD5 Скрытность';
+    var VERSION='1.0.1',SCRIPT='AD5 Скрытность';
     var ABILITY_NAME='Скрытность',ABILITY_ACTION='!ad5stealth roll @{selected|token_id} ?{Бросок Скрытности|Обычный,normal|С преимуществом,adv|С помехой,dis}';
     var FRONT_FULL=20,FRONT_HALF=60,BACK_FEET=5;
     // Состояния, при которых наблюдатель никого не замечает (маркеры AD5 Condition Engine).
@@ -79,11 +81,13 @@ var AD5Visibility=AD5Visibility||(function(){
         var next=out.join(',');if(next!==String(t.get('statusmarkers')||''))t.set('statusmarkers',next);
     }
 
-    // ---- Маркер. В кампании установлен набор маркеров Earthdawn Fourth Edition
-    // (имена вида «027-Blindsiding»). Ищем в нём маркер по смыслу «скрытность»;
-    // маркеры, уже занятые другими модулями AD5, пропускаются. Если ничего не
-    // нашлось — стандартный ninja-mask. Мастер может выбрать маркер командой.
-    var MARKER_PRIORITY=[/stealth/i,/hid(?:e|den|ing)/i,/sneak/i,/conceal/i,/shadow/i,/скрыт/i];
+    // ---- Маркер. В кампании установлен набор Earthdawn Fourth Edition Token Marker
+    // Set (Roll20 Marketplace 21468); его маркер скрытности — «603-Stealthy», другими
+    // модулями AD5 он не используется. Если набора нет — ищем маркер по смыслу
+    // «скрытность» (кроме занятых модулями AD5), затем стандартный ninja-mask.
+    // Мастер может выбрать другой маркер командой.
+    var PREFERRED_MARKER='603-Stealthy';
+    var MARKER_PRIORITY=[new RegExp('^'+PREFERRED_MARKER+'$','i'),/stealth/i,/hid(?:e|den|ing)/i,/sneak/i,/conceal/i,/shadow/i,/скрыт/i];
     var MARKERS_IN_USE=/blindsiding|ambushing|move-impaired|effect-debuff|effect-buff/i;
     function campaignMarkers(){try{return (JSON.parse(Campaign().get('_token_markers')||'[]')||[]).filter(function(m){return m&&m.tag;});}catch(e){return [];}}
     function markerTag(){
