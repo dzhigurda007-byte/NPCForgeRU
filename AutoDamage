@@ -73,6 +73,7 @@ hp листа используется однократно как началь�
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
 4.3.163: классовые механики — атрибут листа ad5_features: КРИТ 19/18, КРИТ КОСТИ, ПЕРЕБРОС УРОНА, СКРЫТАЯ АТАКА, РАЗ В ХОД, УРОН ЗАКЛИНАНИЙ/ШКОЛЫ, ЛУЧ, ЛЕЧЕНИЕ ЗАКЛИНАНИЙ; ПОСЛЕ ПОПАДАНИЯ — кнопки с расходом ячейки или ресурса (!ad5 posthit). ЯРОСТЬ, НЕУДЕРЖИМАЯ ЯРОСТЬ (!ad5 relentless-reset), ПРИ УБИЙСТВЕ [ЗАКЛИНАНИЕМ]; метамагия (!ad5 meta: Усиленное, Продлённое, Удвоенное, Осторожное), ФОРМИРОВАНИЕ ЗАКЛИНАНИЙ; спасбросок может быть автоуспешным. Описание — docs/class-features.md.
+4.3.176: ТОЛЧ/ТЯГ без явного токена атакующего и с несколькими копиями персонажа — ближайшая к цели копия.
 4.3.175: ресурсы, заряды и метамагия списываются после проверки «можно ли колдовать» и не повторяются при повторе/перескоке; Удвоенное — по уровню ячейки; «урон по цели раз в ход» снова срабатывает каждый раунд; раны: верные прежние хиты после синхронизации листа, без записей для токенов без ран, без ложной раны при правке единственной записи трекера; без AutoFront на каждое перемещение и без двойной перерисовки подсказки; спасброски не разбираются без ожидающих запросов; кнопки, которые никто не нажал, удаляются из памяти.
 4.3.174: событие «ПОЛУЧЕН УРОН» несёт типыУрона; вызов AD5 FX при лечении.
 4.3.173: AD5 Counters — бонусы «СЧЁТНАКОП» к атаке/урону, строки счётчиков в подсказке токена, блок «СЧЁТЧИК:»/«СЧЁТЗАВЕРШИТЬ:» передаётся модулю счётчиков после применения способности.
@@ -804,7 +805,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.175', diagnostics = [], debug = false;
+    var VERSION = '4.3.176', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -5354,6 +5355,13 @@ var AD5 = (function () {
             var tokens=findObjs({_type:'graphic',_subtype:'token',layer:'objects',_pageid:page}).filter(function(t){return isCombatToken(t,page)&&sourceTokenMatchesActor(t,p.actor);});
             if(tokens.length===1)return tokens[0];
             var initiative=turnOrderSourceToken(p.actor,tokens);if(initiative)return initiative;
+            // 4.3.176: несколько копий персонажа — ближайшая к цели, а не неопределённость.
+            if(tokens.length&&targetToken){
+                var tx=Number(targetToken.get('left'))||0,ty=Number(targetToken.get('top'))||0;
+                return tokens.filter(function(t){return t.id!==targetToken.id;}).sort(function(a,b){
+                    return (Math.pow(Number(a.get('left'))-tx,2)+Math.pow(Number(a.get('top'))-ty,2))-(Math.pow(Number(b.get('left'))-tx,2)+Math.pow(Number(b.get('top'))-ty,2));
+                })[0]||null;
+            }
         }
         return null;
     }

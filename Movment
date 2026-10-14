@@ -3,7 +3,8 @@ if(typeof AD5Movement!=='undefined'&&AD5Movement) {
     log('AD5Movement: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Movement Engine v2.3.11
+ * AD5 Movement Engine v2.3.12
+ * 2.3.12: ТОЛЧ/ТЯГ — отчёт мастеру (источник, клетки до и после); привязка к сетке не уводит поперёк силы.
  * 2.3.11: forceMove(…, {collide:true}) — толчок останавливается перед первым существом на пути, результат collidedWith.
  * 2.3.10: ТОЛЧ/ТЯГ и перенос захваченного сообщают AD5 Areas о перемещении (ВХОД/ВЫХОД/МУВ при
  *         принудительном движении); ход по кругу с возвратом в исходную клетку — тоже перемещение.
@@ -39,7 +40,7 @@ if(typeof AD5Movement!=='undefined'&&AD5Movement) {
 var AD5Movement=(function(){
     'use strict';
 
-    var VERSION='2.3.11',SCRIPT='AD5 Movement';
+    var VERSION='2.3.12',SCRIPT='AD5 Movement';
     var runtimeLastGroup=Object.create(null),suppressed=Object.create(null),recentMoveByToken=Object.create(null),pendingForced=Object.create(null),listeners=[];
 
     function root(){
@@ -435,7 +436,11 @@ var AD5Movement=(function(){
         }
         // Every scripted push/pull ends on a Roll20 grid position. The source/target
         // geometry remains authoritative for pull overlap prevention.
-        var snappedPlan=snapForcedDestination(target,source,plan,start,page,kind,ux,uy);plan.left=Number(snappedPlan.left);plan.top=Number(snappedPlan.top);
+        var snappedPlan=snapForcedDestination(target,source,plan,start,page,kind,ux,uy);
+        // 2.3.12: привязка к сетке не может увести токен поперёк силы: если клетка
+        // отклоняется от направления больше чем на 45°, остаётся точка без привязки.
+        var sdx=Number(snappedPlan.left)-start.left,sdy=Number(snappedPlan.top)-start.top,slen=Math.sqrt(sdx*sdx+sdy*sdy);
+        if(slen<0.5||(sdx*ux+sdy*uy)>=slen*0.7071){plan.left=Number(snappedPlan.left);plan.top=Number(snappedPlan.top);}
         // 2.3.11: meta.collide — толчок останавливается перед первым существом на пути (Отталкивающая ладонь).
         var collidedWith=null;
         if(meta&&meta.collide){var stop=forcedCollisionStop(target,source,start,plan,page);if(stop){plan.left=stop.left;plan.top=stop.top;collidedWith=stop.otherId;}}
@@ -449,6 +454,11 @@ var AD5Movement=(function(){
         try{target.set({left:plan.left,top:plan.top,lastmove:''});}
         catch(moveError){try{if(envMove&&typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.cancelForcedMove==='function')AD5Environment.cancelForcedMove(target,envMove);}catch(ignoreCancel){}throw moveError;}
         notifyAreasForced(target,start,prevLastmove);
+        // 2.3.12: отчёт мастеру — источник и клетки до/после (проверка направления в игре).
+        try{
+            var cellOf=function(x,y){var st=gridStep(page)||70;return Math.round((x-st/2)/st+1)+','+Math.round((y-st/2)/st+1);};
+            sendChat(SCRIPT,'/w gm <b>'+(kind==='pull'?'ТЯГ':'ТОЛЧ')+' '+feet+' фт</b>: '+esc(target.get('name')||'цель')+' ['+cellOf(start.left,start.top)+'] → ['+cellOf(plan.left,plan.top)+'], источник '+esc(source.get('name')||source.id)+' ['+cellOf(sx,sy)+'].',null,{noarchive:true});
+        }catch(ignoreReport){}
         setTimeout(function(){
             try{
                 var liveTarget=getObj('graphic',key);
