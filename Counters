@@ -3,7 +3,7 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
     log('AD5Counters: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Counters 1.1.0 — счётчики-рамки на токенах (заряды способностей).
+ * AD5 Counters 1.2.0 — счётчики-рамки на токенах (заряды способностей).
  *
  * Счётчик — кольцо из N делений вокруг токена (картинки 0…N из набора рамок).
  * Рамка лежит под токеном и переезжает вместе с ним; цвет задаётся тонированием.
@@ -25,10 +25,11 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
  *       УРОН ОТ ВЛАДЕЛЬЦА            — носитель получил урон от владельца
  *       НАЧАЛО ХОДА ВЛАДЕЛЬЦА, КОНЕЦ ХОДА ВЛАДЕЛЬЦА
  *   СЧЁТНАКОП: АТАКА 2 УРОН 5         бонус за каждый заряд; все заряды
- *                                     тратятся на следующую атаку носителя
+ *                                     тратятся на следующую атаку носителя,
+ *                                     после чего счётчик снимается
  *   СЧЁТПОЛНЫЙ: КНОПКА Удар тьмы      при полной рамке появляется кнопка
  *                                     способности; после её использования
- *                                     рамка обнуляется и кнопка исчезает
+ *                                     счётчик снимается и кнопка исчезает
  *   СЧЁТПОЛНЫЙ: СРАЗУ [ПОВТОР]        при полной рамке сразу срабатывает
  *                                     эффект; затем рамка снимается
  *                                     (ПОВТОР — обнуляется и копит снова)
@@ -38,6 +39,9 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
  *                                     AD5 Effect Turns), части через «+»
  *   СЧЁТХОДЫ: 10                      рамка снимается через 10 ходов носителя
  *   СЧЁТЦВЕТ: фиолетовый | #8a2be2
+ * 1.2.0: счётчик снимается, когда сработал его эффект, использована кнопка полного
+ * счётчика, потрачены заряды накопления или снят эффект, наложенный той же
+ * способностью вместе со счётчиком (Turn Effect 1.6.24+ сообщает об этом).
  * Способность только со строками счётчика (без атаки, урона и спасброска)
  * срабатывает сама при броске из листа или кнопки токена: СЧЁТЗАВЕРШИТЬ завершает
  * единственный подходящий счётчик владельца (при нескольких — кнопки выбора),
@@ -65,7 +69,7 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
  */
 var AD5Counters=AD5Counters||(function(){
     'use strict';
-    var VERSION='1.1.0',SCRIPT='AD5 Счётчики';
+    var VERSION='1.2.0',SCRIPT='AD5 Счётчики';
     var COLORS={'фиолетовый':'#8a2be2','красный':'#d0312d','синий':'#2f6fdf','голубой':'#3fb6e8','зелёный':'#2fa84f','зеленый':'#2fa84f','жёлтый':'#e8c02f','желтый':'#e8c02f','оранжевый':'#ef7d1a','белый':'transparent','чёрный':'#222222','черный':'#222222','серый':'#8a8a8a','розовый':'#e85fa8'};
     var EVENTS={
         'НАЧАЛО ХОДА':{ev:'НАЧАЛО ХОДА',who:'bearerTurn'},'КОНЕЦ ХОДА':{ev:'КОНЕЦ ХОДА',who:'bearerTurn'},
@@ -80,6 +84,8 @@ var AD5Counters=AD5Counters||(function(){
     // через 2, 5, 10 и 20 секунд (как в Tether); настоящее удаление токена
     // обрабатывает destroy:graphic.
     var READY_RETRY_DELAYS=[2000,5000,10000,20000];
+    // spent[носитель] — бонусы потраченных счётчиков: счётчик снимается в момент атаки,
+    // а бонус действует на эту атаку ещё SPENT_WINDOW_MS (все цели одной атаки).
     var SPENT_WINDOW_MS=3000,spent=Object.create(null),warned=Object.create(null);
 
     function root(){
@@ -251,18 +257,42 @@ var AD5Counters=AD5Counters||(function(){
     }
     function attach(spec,bearer,ownerToken,ownerCid,actionName){
         var c=find(bearer.id,spec.name,ownerCid);
-        if(c){c.spec=spec;c.turnsLeft=spec.turns;c.max=spec.max;c.charges=Math.min(c.charges,c.max);c.color=spec.color;c.full=spec.full;redraw(bearer.id);return c;}
+        if(c){c.spec=spec;c.turnsLeft=spec.turns;c.max=spec.max;c.charges=Math.min(c.charges,c.max);c.color=spec.color;c.full=spec.full;c.action=actionName||c.action;linkEffect(c);redraw(bearer.id);return c;}
         c={id:newId(),name:spec.name,max:spec.max,charges:spec.start,bearer:bearer.id,owner:ownerToken?ownerToken.id:'',ownerCid:ownerCid||'',
             color:spec.color,full:spec.full,spec:spec,turnsLeft:spec.turns,created:Date.now(),action:actionName||spec.name,filledNotified:false};
         root().counters[c.id]=c;dirty();
+        linkEffect(c);
+        // Эффекты способности могут записаться позже счётчика в той же транзакции.
+        if(!c.link)setTimeout(function(){var live=root().counters[c.id];if(live&&!live.link)linkEffect(live);},0);
         redraw(bearer.id);
         gm('<b>'+esc(c.name)+'</b> → '+esc(tokenName(bearer))+': '+c.charges+'/'+c.max+'.');
         if(c.charges>=c.max)onFull(c);
         return c;
     }
+    // 1.2.0: счётчик, наложенный вместе с эффектом (той же способностью того же
+    // владельца), живёт, пока этот эффект есть на носителе. Turn Effect сообщает
+    // об изменении эффектов через effectsChanged.
+    function effectMatches(e,link){
+        var src=e&&e.source||{};
+        return !!link&&norm(src.actionName||'')===link.action&&((link.src&&src.sourceToken===link.src)||(link.actor&&src.actor===link.actor));
+    }
+    function hasLinkedEffect(rec,link){var eff=rec&&rec.effects||{};return Object.keys(eff).some(function(k){return effectMatches(eff[k],link);});}
+    function linkEffect(c){
+        if(typeof AD5EffectTurns==='undefined'||!AD5EffectTurns||typeof AD5EffectTurns.snapshot!=='function')return;
+        var link={action:norm(c.action||c.name),src:c.owner||'',actor:c.ownerCid||''},rec=null;
+        try{rec=AD5EffectTurns.snapshot(c.bearer);}catch(ignore){}
+        c.link=hasLinkedEffect(rec,link)?link:null;
+    }
+    function effectsChanged(token,before,after){
+        if(!token)return;
+        countersOf(token.id).forEach(function(c){
+            if(!c.link||!hasLinkedEffect(before,c.link)||hasLinkedEffect(after,c.link))return;
+            var id=c.id;setTimeout(function(){var live=root().counters[id];if(live)remove(live,'снят эффект «'+(live.action||live.name)+'»');},0);
+        });
+    }
     function remove(c,reason){
         if(!c||!root().counters[c.id])return;
-        delete root().counters[c.id];delete spent[c.id];dirty();
+        delete root().counters[c.id];dirty();
         if(c.full&&c.full.mode==='button')setButton(c,false);
         removeRing(c);redraw(c.bearer);
         if(reason)gm('<b>'+esc(c.name)+'</b> снят с '+esc(tokenName(tok(c.bearer)))+': '+esc(reason)+'.');
@@ -329,39 +359,41 @@ var AD5Counters=AD5Counters||(function(){
     }
     // Все заряды «накопления» уходят в следующую атаку носителя. Списание —
     // после текущего события: урон попадания считается по снимку модификаторов.
+    // 1.2.0: заряды тратятся на атаку целиком, и счётчик после этого снимается.
     function onAttack(e){
         var src=String(e&&e.источникТокенId||'');if(!src)return;
+        var now=Date.now();
         countersOf(src).forEach(function(c){
             if(!c.spec||!c.spec.accum||c.charges<=0)return;
-            // Списание сразу: бонус этой атаки берётся из снимка spent, а заряд за
-            // её попадание (ПОПАДАНИЕ) ложится уже на обнулённый счётчик и не
-            // теряется, если счётчик был полным.
-            var n=c.charges;spent[c.id]={charges:n,until:Date.now()+SPENT_WINDOW_MS,bearer:src};
-            setCharges(c,c.charges-n);gm('<b>'+esc(c.name)+'</b>: потрачено зарядов '+n+' на атаку.');
+            var n=c.charges,list=(spent[src]||[]).filter(function(x){return x.until>now;});
+            list.push({attack:c.spec.accum.attack*n,damage:c.spec.accum.damage*n,label:c.name+' ×'+n,until:now+SPENT_WINDOW_MS});
+            spent[src]=list;
+            remove(c,'потрачено зарядов '+n+' на атаку');
         });
     }
     function combatModifiers(tokenId){
-        var out={attack:0,damage:[]},now=Date.now();
-        countersOf(String(tokenId||'')).forEach(function(c){
-            if(!c.spec||!c.spec.accum)return;
-            var n=c.charges,sp=spent[c.id];
-            if(sp&&sp.until>now)n=Math.max(n,sp.charges);
-            if(n<=0)return;
-            out.attack+=c.spec.accum.attack*n;
-            if(c.spec.accum.damage)out.damage.push({formula:String(c.spec.accum.damage*n),sign:1,label:c.name+' ×'+n});
+        var out={attack:0,damage:[]},now=Date.now(),id=String(tokenId||'');
+        countersOf(id).forEach(function(c){
+            if(!c.spec||!c.spec.accum||c.charges<=0)return;
+            out.attack+=c.spec.accum.attack*c.charges;
+            if(c.spec.accum.damage)out.damage.push({formula:String(c.spec.accum.damage*c.charges),sign:1,label:c.name+' ×'+c.charges});
         });
+        var list=(spent[id]||[]).filter(function(x){return x.until>now;});
+        if(list.length)spent[id]=list;else delete spent[id];
+        list.forEach(function(x){out.attack+=x.attack;if(x.damage)out.damage.push({formula:String(x.damage),sign:1,label:x.label});});
         return out;
     }
     // Использование кнопки «полной рамки» обнуляет счётчик.
     function onChat(msg){
         if(!msg.rolltemplate||!msg.content)return;
-        var name=/\{\{(?:rname|name)=([^}]*)\}\}/i.exec(msg.content),charname=/\{\{charname=([^}]*)\}\}/i.exec(msg.content);
+        // Название способности — rname (в карточках NPC name — имя персонажа), иначе name.
+        var name=/\{\{rname=([^}]*)\}\}/i.exec(msg.content)||/\{\{name=([^}]*)\}\}/i.exec(msg.content),charname=/\{\{charname=([^}]*)\}\}/i.exec(msg.content);
         if(!name)return;var n=norm(name[1]);
         Object.keys(root().counters).forEach(function(id){
             var c=root().counters[id];if(!c||c.charges<c.max||!c.full||c.full.mode!=='button'||norm(c.full.ability)!==n)return;
             var bearer=tok(c.bearer),ch=bearer&&getObj('character',String(bearer.get('represents')||''));
             if(!ch||(charname&&norm(charname[1])!==norm(ch.get('name'))))return;
-            setCharges(c,0);tellOwners(ch.id,'<b>'+esc(c.name)+'</b>: использовано «'+esc(c.full.ability)+'», рамка обнулена.');
+            tellOwners(ch.id,'<b>'+esc(c.name)+'</b>: использовано «'+esc(c.full.ability)+'».');remove(c,'использовано «'+c.full.ability+'»');
         });
     }
 
@@ -562,7 +594,7 @@ var AD5Counters=AD5Counters||(function(){
         });
         gm('<b>'+SCRIPT+' '+VERSION+'</b> запущен.'+(ev?'':' <b>Нет AD5 События</b> — заряды по событиям не начисляются.')+' Наборы рамок: '+esc(Object.keys(root().sets).join(', ')||'не загружены (!ad5counter images)')+'.');
     });
-    return {version:VERSION,onApplied:onApplied,combatModifiers:combatModifiers,tooltipLines:tooltipLines,parse:parseBlock,list:countersOf,
+    return {version:VERSION,effectsChanged:effectsChanged,onApplied:onApplied,combatModifiers:combatModifiers,tooltipLines:tooltipLines,parse:parseBlock,list:countersOf,
         _test:{rollFormula:rollFormula,onEvent:onEvent,onAttack:onAttack,setCharges:setCharges,fire:fire,libraryUrl:libraryUrl}};
 }());
 

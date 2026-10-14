@@ -3,7 +3,8 @@ if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
     log('AD5EffectTurns: duplicate module skipped; keep one installed copy.');
 } else {
 /*
-AD5 Effect Turns 1.6.23
+AD5 Effect Turns 1.6.24
+1.6.24: изменения эффектов токена передаются AD5 Counters (счётчик снимается вместе со своим эффектом).
 1.6.23: бонус «инициатива +1д8» больше не передаёт ход при пересортировке трекера; изменения маркеров без заметок не читают лист; одна проверка условных связей на пачку перемещений.
 1.6.22: строки AD5 Counters («СЧЁТ…:») не применяются как прямой эффект и не попадают в ПРВ/УСП.
 1.6.21: tokenIdsWithCondition; проверка «ПОКА» без лишнего клонирования.
@@ -70,7 +71,7 @@ var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5
 // silently shadow every newer fix.
 var AD5EffectTurns = (function () {
     'use strict';
-    var VERSION='1.6.23', SCRIPT='AD5 Effect Turns';
+    var VERSION='1.6.24', SCRIPT='AD5 Effect Turns';
     var runtimeLastGroup=Object.create(null);
     var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
     var markerCacheRaw=null, markerCacheByName=Object.create(null);
@@ -1810,6 +1811,8 @@ var AD5EffectTurns = (function () {
         try{sizeChanged(token,old,newRec);flyChanged(token,old,newRec);onEndChanged(token,old,newRec);transferButtons(token,old,newRec);syncDropActions(token.get('represents'));syncInspireActions(token.get('represents'));}catch(sizeErr){sendChat(SCRIPT,'/w gm Размер/полёт: '+esc(sizeErr.message||sizeErr),null,{noarchive:true});}
         var maxHpDiff=maxHpBonusOf(newRec)-maxHpBonusOf(old);
         if(maxHpDiff&&typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.maxHpChanged==='function'){try{AD5ConditionEngine.maxHpChanged(token,maxHpDiff);}catch(maxHpError){sendChat(SCRIPT,'/w gm Максимум хитов: '+esc(maxHpError.message||maxHpError),null,{noarchive:true});}}
+        // 1.6.24: AD5 Counters снимает счётчик, если снят эффект, вместе с которым он был наложен.
+        try{if(typeof AD5Counters!=='undefined'&&AD5Counters&&typeof AD5Counters.effectsChanged==='function')AD5Counters.effectsChanged(token,old,newRec);}catch(ignoreCounters){}
         try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.effectsChanged==='function')AD5Height.effectsChanged(token,old,newRec);}catch(heightEffectError){sendChat(SCRIPT,'/w gm Высота/падение: '+esc(heightEffectError.message||heightEffectError),null,{noarchive:true});}
         refreshTooltip(token);
         function hasRestraint(rec){return !!(rec&&Object.keys(rec.effects||{}).some(function(k){return rec.effects[k].condition==='restrained';}));}
