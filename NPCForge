@@ -3,14 +3,19 @@ if(typeof NPCForge!=='undefined'&&NPCForge) {
     log('NPCForge: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * NPC Forge RU v2.7.5 — importData(data,{characterId}) перезаписывает существующий лист (спутники класса)
+ * NPC Forge RU v2.8.0 — массовый импорт очередью (без зависания Roll20), права игрокам и группы-оглавления
+ *   !npc-settings — кому выдавать новых NPC (мастер / все / выбранные игроки) и группа импорта
+ *   !npc-give --player|Имя|all|none [--group|Название] — права уже созданным NPC (выделенные токены или группа)
+ *   !npc-place --group|Название — поставить токены всей группы на текущую карту
+ *   импорт: --owner|Имя|all|none|default --group|Название --token
+ * v2.7.5 — importData(data,{characterId}) перезаписывает существующий лист (спутники класса)
  * Roll20 Mod for the legacy "D&D 5E by Roll20" (2014) character sheet.
  * Install in Roll20: Game Settings -> Mod (API) Scripts -> New Script.
  */
 var NPCForge = NPCForge || (function () {
     'use strict';
 
-    var VERSION = '2.7.6';
+    var VERSION = '2.8.0';
     var STARTUP_SCHEMA_MIN = '2.6.5'; // UI-only version bumps must not rebuild every NPC sheet.
     var SCRIPT = 'NPC Forge RU';
     function tokenActionName(rank,label){return Array(Math.max(0,Number(rank)||0)+1).join('\u200b')+String(label||'').replace(/^\u200b+/,'');}
@@ -1045,8 +1050,157 @@ var NPCForge = NPCForge || (function () {
         var list=Array.isArray(data)?data:[data], results=[];
         if(!list.length)throw new Error('Массив NPC пуст.');
         if(list.length>50){throw new Error('За один импорт разрешено создать не более 50 NPC.');}
-        var prepared=list.map(function(spec){var npc=(spec.generate===true||!spec.stats)?generate(spec):spec;var errors=validate(npc);if(errors.length)throw new Error(errors.join(' '));return npc;});
+        var prepared=prepareList(list);
         prepared.forEach(function(npc){results.push(writeCharacter(npc,opts));}); return results;
+    }
+    function prepareList(list){
+        return list.map(function(spec,i){var npc=(spec.generate===true||!spec.stats)?generate(spec):spec;var errors=validate(npc);if(errors.length)throw new Error((list.length>1?'NPC №'+(i+1)+(npc&&npc.name?' «'+npc.name+'»':'')+': ':'')+errors.join(' '));return npc;});
+    }
+
+    // ===== 2.8.0: массовый импорт очередью =====
+    // Каждый лист — это сотни атрибутов, и на каждый срабатывают Sheet Workers и
+    // обработчики других модулей. Десятки NPC в одном синхронном проходе Roll20
+    // принимает за бесконечный цикл («Possible infinite loop») и останавливает
+    // песочницу. Очередь пишет один NPC за шаг и даёт песочнице отдышаться.
+    var IMPORT_LIMIT=100,IMPORT_STEP_MS=300,importQueue=[],importRunning=false;
+    function settings(){
+        state[STATE_KEY]=state[STATE_KEY]||{};
+        var st=state[STATE_KEY];
+        st.settings=st.settings&&typeof st.settings==='object'?st.settings:{};
+        st.settings.owners=String(st.settings.owners||'');
+        st.settings.group=String(st.settings.group||'');
+        st.groups=st.groups&&typeof st.groups==='object'?st.groups:{};
+        return st;
+    }
+    function nonGmPlayers(){return (findObjs({_type:'player'})||[]).filter(function(p){return !playerIsGM(p.id);});}
+    function playerLabel(p){return String(p.get('_displayname')||p.get('displayname')||p.id);}
+    // «all» | «none»/«» | список id или имён игроков через запятую → строка controlledby.
+    function resolveOwners(raw){
+        var text=String(raw==null?'':raw).trim(),low=normalizeUserText(text);
+        if(!text||low==='none'||low==='никто'||low==='нет'||low==='мастер')return '';
+        if(low==='all'||low==='все'||low==='всем')return 'all';
+        var players=nonGmPlayers(),ids=[];
+        text.split(',').map(function(x){return x.trim();}).filter(Boolean).forEach(function(part){
+            var p=getObj('player',part)||players.filter(function(x){return normalizeUserText(playerLabel(x))===normalizeUserText(part);})[0];
+            if(!p)throw new Error('Игрок «'+part+'» не найден.');
+            if(ids.indexOf(p.id)<0)ids.push(p.id);
+        });
+        return ids.join(',');
+    }
+    function ownersFor(args){
+        var raw=args&&args.owner!==undefined?String(args.owner):'default';
+        return normalizeUserText(raw)==='default'||normalizeUserText(raw)==='настройка'?settings().settings.owners:resolveOwners(raw);
+    }
+    function ownersText(owners){
+        if(!owners)return 'только мастер';if(owners==='all')return 'все игроки';
+        return owners.split(',').map(function(id){var p=getObj('player',id);return p?playerLabel(p):id;}).join(', ');
+    }
+    function groupFor(args){
+        var g=args&&args.group!==undefined?String(args.group):'default';
+        if(normalizeUserText(g)==='default'||normalizeUserText(g)==='настройка')g=settings().settings.group;
+        g=g.replace(/\s+/g,' ').trim();
+        return normalizeUserText(g)==='без группы'||normalizeUserText(g)==='none'?'':g.slice(0,60);
+    }
+    function applyOwners(c,owners){
+        if(!c)return;var patch={};
+        if(String(c.get('controlledby')||'')!==owners)patch.controlledby=owners;
+        if(String(c.get('inplayerjournals')||'')!==owners)patch.inplayerjournals=owners;
+        if(Object.keys(patch).length)c.set(patch);
+    }
+    // Оглавление группы: раздаточный материал «NPC: Группа» со ссылками на листы.
+    function groupHandoutName(group){return 'NPC: '+group;}
+    function addToGroup(group,results){
+        if(!group)return null;
+        var st=settings(),rec=st.groups[group]||(st.groups[group]={ids:[],handout:''});
+        results.forEach(function(r){if(rec.ids.indexOf(r.id)<0)rec.ids.push(r.id);});
+        return renderGroup(group);
+    }
+    function renderGroup(group){
+        var st=settings(),rec=st.groups[group];if(!rec)return null;
+        rec.ids=rec.ids.filter(function(id){return !!getObj('character',id);});
+        var h=rec.handout&&getObj('handout',rec.handout);
+        if(!h)h=(findObjs({_type:'handout',name:groupHandoutName(group)})||[])[0]||createObj('handout',{name:groupHandoutName(group),inplayerjournals:'',controlledby:'',archived:false});
+        rec.handout=h.id;
+        var rows=rec.ids.map(function(id){
+            var c=getObj('character',id),cr=attrValue(id,'npc_challenge'),hp=attrValue(id,'hp');
+            return '<li><a href="http://journal.roll20.net/character/'+id+'">'+esc(c.get('name'))+'</a>'+(cr?' — CR '+esc(cr):'')+(hp?', '+esc(hp)+' хитов':'')+'</li>';
+        });
+        h.set('notes','<h3>'+esc(group)+'</h3><p>Оглавление группы NPC Forge. Ссылки открывают листы; токен можно перетащить из листа или поставить командой <code>!npc-place --group|'+esc(group)+'</code>. Папку в журнале создайте вручную и перетащите в неё листы — скрипты Roll20 не могут управлять папками.</p><ol>'+rows.join('')+'</ol><p style="color:#888">NPC: '+rows.length+'</p>');
+        return h;
+    }
+    function tokenGrid(index,opts){
+        var cols=8,step=140,baseLeft=asInt(opts.left,350),baseTop=asInt(opts.top,350);
+        return {left:baseLeft+(index%cols)*step,top:baseTop+Math.floor(index/cols)*step};
+    }
+    function enqueueImport(list,args,who){
+        args=args||{};
+        if(!Array.isArray(list))list=[list];
+        if(!list.length)throw new Error('Массив NPC пуст.');
+        if(list.length>IMPORT_LIMIT)throw new Error('За один импорт разрешено создать не более '+IMPORT_LIMIT+' NPC.');
+        var prepared=prepareList(list),owners=ownersFor(args),group=groupFor(args),token=normalizeUserText(args.token)==='true';
+        importQueue.push({who:who,npcs:prepared,next:0,results:[],owners:owners,group:group,token:token,args:args,tokens:0});
+        if(prepared.length>1||importRunning)whisper(who,panel('Импорт NPC','В очереди <b>'+prepared.length+'</b> NPC. Листы создаются по одному, чтобы Roll20 не зависал.'+(group?' Группа: <b>'+esc(group)+'</b>.':'')+' Права: <b>'+esc(ownersText(owners))+'</b>.'));
+        if(!importRunning){importRunning=true;setTimeout(importStep,0);}
+    }
+    function importStep(){
+        var job=importQueue[0];
+        if(!job){importRunning=false;return;}
+        try{
+            var npc=job.npcs[job.next],r=writeCharacter(npc,{controlledby:job.owners,journal:job.owners});
+            applyOwners(r.character,job.owners);
+            job.results.push(r);
+            if(job.token){var pos=tokenGrid(job.next,job.args);createToken(r,Object.assign({},job.args,{left:pos.left,top:pos.top}));job.tokens++;}
+        }catch(e){whisper(job.who,panel('Ошибка импорта','NPC №'+(job.next+1)+': '+esc(e.message||e)+'. Остальные продолжают создаваться.'));}
+        job.next++;
+        if(job.next<job.npcs.length){
+            if(job.npcs.length>=10&&job.next%10===0)whisper(job.who,panel('Импорт NPC','Создано '+job.next+' из '+job.npcs.length+'…'));
+            setTimeout(importStep,IMPORT_STEP_MS);return;
+        }
+        importQueue.shift();
+        try{if(job.group&&job.results.length)addToGroup(job.group,job.results);}catch(e){whisper(job.who,panel('Группа NPC',esc(e.message||e)));}
+        success(job.who,job.results,job.tokens>0,job.group,job.owners);
+        setTimeout(importStep,IMPORT_STEP_MS);
+    }
+    // Раздать права уже созданным NPC (выделенные токены или вся группа).
+    function giveCommand(who,msg,args){
+        var owners=resolveOwners(args.player!==undefined?args.player:args.owner),ids=[];
+        if(args.group){var rec=settings().groups[args.group];if(!rec)throw new Error('Группа «'+args.group+'» не найдена.');ids=rec.ids.slice();}
+        else (msg.selected||[]).forEach(function(x){var t=getObj('graphic',x._id),cid=t&&String(t.get('represents')||'');if(cid&&ids.indexOf(cid)<0)ids.push(cid);});
+        if(!ids.length)throw new Error('Выделите токены NPC или укажите --group|Название.');
+        var n=0;ids.forEach(function(id){var c=getObj('character',id);if(c&&isNpcCharacter(id)){applyOwners(c,owners);configureAllTokens(id);n++;}});
+        whisper(who,panel('Права на NPC','Листов: <b>'+n+'</b>. Управление: <b>'+esc(ownersText(owners))+'</b>.'));
+    }
+    function placeGroup(who,args){
+        var group=String(args.group||'').trim(),rec=settings().groups[group];if(!rec)throw new Error('Группа «'+group+'» не найдена.');
+        var n=0;rec.ids.forEach(function(id,i){var c=getObj('character',id);if(!c)return;var hp=attrValue(id,'hp'),pos=tokenGrid(i,args);createToken({id:id,npc:{name:c.get('name'),hp:Number(hp)||0}},Object.assign({},args,{left:pos.left,top:pos.top}));n++;});
+        whisper(who,panel('Группа на карте','Поставлено токенов: <b>'+n+'</b> («'+esc(group)+'»).'));
+    }
+    function ownerQuery(){
+        var opts=['По настройке,default','Только мастер,none','Все игроки,all'].concat(nonGmPlayers().map(function(p){var n=playerLabel(p).replace(/[|,}]/g,' ');return n+','+n;}));
+        return '?{Кому выдать NPC|'+opts.join('|')+'}';
+    }
+    function settingsPanel(who){
+        var st=settings(),players=nonGmPlayers(),owners=st.settings.owners;
+        var body='<p><b>Новые NPC получают:</b> '+esc(ownersText(owners))+'</p>'+
+            button('Только мастер','!npc-settings --owners|none')+button('Все игроки','!npc-settings --owners|all')+
+            players.map(function(p){var on=owners==='all'||owners.split(',').indexOf(p.id)>=0;return button((on?'✓ ':'')+playerLabel(p),'!npc-settings --toggle|'+p.id);}).join('')+
+            '<p style="font-size:11px;color:#666">Игрок получает управление токеном и редактирование листа; NPC появляется в его журнале.</p>'+
+            '<p><b>Группа для импорта:</b> '+esc(st.settings.group||'без группы')+'</p>'+
+            button('Задать группу','!npc-settings --group|?{Название группы|'+esc(st.settings.group)+'}')+button('Без группы','!npc-settings --group|none')+
+            '<p><b>Группы:</b> '+(Object.keys(st.groups).map(function(g){var h=st.groups[g].handout&&getObj('handout',st.groups[g].handout);return h?jsonHandoutLink(h,g+' ('+st.groups[g].ids.length+')'):esc(g);}).join(' ')||'нет')+'</p>'+
+            '<p style="font-size:11px;color:#666">Выдать права уже созданным: выделите токены и <code>!npc-give --player|Имя</code> (или <code>--group|Название</code>, <code>--player|all</code>, <code>--player|none</code>).</p>';
+        whisper(who,panel('NPC Forge — права и группы',body));
+    }
+    function settingsCommand(who,args){
+        var st=settings();
+        if(args.owners!==undefined)st.settings.owners=resolveOwners(args.owners);
+        if(args.toggle!==undefined){
+            var p=getObj('player',args.toggle);if(!p)throw new Error('Игрок не найден.');
+            var list=st.settings.owners==='all'?nonGmPlayers().map(function(x){return x.id;}):st.settings.owners.split(',').filter(Boolean),i=list.indexOf(p.id);
+            if(i>=0)list.splice(i,1);else list.push(p.id);st.settings.owners=list.join(',');
+        }
+        if(args.group!==undefined){var g=String(args.group).trim();st.settings.group=(normalizeUserText(g)==='none'||normalizeUserText(g)==='без группы')?'':g.slice(0,60);}
+        settingsPanel(who);
     }
     function jsonHandoutNotes(){
         return '<h3>NPC Forge — JSON Import</h3>'+
@@ -1087,6 +1241,8 @@ var NPCForge = NPCForge || (function () {
             jsonHandoutLink(h,'Открыть JSON-буфер')+
             button('Импортировать NPC','!npc-json-import-native')+
             button('Импорт + токен','!npc-json-import-native --token|true')+
+            button('Импорт: игроку и в группу','!npc-json-import-native --token|?{Поставить токены?|Да,true|Нет,false} --owner|'+ownerQuery()+' --group|?{Группа (оглавление; пусто — без группы)|'+esc(settings().settings.group)+'}')+
+            button('Права и группы','!npc-settings')+
             button('Очистить JSON','!npc-json-clear')+
             '<p style="font-size:11px;color:#666">Вставляйте JSON в <b>GM Notes</b> Handout «'+esc(JSON_HANDOUT_NAME)+'», сохраните его и затем нажмите импорт.</p>';
         whisperGM(panel('NPC Forge — JSON Import',body));
@@ -1097,9 +1253,7 @@ var NPCForge = NPCForge || (function () {
             try{
                 var raw=unescapeNotes(notes);
                 if(!raw){throw new Error('JSON-буфер пуст. Откройте Handout «'+JSON_HANDOUT_NAME+'» и вставьте JSON в GM Notes.');}
-                var results=importPayload(raw,args), made=false;
-                if(normalizeUserText(args.token)==='true'&&results[0]){createToken(results[0],args);made=true;}
-                success(who,results,made);
+                enqueueImport(parseJsonPayload(raw),args,who);
             }catch(e){whisper(who,panel('Ошибка JSON-импорта',esc(e.message)));}
         });
     }
@@ -1155,16 +1309,20 @@ var NPCForge = NPCForge || (function () {
     function menu(who){
         var roleQuery='?{Роль|Защитник,soldier|Громила,brute|Застрельщик,skirmisher|Стрелок,artillery|Контролёр,controller|Поддержка,support|Скрытник,lurker}';
         var body='<p>Создание готового NPC для листа D&D 5e 2014.</p>'+button('Создать NPC','!npc-create --name|?{Имя|Новый NPC} --cr|?{CR|1} --role|'+roleQuery+' --type|?{Тип|гуманоид} --token')+button('JSON-импорт','!npc-json')+
-            '<p><b>Дополнительные команды</b></p>'+button('Панель выделенного NPC','!npc-controls')+'<div><code>!npc-import --handout|NPC Import</code></div><div><code>!npc-add --section|trait --name|Имя --text|Описание</code></div>'+button('Справка','!npc-help');
+            '<p><b>Дополнительные команды</b></p>'+button('Панель выделенного NPC','!npc-controls')+button('Права и группы','!npc-settings')+'<div><code>!npc-import --handout|NPC Import</code></div><div><code>!npc-add --section|trait --name|Имя --text|Описание</code></div>'+button('Справка','!npc-help');
         whisper(who,panel(SCRIPT+' v'+VERSION,body));
     }
     function help(who){
         var body='<p><b>Проверка скрипта:</b> <code>!npc-ping</code></p><p><b>Быстрая генерация</b><br><code>!npc-create --name|Капитан --cr|5 --role|soldier --token</code></p><p>Роли: brute, soldier, skirmisher, artillery, controller, support, lurker.</p><p><b>Нативный JSON-импорт</b>: макрос <code>NPC-JSON</code> или команда <code>!npc-json</code> открывает меню Roll20 со ссылкой на Handout-буфер. Вставьте JSON в <b>GM Notes</b>, сохраните Handout и нажмите <code>Импортировать NPC</code>. Никаких browser userscript не требуется.</p><p><b>Импорт произвольного Handout</b>: поместите JSON в Notes раздаточного материала и выполните <code>!npc-import --handout|Название</code>. Массив JSON создаёт несколько NPC.</p><p><b>Добавление</b>: выберите токен и используйте <code>!npc-add --section|action --name|Команда --text|Союзник атакует</code>. Разделы: trait, action, bonus, reaction, legendary, lair. Панель: !npc-controls; переключатель: !npc-mode --mode|toggle; ауры: !npc-aura --slot|1 --radius|10 --unit|ft --color|#9900FF --visible|true.</p><p><b>AD5 2.6.4:</b> JSON понимает <code>contest</code> для grapple/shove/escape/pin, а также <code>phases</code>, <code>concentration</code>, <code>area</code>, <code>mechanicalAura</code>, <code>transform</code>, <code>globalDamageModifiers</code>, <code>lairActions</code>. Старые description/range полностью совместимы.</p><p><b>Обновление всех NPC журнала</b>: только вручную <code>!npc-fix --all</code>; при запуске выполняется только безопасное чтение/подсчёт. Без выделения <code>!npc-fix</code> также обновляет весь журнал, с выделением — одного NPC. Хиты сохраняются.</p><p>Команды доступны только GM. <code>--token</code> создаёт токен на странице игроков; <code>--legendary|true</code> добавляет легендарные действия для CR 11+.</p>';
         whisper(who,panel('Справка '+SCRIPT,body));
     }
-    function success(who,results,tokenMade){
-        var list=results.map(function(r){return '<li><b>'+esc(r.npc.name)+'</b> — CR '+esc(r.npc.cr)+', КД '+esc(r.npc.ac)+', '+esc(r.npc.hp)+' хитов '+button('Панель NPC','!npc-controls --id|'+r.id)+'</li>';}).join('');
-        whisper(who,panel('NPC создан'+(results.length>1?'ы':''),'<ul>'+list+'</ul>'+(tokenMade?'<p>Токен размещён на текущей странице игроков.</p>':'')));
+    function success(who,results,tokenMade,group,owners){
+        var shown=results.slice(0,25),list=shown.map(function(r){return '<li><b>'+esc(r.npc.name)+'</b> — CR '+esc(r.npc.cr)+', КД '+esc(r.npc.ac)+', '+esc(r.npc.hp)+' хитов '+button('Панель NPC','!npc-controls --id|'+r.id)+'</li>';}).join('');
+        var rec=group&&settings().groups[group],h=rec&&rec.handout&&getObj('handout',rec.handout);
+        whisper(who,panel('NPC создан'+(results.length>1?'ы: '+results.length:''),'<ul>'+list+'</ul>'+(results.length>shown.length?'<p>…и ещё '+(results.length-shown.length)+'.</p>':'')+
+            (tokenMade?'<p>Токен'+(results.length>1?'ы размещены':' размещён')+' на текущей странице игроков.</p>':'')+
+            (owners?'<p>Управление: <b>'+esc(ownersText(owners))+'</b>.</p>':'')+
+            (h?'<p>Группа: '+jsonHandoutLink(h,group)+'</p>':'')));
     }
     function directJson(msg,who) {
         var match=String(msg.content).match(/^!npc-json\s+(--token\s+)?--(json|encoded)\|([\s\S]+)$/);
@@ -1179,9 +1337,7 @@ var NPCForge = NPCForge || (function () {
         try{data=JSON.parse(raw);}catch(e){throw new Error('Некорректный JSON: '+e.message);}
         // Use the shared importer, but do not pass literal HTML-like strings
         // through the Handout HTML decoder.
-        var results=importData(data,{}), made=false;
-        if(match[1]&&results[0]){createToken(results[0],{});made=true;}
-        success(who,results,made);
+        enqueueImport(data,{token:match[1]?'true':'false'},who);
     }
     function chunkJson(msg,who,args){
         var owner=String(msg.playerid||'gm'), cmd=args.command, id=String(args.id||'').trim();
@@ -1189,7 +1345,7 @@ var NPCForge = NPCForge || (function () {
         if(cmd==='!npc-json-start'){
             var parts=asInt(args.parts,0);
             if(parts<1||parts>200)throw new Error('Большой JSON: parts должен быть от 1 до 200.');
-            jsonChunkImports[owner]={id:id,parts:parts,token:normalizeUserText(args.token)==='true',data:new Array(parts),received:0,createdAt:Date.now()};
+            jsonChunkImports[owner]={id:id,parts:parts,token:normalizeUserText(args.token)==='true',args:{owner:args.owner,group:args.group},data:new Array(parts),received:0,createdAt:Date.now()};
             return;
         }
         var job=jsonChunkImports[owner];
@@ -1215,9 +1371,7 @@ var NPCForge = NPCForge || (function () {
             raw=raw.replace(/^\uFEFF/,'').replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'').trim();
             var parsed;
             try{parsed=JSON.parse(raw);}catch(e){throw new Error('Некорректный JSON после сборки: '+e.message);}
-            var results=importData(parsed,{}), made=false;
-            if(job.token&&results[0]){createToken(results[0],{});made=true;}
-            success(who,results,made);
+            enqueueImport(parsed,Object.assign({},job.args||{},{token:job.token?'true':'false'}),who);
             return;
         }
         throw new Error('Неизвестная команда большого JSON импорта.');
@@ -1243,6 +1397,9 @@ var NPCForge = NPCForge || (function () {
             if(args.command==='!npc-json-macro'){var mr=ensureJsonWindowMacros();ensureJsonImportHandout();whisper(who,panel('Макрос NPC-JSON','Создано: '+mr.made+', обновлено: '+mr.updated+'. Нативный JSON-Handout готов.'));return;}
             if(['!npc-json-start','!npc-json-part','!npc-json-end'].indexOf(args.command)>=0){chunkJson(msg,who,args);return;}
             if(args.command==='!npc'||args.command==='!npc-menu'){menu(who);return;}
+            if(args.command==='!npc-settings'){settingsCommand(who,args);return;}
+            if(args.command==='!npc-give'){giveCommand(who,msg,args);return;}
+            if(args.command==='!npc-place'){placeGroup(who,args);return;}
             if(args.command==='!npc-help'){help(who);return;}
             if(['!npc-controls','!npc-mode','!npc-aura'].indexOf(args.command)>=0){
                 var c=commandNPC(msg,args);
@@ -1287,14 +1444,15 @@ var NPCForge = NPCForge || (function () {
                 whisper(who,panel('Атака и урон включены',esc(target.get('name'))+': обновлено действий — '+repaired+'.'));return;
             }
             if(args.command==='!npc-create'){
-                var npc=generate({name:args.name,cr:args.cr,role:args.role,type:args.type,size:args.size,alignment:args.alignment,languages:args.languages,speed:args.speed,ac:args.ac,hp:args.hp,legendary:args.legendary,rollMode:args.rollmode,auras:args['aura-radius']!==undefined?[{radius:Number(args['aura-radius']),unit:args['aura-unit']||'ft',color:args['aura-color']||'#9900FF',visible:normalizeUserText(args['aura-visible'])==='true'}]:undefined}), result=writeCharacter(npc,args), tokenMade=false;
-                if(args.token==='true'){createToken(result,args);tokenMade=true;} success(who,[result],tokenMade);return;
+                var npc=generate({name:args.name,cr:args.cr,role:args.role,type:args.type,size:args.size,alignment:args.alignment,languages:args.languages,speed:args.speed,ac:args.ac,hp:args.hp,legendary:args.legendary,rollMode:args.rollmode,auras:args['aura-radius']!==undefined?[{radius:Number(args['aura-radius']),unit:args['aura-unit']||'ft',color:args['aura-color']||'#9900FF',visible:normalizeUserText(args['aura-visible'])==='true'}]:undefined}), createOwners=ownersFor(args), result=writeCharacter(npc,{controlledby:createOwners,journal:createOwners}), tokenMade=false;
+                applyOwners(result.character,createOwners);var createGroup=groupFor(args);if(createGroup)addToGroup(createGroup,[result]);
+                if(args.token==='true'){createToken(result,args);tokenMade=true;} success(who,[result],tokenMade,createGroup,createOwners);return;
             }
             if(args.command==='!npc-add'){var c=addSection(msg,args);whisper(who,panel('Добавлено','Раздел добавлен в лист <b>'+esc(c.get('name'))+'</b>.'));return;}
             if(args.command==='!npc-import'){
                 if(!args.handout){throw new Error('Укажите --handout|Название.');}
                 var hs=findObjs({_type:'handout',name:args.handout}); if(!hs.length){throw new Error('Раздаточный материал «'+args.handout+'» не найден.');} if(hs.length>1){throw new Error('Найдено несколько раздаточных материалов с таким именем.');}
-                hs[0].get('notes',function(notes){try{var results=importPayload(notes,args), made=false;if(args.token==='true'&&results[0]){createToken(results[0],args);made=true;}success(who,results,made);}catch(e){whisper(who,panel('Ошибка импорта',esc(e.message)));}}); return;
+                hs[0].get('notes',function(notes){try{enqueueImport(parseJsonPayload(notes),args,who);}catch(e){whisper(who,panel('Ошибка импорта',esc(e.message)));}}); return;
             }
             help(who);
         } catch(e){ whisper(who,panel('Ошибка',esc(e.message))); }
