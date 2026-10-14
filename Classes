@@ -3,7 +3,8 @@ if(typeof AD5Classes!=='undefined'&&AD5Classes) {
     log('AD5Classes: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Classes 1.8.0 — автоматическая прокачка по полям листа «D&D 5E by Roll20» (Legacy).
+ * AD5 Classes 1.9.0 — автоматическая прокачка по полям листа «D&D 5E by Roll20» (Legacy).
+ * 1.9.0: «Био» нового листа игрока по умолчанию — возраст 25, рост 6, вес 160 (только пустые поля).
  * 1.8.0: спутники класса — Стальной защитник (Боевой кузнец TCE и Альтернативного изобретателя), Дрейк-компаньон:
  *        NPC-лист через NPC Forge (importData, перезапись на месте), права владельца, хиты всегда максимальные,
  *        характеристики/атака/спасброски от листа владельца, токен по умолчанию (выставляется вручную).
@@ -52,7 +53,7 @@ if(typeof AD5Classes!=='undefined'&&AD5Classes) {
  */
 var AD5Classes=(function(){
     'use strict';
-    var VERSION='1.8.0',SCRIPT='AD5 Классы',BEGIN='# авто:начало (AD5 Классы)',END='# авто:конец';
+    var VERSION='1.9.0',SCRIPT='AD5 Классы',BEGIN='# авто:начало (AD5 Классы)',END='# авто:конец';
     var WATCH=/^(class|base_level|subclass|custom_class|cust_classname|multiclass[1-3](?:_flag|_lvl|_subclass)?|ad5_class_choices)$/i;
     var timers={},pendingHp={},hpSeq=0;
 
@@ -980,8 +981,19 @@ var AD5Classes=(function(){
         (function step(){var cid=list.shift();if(!cid){if(done.length)gm('Классовые умения обновлены автоматически ('+VERSION+'): '+esc(done.join(', '))+'.');return;}
             try{sync(cid,'silent');done.push(who(cid));}catch(e){log(SCRIPT+' '+VERSION+': '+(e.stack||e.message));}setTimeout(step,250);})();
     }
+    // 1.9.0: вкладка «Био» нового листа игрока заполняется значениями по умолчанию:
+    // возраст 25, рост 6 (фт), вес 160 (фнт). Пишутся только пустые поля и только
+    // при создании листа — ручные значения игрока больше никогда не меняются.
+    // Задержка: NPC Forge и Transform создают лист и сразу ставят npc=1.
+    var BIO_DEFAULTS=[['age','25'],['height','6'],['weight','160']];
+    function fillBio(cid){
+        var c=getObj('character',cid);if(!c||num(cid,'npc')===1)return 0;
+        var n=0;BIO_DEFAULTS.forEach(function(d){if(!val(cid,d[0]).trim()){setAttr(cid,d[0],d[1]);n++;}});
+        return n;
+    }
     on('ready',function(){
         root();
+        on('add:character',function(c){var cid=c.id;setTimeout(function(){try{fillBio(cid);}catch(e){log(SCRIPT+' '+VERSION+' био: '+(e.stack||e.message));}},2500);});
         on('change:attribute',onAttr);on('add:attribute',onAttr);
         log(SCRIPT+' '+VERSION+' ready; автопрокачка '+(root().auto?'ВКЛ':'ВЫКЛ')+'.');
         setTimeout(syncAllPending,3000);

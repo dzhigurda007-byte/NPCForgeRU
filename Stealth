@@ -1,0 +1,384 @@
+/* Installation guard: disable old unguarded versions before installing. */
+if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
+    log('AD5Visibility: duplicate module skipped; keep one installed copy.');
+} else {
+/*
+ * AD5 Visibility 1.0.0 — скрытность игроков и зрение NPC.
+ *
+ * Скрытность
+ * - Игрок бросает «Скрытность» из листа персонажа или кнопкой токена «Скрытность».
+ *   Итог броска становится Сл для пассивной Внимательности каждого NPC.
+ * - Проверка выполняется сразу после броска и в начале хода каждого NPC (для
+ *   группы NPC с общей инициативой — всеми токенами группы).
+ * - NPC замечает, если пассивная Внимательность с учётом зрения ≥ Сл.
+ *   Если заметил хотя бы один NPC — скрытность снимается, персонажа видят все.
+ * - Пока персонаж скрыт: на токене маркер, NPC не используют против него реакции
+ *   (AD5 Reactions спрашивает AD5Visibility.canSee).
+ * - Атака или заклинание скрытого персонажа снимает скрытность.
+ * - Мастер снимает скрытность вручную: !снять-скрытность (выделенные токены
+ *   или все) либо !ad5stealth reveal [all].
+ *
+ * Зрение NPC (действует только для скрытности)
+ * - Направление взгляда — поворот токена; без поворота токен смотрит ВНИЗ.
+ *   Верх изображения токена — его спина.
+ * - Спереди сектор 180°: до 20 фт — 100%, до 60 фт — 50%, дальше — 25%.
+ * - Со спины NPC видит только на 5 фт.
+ * - Дистанция считается от края до края токенов, поэтому крупные токены
+ *   видят и замечаются дальше от центра.
+ * - 100% — без штрафа; 50% — помеха (пассивная −5);
+ *   25% — помеха и штраф −5 (пассивная −10).
+ * - Ослеплённый, бессознательный, недееспособный, парализованный, оглушённый,
+ *   окаменевший или мёртвый NPC не замечает никого.
+ *
+ * Команды
+ *   !ad5stealth roll TOKEN_ID [normal|adv|dis]  — бросок кнопкой токена
+ *   !ad5stealth reveal [all]                     — (GM) снять скрытность
+ *   !снять-скрытность [all]                      — то же
+ *   !ad5stealth status                           — (GM) кто скрыт и от кого
+ *   !ad5stealth check                            — (GM) перепроверить сейчас
+ *   !ad5stealth markers [ФИЛЬТР]                 — (GM) маркеры кампании (Earthdawn 4E)
+ *   !ad5stealth marker ИМЯ                       — (GM) маркер скрытности (пусто — автоподбор)
+ *   !ad5stealth buttons                          — (GM) кнопки «Скрытность» листам игроков
+ */
+var AD5Visibility=AD5Visibility||(function(){
+    'use strict';
+    var VERSION='1.0.0',SCRIPT='AD5 Скрытность';
+    var ABILITY_NAME='Скрытность',ABILITY_ACTION='!ad5stealth roll @{selected|token_id} ?{Бросок Скрытности|Обычный,normal|С преимуществом,adv|С помехой,dis}';
+    var FRONT_FULL=20,FRONT_HALF=60,BACK_FEET=5;
+    // Состояния, при которых наблюдатель никого не замечает (маркеры AD5 Condition Engine).
+    var NO_SIGHT_MARKERS=['bleeding-eye','sleepy','skull','dead','broken-shield','padlock','lightning-helix','white-tower'];
+    var ATTACK_TEMPLATES=['atk','atkdmg','dmg','spell','npcatk','npcaction','npcdmg'];
+
+    function root(){
+        if(!state.AD5Visibility||typeof state.AD5Visibility!=='object')state.AD5Visibility={};
+        var r=state.AD5Visibility;r.version=VERSION;
+        r.hidden=r.hidden&&typeof r.hidden==='object'?r.hidden:{};
+        return r;
+    }
+    function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+    function norm(s){return String(s==null?'':s).replace(/\^\{([^}]*)\}?/g,'$1').replace(/<[^>]*>/g,' ').replace(/[_-]/g,' ').replace(/\s+/g,' ').trim().toLowerCase().replace(/ё/g,'е');}
+    function gm(text){sendChat(SCRIPT,'/w gm '+text,null,{noarchive:true});}
+    function whisper(pid,text){
+        if(!pid||pid==='API'||playerIsGM(pid)){gm(text);return;}
+        var p=getObj('player',pid),name=p?String(p.get('_displayname')||'').replace(/["\r\n]/g,''):'';
+        if(name)sendChat(SCRIPT,'/w "'+name+'" '+text,null,{noarchive:true});
+        gm(text);
+    }
+    function partyPageId(){return String(Campaign().get('playerpageid')||'');}
+    function tokenName(t){return String(t&&(t.get('name')||(getObj('character',t.get('represents'))||{get:function(){return '';}}).get('name'))||'токен');}
+    function attrValue(cid,name){var a=findObjs({_type:'attribute',_characterid:cid,name:name})[0];return a?String(a.get('current')==null?'':a.get('current')).trim():'';}
+    function numberOr(raw,fallback){var n=Number(String(raw==null?'':raw).replace(',','.').replace(/^\+/,''));return String(raw==null?'':raw).trim()!==''&&Number.isFinite(n)?n:fallback;}
+    function isToken(t){return !!(t&&t.get&&t.get('_subtype')==='token'&&!t.get('isdrawing'));}
+    function markers(t){return String(t&&t.get('statusmarkers')||'').split(',').filter(Boolean);}
+    function markerBase(m){return String(m||'').replace(/@\d+$/,'');}
+    function hasMarker(t,name){return markers(t).some(function(m){m=markerBase(m);return m===name||m.split('::')[0]===name;});}
+    function setMarker(t,name,on){
+        var list=markers(t),out=[],present=false;
+        list.forEach(function(m){var b=markerBase(m);if(b===name||b.split('::')[0]===name){present=true;if(on)out.push(m);}else out.push(m);});
+        if(on&&!present)out.push(name);
+        var next=out.join(',');if(next!==String(t.get('statusmarkers')||''))t.set('statusmarkers',next);
+    }
+
+    // ---- Маркер. В кампании установлен набор маркеров Earthdawn Fourth Edition
+    // (имена вида «027-Blindsiding»). Ищем в нём маркер по смыслу «скрытность»;
+    // маркеры, уже занятые другими модулями AD5, пропускаются. Если ничего не
+    // нашлось — стандартный ninja-mask. Мастер может выбрать маркер командой.
+    var MARKER_PRIORITY=[/stealth/i,/hid(?:e|den|ing)/i,/sneak/i,/conceal/i,/shadow/i,/скрыт/i];
+    var MARKERS_IN_USE=/blindsiding|ambushing|move-impaired|effect-debuff|effect-buff/i;
+    function campaignMarkers(){try{return (JSON.parse(Campaign().get('_token_markers')||'[]')||[]).filter(function(m){return m&&m.tag;});}catch(e){return [];}}
+    function markerTag(){
+        var r=root();if(r.marker)return r.marker;
+        var list=campaignMarkers().filter(function(m){return !MARKERS_IN_USE.test(String(m.name||''));});
+        for(var i=0;i<MARKER_PRIORITY.length;i++){
+            var hit=list.filter(function(m){return MARKER_PRIORITY[i].test(String(m.name||''));})[0];
+            if(hit)return String(hit.tag);
+        }
+        return 'ninja-mask';
+    }
+    // Выбор по имени или номеру из набора («!ad5stealth marker 123» / «… Stealthy»).
+    function resolveMarker(text){
+        text=String(text||'').trim();if(!text)return null;
+        var list=campaignMarkers(),low=text.toLowerCase();
+        var hit=list.filter(function(m){return String(m.name).toLowerCase()===low||String(m.tag).toLowerCase()===low;})[0]||
+            list.filter(function(m){return String(m.name).toLowerCase().indexOf(low)===0;})[0]||
+            list.filter(function(m){return String(m.name).toLowerCase().indexOf(low)>=0;})[0];
+        return hit?String(hit.tag):text;
+    }
+    function markerList(filter){
+        var f=String(filter||'').toLowerCase(),list=campaignMarkers().filter(function(m){return !f||String(m.name).toLowerCase().indexOf(f)>=0;});
+        var shown=list.slice(0,60).map(function(m){return esc(m.name);});
+        return '<b>Маркеры кампании'+(f?' «'+esc(f)+'»':'')+'</b>: '+list.length+(list.length>60?' (показаны первые 60)':'')+'<br>'+(shown.join(', ')||'нет')+'<br>Текущий маркер скрытности: <b>'+esc(markerTag())+'</b>. Выбор: <code>!ad5stealth marker ИМЯ</code>, сброс к автоподбору: <code>!ad5stealth marker</code>.';
+    }
+
+    // ---- Стороны
+    function playerControlled(cid){
+        var c=getObj('character',cid);if(!c)return false;
+        return String(c.get('controlledby')||'').split(',').some(function(id){id=id.trim();return id==='all'||(!!id&&!!getObj('player',id)&&!playerIsGM(id));});
+    }
+    function side(t){
+        try{if(typeof AD5Sides!=='undefined'&&AD5Sides&&typeof AD5Sides.side==='function')return AD5Sides.side(t);}catch(ignore){}
+        var cid=String(t.get('represents')||'');
+        return cid&&(attrValue(cid,'npc')!=='1'||playerControlled(cid))?'players':'npcs';
+    }
+    function combatToken(t,page){
+        return isToken(t)&&t.get('layer')==='objects'&&(!page||t.get('_pageid')===page)&&!!getObj('character',String(t.get('represents')||''));
+    }
+    function isObserver(t){return combatToken(t)&&side(t)==='npcs';}
+    function npcObservers(page){
+        return (findObjs({_type:'graphic',_subtype:'token',_pageid:page,layer:'objects'})||[]).filter(function(t){return combatToken(t,page)&&side(t)==='npcs';});
+    }
+
+    // ---- Зрение
+    function pxPerFoot(page){
+        var p=getObj('page',page),snap=Number(p&&p.get('snapping_increment')),scale=Number(p&&p.get('scale_number'));
+        if(!(snap>0))snap=1;if(!(scale>0))scale=5;
+        return 70*snap/scale;
+    }
+    function radius(t){return Math.max(Number(t.get('width'))||70,Number(t.get('height'))||70)/2;}
+    // Доля зрения observer → target: 100, 50, 25 или 0.
+    function visionPercent(observer,target){
+        if(!isToken(observer)||!isToken(target)||observer.id===target.id)return 0;
+        var page=observer.get('_pageid');if(page!==target.get('_pageid'))return 0;
+        if(NO_SIGHT_MARKERS.some(function(m){return hasMarker(observer,m);}))return 0;
+        var ox=Number(observer.get('left')),oy=Number(observer.get('top')),dx=Number(target.get('left'))-ox,dy=Number(target.get('top'))-oy;
+        var ro=radius(observer),rt=radius(target),dist=Math.sqrt(dx*dx+dy*dy);
+        var gap=Math.max(0,dist-ro-rt)/pxPerFoot(page);
+        // Поворот 0 — взгляд вниз (экранная ось Y направлена вниз), поворот по часовой.
+        var a=(Number(observer.get('rotation'))||0)*Math.PI/180,fx=-Math.sin(a),fy=Math.cos(a);
+        var front=(dx*fx+dy*fy)>=-rt; // хотя бы часть цели перед линией плеч
+        if(!front)return gap<=BACK_FEET+1e-6?100:0;
+        if(gap<=FRONT_FULL+1e-6)return 100;
+        if(gap<=FRONT_HALF+1e-6)return 50;
+        return 25;
+    }
+    function passivePerception(t){
+        var cid=String(t.get('represents')||'');if(!cid)return 10;
+        var senses=attrValue(cid,'npc_senses'),m=/(?:passive\s+perception|пассивн[а-яё]*\s+(?:восприяти[а-яё]*|внимательност[а-яё]*))\s*:?\s*(\d+)/i.exec(senses);
+        if(m)return Number(m[1]);
+        var npcPerception=attrValue(cid,'npc_perception');if(npcPerception!=='')return 10+numberOr(npcPerception,0);
+        var passive=numberOr(attrValue(cid,'passive_wisdom'),NaN);if(Number.isFinite(passive))return passive;
+        var bonus=numberOr(attrValue(cid,'perception_bonus'),NaN);if(Number.isFinite(bonus))return 10+bonus;
+        return 10+numberOr(attrValue(cid,'wisdom_mod'),0);
+    }
+    function detection(observer,target){
+        var pct=visionPercent(observer,target);if(!pct)return {pct:0,score:null};
+        var penalty=pct>=100?0:(pct>=50?5:10);
+        return {pct:pct,base:passivePerception(observer),penalty:penalty,score:passivePerception(observer)-penalty};
+    }
+
+    // ---- Скрытность
+    function hiddenRec(t){return t?root().hidden[t.id]||null:null;}
+    function hide(token,total,pid,detail){
+        var r=root(),tag=markerTag(),prev=r.hidden[token.id];
+        r.hidden[token.id]={dc:total,pid:pid||'',time:Date.now(),marker:tag,markerWasPresent:prev?!!prev.markerWasPresent:hasMarker(token,tag)};
+        setMarker(token,tag,true);
+        whisper(pid,'<b>'+esc(tokenName(token))+'</b> скрывается: Скрытность <b>'+total+'</b>'+(detail?' ('+esc(detail)+')':'')+'.');
+        if(!check(token,null,'бросок',true))whisper(pid,'<b>'+esc(tokenName(token))+'</b>: никто из NPC не заметил.');
+    }
+    function reveal(token,reason,pid,gmDetail){
+        var r=root(),rec=r.hidden[token.id];if(!rec)return false;
+        delete r.hidden[token.id];
+        if(!rec.markerWasPresent)setMarker(token,rec.marker||markerTag(),false);
+        var text='<b>'+esc(tokenName(token))+'</b> больше не скрыт — '+esc(reason)+'.';
+        pid=pid||rec.pid;
+        if(pid&&pid!=='API'&&!playerIsGM(pid)){var p=getObj('player',pid),name=p?String(p.get('_displayname')||'').replace(/["\r\n]/g,''):'';if(name)sendChat(SCRIPT,'/w "'+name+'" '+text,null,{noarchive:true});}
+        gm(text+(gmDetail?' '+esc(gmDetail):''));
+        return true;
+    }
+    // Проверка одного скрытого токена: observers — список наблюдателей или null (все NPC страницы).
+    function check(token,observers,why,report){
+        var rec=hiddenRec(token);if(!rec)return null;
+        var page=token.get('_pageid');
+        var list=(observers||npcObservers(page)).filter(function(o){return o.id!==token.id&&o.get('_pageid')===page;});
+        var spotted=null,lines=[];
+        list.forEach(function(o){
+            var d=detection(o,token);
+            lines.push(esc(tokenName(o))+': '+(d.pct?('зрение '+d.pct+'%, пассивная '+d.base+(d.penalty?' −'+d.penalty:'')+' = '+d.score):'не видит'));
+            if(!spotted&&d.pct&&d.score>=rec.dc)spotted={observer:o,detail:d};
+        });
+        if(spotted)reveal(token,'замечен: '+tokenName(spotted.observer),rec.pid,'(пассивная '+spotted.detail.score+' ≥ Сл '+rec.dc+', зрение '+spotted.detail.pct+'%)');
+        if(report&&lines.length)gm('<b>Скрытность</b> · '+esc(tokenName(token))+' · Сл '+rec.dc+' · '+esc(why||'проверка')+'<br>'+lines.join('<br>'));
+        return spotted;
+    }
+    function checkAll(observers,why,report){
+        Object.keys(root().hidden).forEach(function(id){
+            var t=getObj('graphic',id);if(!t){delete root().hidden[id];return;}
+            check(t,observers,why,report);
+        });
+    }
+    // NPC «видит» цель, если она не скрыта. Механика зрения действует только при скрытности.
+    function canSee(observer,target){
+        if(!target)return true;
+        var t=typeof target==='string'?getObj('graphic',target):target;
+        if(!t||!hiddenRec(t))return true;
+        var o=typeof observer==='string'?getObj('graphic',observer):observer;
+        return !(o&&isObserver(o));
+    }
+
+    // ---- Бросок кнопкой токена
+    function controls(pid,cid){
+        if(playerIsGM(pid))return true;var c=getObj('character',cid);if(!c)return false;
+        return String(c.get('controlledby')||'').split(',').some(function(id){id=id.trim();return id==='all'||id===pid;});
+    }
+    function stealthBonus(cid){
+        var b=numberOr(attrValue(cid,'stealth_bonus'),NaN);if(Number.isFinite(b))return b;
+        b=numberOr(attrValue(cid,'npc_stealth'),NaN);if(Number.isFinite(b))return b;
+        return numberOr(attrValue(cid,'dexterity_mod'),0);
+    }
+    function rollCommand(msg,args){
+        var t=getObj('graphic',String(args[2]||'')||(msg.selected&&msg.selected[0]&&msg.selected[0]._id)||'');
+        if(!combatToken(t))throw new Error('Выделите токен персонажа.');
+        var cid=String(t.get('represents')||'');if(!controls(msg.playerid,cid))throw new Error('Это не ваш персонаж.');
+        if(side(t)!=='players')throw new Error('Скрытность этой механики — для персонажей игроков.');
+        var mode=String(args[3]||'normal').toLowerCase(),bonus=stealthBonus(cid),a=randomInteger(20),b=randomInteger(20),die=a;
+        if(mode==='adv')die=Math.max(a,b);else if(mode==='dis')die=Math.min(a,b);
+        var total=die+bonus,detail='к20 '+(mode==='normal'?a:a+' / '+b+(mode==='adv'?' (преим.)':' (помеха)'))+(bonus>=0?' + ':' − ')+Math.abs(bonus);
+        hide(t,total,msg.playerid,detail);
+    }
+
+    // ---- Бросок из листа: шаблон simple/npc с названием «Скрытность / Stealth».
+    function fields(content){
+        var f={},re=/\{\{\s*([\w-]+)\s*=([\s\S]*?)\}\}(?=\s*(?:\{\{|$))/g,m;
+        while((m=re.exec(String(content||''))))f[m[1].toLowerCase()]=m[2].trim();
+        return f;
+    }
+    function active(f,k){var v=f[k];return v!==undefined&&String(v).trim()!==''&&!/^(?:0|false|off|no|нет)$/i.test(String(v).trim());}
+    function inlineTotal(msg,ref){
+        var m=/^\$\[\[(\d+)\]\]$/.exec(String(ref||'').trim());if(!m)return null;
+        var r=(msg.inlinerolls||[])[Number(m[1])],n=r&&r.results&&Number(r.results.total);
+        return Number.isFinite(n)?n:null;
+    }
+    function sheetCharacter(msg,f){
+        var name=String(f.charname||'').trim(),list=name?findObjs({_type:'character',name:name}):[];
+        if(list.length===1)return list[0];
+        var who=String(msg.who||'').replace(/\s+\(GM\)$/,'').trim();
+        list=who?findObjs({_type:'character',name:who}):[];
+        return list.length===1?list[0]:null;
+    }
+    function tokenForCharacter(msg,c){
+        var selected=(msg.selected||[]).map(function(s){return getObj('graphic',s._id);}).filter(function(t){return t&&t.get('represents')===c.id;});
+        if(selected.length===1)return selected[0];
+        var page=partyPageId(),list=(findObjs({_type:'graphic',_subtype:'token',_pageid:page,layer:'objects',represents:c.id})||[]).filter(function(t){return combatToken(t,page);});
+        return list.length===1?list[0]:null;
+    }
+    function sheetStealth(msg){
+        if(['simple','npc'].indexOf(String(msg.rolltemplate||''))<0)return false;
+        var f=fields(msg.content);if(!/(?:^|\s)(?:stealth|скрытност[а-яё]*)(?:\s|$)/.test(norm(f.rname||f.name||'').replace(/\bu$/,'')))return false;
+        var c=sheetCharacter(msg,f);if(!c)return false;
+        if(!controls(msg.playerid,c.id))return false;
+        var t=tokenForCharacter(msg,c);
+        if(!t){whisper(msg.playerid,'Скрытность: не найден единственный токен «'+esc(c.get('name'))+'» на активной карте. Выделите токен и бросьте снова или нажмите кнопку токена «'+ABILITY_NAME+'».');return true;}
+        if(side(t)!=='players')return false;
+        var r1=inlineTotal(msg,f.r1);if(r1===null)return false;
+        var total=r1,detail='';
+        if(active(f,'advantage')||active(f,'disadvantage')){
+            var r2=inlineTotal(msg,f.r2);
+            if(r2!==null){total=active(f,'advantage')?Math.max(r1,r2):Math.min(r1,r2);detail=r1+' / '+r2+(active(f,'advantage')?' (преим.)':' (помеха)');}
+        }
+        hide(t,total,msg.playerid,detail);
+        return true;
+    }
+    // Атака или заклинание скрытого персонажа снимает скрытность.
+    function attackReveal(msg){
+        if(ATTACK_TEMPLATES.indexOf(String(msg.rolltemplate||''))<0)return;
+        var hidden=root().hidden,ids=Object.keys(hidden);if(!ids.length)return;
+        var f=fields(msg.content),c=sheetCharacter(msg,f),sourceId=String(f.ad5sourcetoken||'').trim();
+        ids.forEach(function(id){
+            var t=getObj('graphic',id);if(!t){delete hidden[id];return;}
+            if(id===sourceId||(c&&t.get('represents')===c.id))reveal(t,msg.rolltemplate==='spell'?'заклинание':'атака');
+        });
+    }
+
+    // ---- Ход NPC: проверяют все токены группы инициативы.
+    var lastTop='';
+    function turnChanged(){
+        var order;try{order=JSON.parse(Campaign().get('turnorder')||'[]')||[];}catch(e){return;}
+        var top=order.length?String(order[0].id||''):'';if(top===lastTop)return;lastTop=top;
+        if(!Object.keys(root().hidden).length)return;
+        var t=top&&top!=='-1'&&getObj('graphic',top);if(!t||!isObserver(t))return;
+        var observers=[t];
+        try{
+            if(typeof NPCGroupInitiative!=='undefined'&&NPCGroupInitiative&&typeof NPCGroupInitiative.groupKey==='function'){
+                var key=NPCGroupInitiative.groupKey(t);
+                observers=npcObservers(t.get('_pageid')).filter(function(o){return NPCGroupInitiative.groupKey(o)===key;});
+                if(!observers.length)observers=[t];
+            }
+        }catch(ignore){}
+        checkAll(observers,'ход '+tokenName(t));
+    }
+
+    // ---- Кнопка токена «Скрытность» для листов игроков
+    // Лист игрока: не NPC и либо под управлением игрока, либо с классом/уровнем.
+    function isPcSheet(cid){
+        if(attrValue(cid,'npc')==='1')return false;
+        return playerControlled(cid)||!!(attrValue(cid,'class')||attrValue(cid,'base_level')||attrValue(cid,'cust_classname'));
+    }
+    function ensureButton(cid){
+        if(!getObj('character',cid)||!isPcSheet(cid))return false;
+        var list=(findObjs({_type:'ability',_characterid:cid,name:ABILITY_NAME})||[]);
+        if(!list.length){createObj('ability',{characterid:cid,name:ABILITY_NAME,action:ABILITY_ACTION,istokenaction:true});return true;}
+        var a=list[0];if(a.get('action')!==ABILITY_ACTION||!a.get('istokenaction'))a.set({action:ABILITY_ACTION,istokenaction:true});
+        return false;
+    }
+    function ensureButtonsBatched(done){
+        var ids=(findObjs({_type:'character'})||[]).map(function(c){return c.id;}),n=0;
+        (function step(){
+            var batch=ids.splice(0,10);
+            batch.forEach(function(cid){try{if(ensureButton(cid))n++;}catch(e){log(SCRIPT+': '+e.message);}});
+            if(ids.length)setTimeout(step,50);else if(done)done(n);
+        })();
+    }
+
+    function selectedTokens(msg){return (msg.selected||[]).map(function(s){return getObj('graphic',s._id);}).filter(Boolean);}
+    function revealCommand(msg,all){
+        if(!playerIsGM(msg.playerid))throw new Error('Только мастер снимает скрытность вручную.');
+        var tokens=all||!selectedTokens(msg).length?Object.keys(root().hidden).map(function(id){return getObj('graphic',id);}).filter(Boolean):selectedTokens(msg);
+        var n=0;tokens.forEach(function(t){if(reveal(t,'снято мастером',null))n++;});
+        if(!n)gm('Скрытых токенов '+(all||!selectedTokens(msg).length?'нет':'среди выделенных нет')+'.');
+    }
+    function status(){
+        var ids=Object.keys(root().hidden),lines=['<b>'+SCRIPT+' '+VERSION+'</b> · маркер: '+esc(markerTag())];
+        if(!ids.length)lines.push('Скрытых персонажей нет.');
+        ids.forEach(function(id){
+            var t=getObj('graphic',id),rec=root().hidden[id];if(!t)return;
+            var watch=npcObservers(t.get('_pageid')).map(function(o){var d=detection(o,t);return esc(tokenName(o))+' '+(d.pct?d.pct+'% ('+d.score+')':'—');});
+            lines.push(esc(tokenName(t))+': Сл '+rec.dc+(watch.length?' · '+watch.join(', '):''));
+        });
+        gm(lines.join('<br>'));
+    }
+    function command(msg){
+        var content=String(msg.content||'').trim();
+        if(/^!снять-скрытность(?:\s|$)/i.test(content)){revealCommand(msg,/\sall\b|\sвсе\b/i.test(content));return;}
+        var args=content.split(/\s+/),sub=String(args[1]||'status').toLowerCase();
+        if(sub==='roll'){rollCommand(msg,args);return;}
+        if(!playerIsGM(msg.playerid))throw new Error('Команда доступна мастеру.');
+        if(sub==='reveal'||sub==='off')revealCommand(msg,String(args[2]||'').toLowerCase()==='all');
+        else if(sub==='check')checkAll(null,'проверка мастера',true);
+        else if(sub==='marker'){var name=args.slice(2).join(' ').trim();root().marker=resolveMarker(name);gm('Маркер скрытности: <b>'+esc(markerTag())+'</b>.');}
+        else if(sub==='markers')gm(markerList(args.slice(2).join(' ')));
+        else if(sub==='buttons')ensureButtonsBatched(function(n){gm('Кнопка «'+ABILITY_NAME+'» добавлена листам игроков: '+n+'.');});
+        else status();
+    }
+
+    on('ready',function(){
+        root();
+        try{var o=JSON.parse(Campaign().get('turnorder')||'[]')||[];lastTop=o.length?String(o[0].id||''):'';}catch(ignore){}
+        Object.keys(root().hidden).forEach(function(id){if(!getObj('graphic',id))delete root().hidden[id];});
+        on('chat:message',function(msg){
+            try{
+                if(msg.type==='api'){if(/^!(?:ad5stealth|снять-скрытность)(?:\s|$)/i.test(msg.content||''))command(msg);return;}
+                if(!msg.playerid||msg.playerid==='API'||!msg.rolltemplate)return;
+                if(sheetStealth(msg))return;
+                attackReveal(msg);
+            }catch(e){whisper(msg.playerid,esc(e.message||e));}
+        });
+        on('change:campaign:turnorder',function(){try{turnChanged();}catch(e){log(SCRIPT+': '+e.message);}});
+        on('destroy:graphic',function(t){delete root().hidden[t.id];});
+        on('add:character',function(c){var cid=c.id;setTimeout(function(){try{ensureButton(cid);}catch(ignore){}},3000);});
+        ensureButtonsBatched(function(n){log(SCRIPT+' '+VERSION+' ready. Новых кнопок «'+ABILITY_NAME+'»: '+n+'.');});
+        gm('<b>'+SCRIPT+' '+VERSION+'</b> запущен. Маркер скрытности: <b>'+esc(markerTag())+'</b> (список: <code>!ad5stealth markers</code>). Снять скрытность: <code>!снять-скрытность</code>.');
+    });
+    return {version:VERSION,canSee:canSee,visionPercent:visionPercent,passivePerception:passivePerception,isHidden:function(t){return !!hiddenRec(typeof t==='string'?getObj('graphic',t):t);},reveal:function(t,reason){return reveal(typeof t==='string'?getObj('graphic',t):t,reason||'снято модулем');},check:checkAll};
+}());
+
+}
