@@ -1,0 +1,178 @@
+/* Installation guard: disable old unguarded versions before installing. */
+if(typeof AD5FX!=='undefined'&&AD5FX) {
+    log('AD5FX: duplicate module skipped; keep one installed copy.');
+} else {
+/*
+ * AD5 FX 1.0.0 — визуальные эффекты боя, пинг и маркер активного хода.
+ *
+ * Эффекты (встроенные эффекты Roll20 через spawnFx, по событиям AD5 События):
+ *   - урон: цвет по типу урона (огонь, холод, кислота, яд, некротическая энергия,
+ *     излучение, психический, силовое поле, электричество, звук; оружие — кровь);
+ *   - критическое попадание — дополнительный взрыв;
+ *   - попадание заклинанием-атакой — луч от заклинателя к цели;
+ *   - лечение — свечение (вызывает AutoDamage 4.3.174+);
+ *   - смерть цели — вспышка смерти.
+ *   Не больше 12 эффектов в секунду, чтобы массовая область не перегружала клиентов.
+ * Ход: в начале хода — пинг на токене (по умолчанию без переноса камеры игроков)
+ * и маркер активного хода: кольцо под токеном, которое следует за ним.
+ * Картинка маркера: своя (!ad5fx marker с выделенной картинкой из библиотеки) или
+ * полная рамка из наборов AD5 Counters, тонированная в золотой цвет.
+ * Скрытый токен (слой GM) — пинг и маркер видит только мастер.
+ *
+ * Команды (GM): !ad5fx — меню; !ad5fx fx|ping|marker on|off; !ad5fx move on|off
+ * (пинг переносит камеру игроков); !ad5fx marker set — картинка маркера из выделенного;
+ * !ad5fx color #RRGGBB; !ad5fx test — эффекты на выделенном токене.
+ */
+var AD5FX=AD5FX||(function(){
+    'use strict';
+    var VERSION='1.0.0',SCRIPT='AD5 FX';
+    var FX_PER_SECOND=12,fxWindow=0,fxCount=0;
+    var TYPE_COLORS=[
+        [/огон|fire/,'fire'],[/холод|cold|frost/,'frost'],[/кислот|acid/,'acid'],[/яд|poison/,'slime'],
+        [/некрот|necrot/,'death'],[/излуч|radiant|свет/,'holy'],[/психи|psychic/,'charm'],
+        [/силов|force/,'magic'],[/электр|молни|lightning/,'magic'],[/звук|thunder/,'smoke']
+    ];
+
+    function root(){
+        if(!state.AD5FX||typeof state.AD5FX!=='object')state.AD5FX={};
+        var r=state.AD5FX;r.version=VERSION;
+        ['fx','ping','marker'].forEach(function(k){if(typeof r[k]!=='boolean')r[k]=true;});
+        if(typeof r.move!=='boolean')r.move=false;
+        r.color=/^#[0-9a-f]{6}$/i.test(String(r.color||''))?r.color:'#ffd700';
+        r.markerImg=String(r.markerImg||'');r.markerId=String(r.markerId||'');
+        return r;
+    }
+    function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+    function gm(t){sendChat(SCRIPT,'/w gm '+t,null,{noarchive:true});}
+    function tok(id){return getObj('graphic',String(id||''));}
+    function gmIds(){return (findObjs({_type:'player'})||[]).filter(function(p){return playerIsGM(p.id);}).map(function(p){return p.id;});}
+    function hidden(t){return String(t.get('layer'))==='gmlayer';}
+
+    // ---------------------------------------------------------------- эффекты
+    function allow(){
+        var now=Date.now();if(now-fxWindow>1000){fxWindow=now;fxCount=0;}
+        if(fxCount>=FX_PER_SECOND)return false;fxCount++;return true;
+    }
+    function fxAt(t,type){
+        if(!root().fx||!t||hidden(t)||typeof spawnFx!=='function'||!allow())return;
+        try{spawnFx(Number(t.get('left')),Number(t.get('top')),type,t.get('_pageid'));}catch(e){log(SCRIPT+': spawnFx '+type+': '+e.message);}
+    }
+    function fxBetween(a,b,type){
+        if(!root().fx||!a||!b||hidden(a)||hidden(b)||a.get('_pageid')!==b.get('_pageid')||typeof spawnFxBetweenPoints!=='function'||!allow())return;
+        try{spawnFxBetweenPoints({x:Number(a.get('left')),y:Number(a.get('top'))},{x:Number(b.get('left')),y:Number(b.get('top'))},type,a.get('_pageid'));}catch(e){log(SCRIPT+': spawnFxBetweenPoints '+type+': '+e.message);}
+    }
+    function colorOf(types){
+        var list=(types||[]).map(function(x){return String(x||'').toLowerCase().replace(/ё/g,'е');});
+        for(var i=0;i<list.length;i++){for(var j=0;j<TYPE_COLORS.length;j++)if(TYPE_COLORS[j][0].test(list[i]))return TYPE_COLORS[j][1];}
+        return 'blood';
+    }
+    function onDamage(e){
+        var t=tok(e.цельТокенId);if(!t||!(Number(e.уронПослеЗащит)>0))return;
+        var color=colorOf(e.типыУрона),kind=color==='fire'?'burn-':color==='blood'?'splatter-':'glow-';
+        fxAt(t,kind+color);
+        if(e.атака&&e.атака.крит)fxAt(t,'burst-'+color);
+    }
+    function onHit(e){
+        if(!e||!e.заклинание)return;
+        fxBetween(tok(e.источникТокенId),tok(e.цельТокенId),'beam-magic');
+    }
+    function healed(token,amount){if(Number(amount)>0)fxAt(token,'glow-holy');}
+    function onDeath(e){fxAt(tok(e.цельТокенId),'nova-death');}
+
+    // ---------------------------------------------------------------- маркер хода
+    function libraryUrl(u){
+        u=String(u||'').trim();if(!/files\.d20\.io\/images\//.test(u))return '';
+        return u.replace(/\/(?:thumb|med|max|original)\.(png|jpe?g|gif|webp)(\?[^|]*)?$/i,'/thumb.$1$2');
+    }
+    function markerImage(){
+        var r=root();if(r.markerImg)return r.markerImg;
+        var sets=state.AD5Counters&&state.AD5Counters.sets||{},best=null;
+        Object.keys(sets).forEach(function(n){var s=sets[n];if(Array.isArray(s)&&s.length>1&&(!best||s.length>best.length))best=s;});
+        return best?best[best.length-1]:'';
+    }
+    var activeId='';
+    function marker(){var r=root(),m=r.markerId&&getObj('graphic',r.markerId);return m||null;}
+    function removeMarker(){var m=marker();root().markerId='';if(m)m.remove();}
+    function placeMarker(t){
+        var r=root();if(!r.marker||!t){removeMarker();return;}
+        var img=markerImage();if(!img){removeMarker();return;}
+        var size=Math.round(Math.max(Number(t.get('width'))||70,Number(t.get('height'))||70)*1.25),layer=hidden(t)?'gmlayer':'objects';
+        var props={left:Number(t.get('left')),top:Number(t.get('top')),width:size,height:size,layer:layer,tint_color:r.color,rotation:0};
+        var m=marker();
+        if(m&&(m.get('_pageid')!==t.get('_pageid')||m.get('imgsrc')!==img)){removeMarker();m=null;}
+        if(!m){
+            m=createObj('graphic',Object.assign({_pageid:t.get('_pageid'),imgsrc:img,isdrawing:true,name:'AD5 активный ход',controlledby:''},props));
+            if(!m){if(!r.markerWarned){r.markerWarned=true;gm('Маркер хода: картинка должна быть из вашей библиотеки Roll20 (!ad5fx marker set).');}return;}
+            r.markerId=m.id;
+        }else m.set(props);
+        toBack(m);
+    }
+    function ping(t){
+        var r=root();if(!r.ping||!t||typeof sendPing!=='function')return;
+        try{
+            if(hidden(t))sendPing(Number(t.get('left')),Number(t.get('top')),t.get('_pageid'),null,false,gmIds());
+            else sendPing(Number(t.get('left')),Number(t.get('top')),t.get('_pageid'),null,!!r.move);
+        }catch(e){log(SCRIPT+': sendPing '+e.message);}
+    }
+    var lastTop='';
+    function turnChanged(){
+        var order;try{order=JSON.parse(Campaign().get('turnorder')||'[]')||[];}catch(e){return;}
+        var row=order.length?order[0]:null,key=row?String(row.id||'')+'|'+String(row.custom||''):'';
+        if(key===lastTop)return;lastTop=key;
+        var t=row&&String(row.id||'')!=='-1'?tok(row.id):null;activeId=t?t.id:'';
+        if(!t){removeMarker();return;}
+        placeMarker(t);ping(t);
+    }
+
+    // ---------------------------------------------------------------- команды
+    function menu(){
+        var r=root(),b=function(label,cmd){return '<a style="display:inline-block;background:#3a3a5a;color:#fff;padding:3px 6px;margin:2px;border-radius:3px;text-decoration:none" href="'+cmd+'">'+esc(label)+'</a>';},sw=function(k,label){return b((r[k]?'✓ ':'✗ ')+label,'!ad5fx '+k+' '+(r[k]?'off':'on'));};
+        gm('<b>'+SCRIPT+' '+VERSION+'</b><br>'+sw('fx','Эффекты')+sw('ping','Пинг хода')+sw('move','Пинг переносит камеру')+sw('marker','Маркер хода')+
+            '<br>Маркер: '+(r.markerImg?'своя картинка':markerImage()?'рамка AD5 Counters':'<b>нет картинки</b>')+' · цвет '+esc(r.color)+'<br>'+
+            b('Картинка маркера из выделенного','!ad5fx marker set')+b('Цвет маркера','!ad5fx color ?{Цвет|#ffd700}')+b('Тест на выделенном','!ad5fx test'));
+    }
+    function command(msg){
+        if(!playerIsGM(msg.playerid))return;
+        var a=String(msg.content).trim().split(/\s+/),sub=String(a[1]||'').toLowerCase(),val=String(a[2]||'').toLowerCase(),r=root();
+        var sel=(msg.selected||[]).map(function(s){return getObj('graphic',s._id);}).filter(Boolean);
+        if(sub==='marker'&&val==='set'){
+            var img=sel[0]&&libraryUrl(sel[0].get('imgsrc'));
+            if(!img){gm('Выделите картинку маркера, загруженную в вашу библиотеку Roll20.');return;}
+            r.markerImg=img;removeMarker();var at=tok(activeId);if(at)placeMarker(at);gm('Картинка маркера хода сохранена.');return;
+        }
+        if(sub==='marker'&&val==='reset'){r.markerImg='';removeMarker();var at2=tok(activeId);if(at2)placeMarker(at2);gm('Маркер хода: рамка AD5 Counters.');return;}
+        if(['fx','ping','move','marker'].indexOf(sub)>=0&&(val==='on'||val==='off')){r[sub]=val==='on';if(sub==='marker'){if(r.marker){var at3=tok(activeId);if(at3)placeMarker(at3);}else removeMarker();}menu();return;}
+        if(sub==='color'&&/^#[0-9a-f]{6}$/i.test(a[2]||'')){r.color=a[2];var m=marker();if(m)m.set('tint_color',r.color);menu();return;}
+        if(sub==='test'){
+            if(!sel.length){gm('Выделите токен.');return;}
+            fxWindow=0;fxCount=0;var t=sel[0];
+            ['splatter-blood','burn-fire','glow-frost','burst-blood','glow-holy'].forEach(function(type,i){setTimeout(function(){fxAt(t,type);},i*700);});
+            ping(t);return;
+        }
+        menu();
+    }
+
+    on('ready',function(){
+        root();
+        try{var o=JSON.parse(Campaign().get('turnorder')||'[]')||[];var row=o[0];lastTop=row?String(row.id||'')+'|'+String(row.custom||''):'';activeId=row&&tok(row.id)?row.id:'';}catch(ignore){}
+        if(!activeId)setTimeout(function(){if(!activeId)removeMarker();},5000);
+        var ev=typeof AD5События!=='undefined'&&AD5События&&typeof AD5События.подписаться==='function';
+        if(ev){
+            AD5События.подписаться('ПОЛУЧЕН УРОН',function(e){try{onDamage(e||{});}catch(err){log(SCRIPT+': '+err.message);}});
+            AD5События.подписаться('ПОПАДАНИЕ',function(e){try{onHit(e||{});}catch(err){log(SCRIPT+': '+err.message);}});
+            AD5События.подписаться('ЦЕЛЬ УМЕРЛА',function(e){try{onDeath(e||{});}catch(err){log(SCRIPT+': '+err.message);}});
+        }
+        on('change:campaign:turnorder',function(){try{turnChanged();}catch(e){log(SCRIPT+': '+e.message);}});
+        on('change:graphic',function(g,prev){
+            if(!activeId||g.id!==activeId)return;
+            if(prev&&['left','top','width','height','layer','_pageid'].every(function(k){return String(prev[k])===String(g.get(k));}))return;
+            try{placeMarker(g);}catch(e){log(SCRIPT+': '+e.message);}
+        });
+        on('destroy:graphic',function(g){if(g.id===activeId){activeId='';removeMarker();}else if(g.id===root().markerId)root().markerId='';});
+        on('chat:message',function(msg){if(msg.type==='api'&&/^!ad5fx(?:\s|$)/i.test(msg.content||''))command(msg);});
+        log(SCRIPT+' '+VERSION+' ready.'+(ev?'':' Нет AD5 События — эффекты урона отключены.'));
+    });
+    return {version:VERSION,healed:healed,fxAt:fxAt,fxBetween:fxBetween,_test:{colorOf:colorOf,onDamage:onDamage,onHit:onHit,turnChanged:turnChanged}};
+}());
+
+}

@@ -73,6 +73,7 @@ hp листа используется однократно как началь�
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
 4.3.163: классовые механики — атрибут листа ad5_features: КРИТ 19/18, КРИТ КОСТИ, ПЕРЕБРОС УРОНА, СКРЫТАЯ АТАКА, РАЗ В ХОД, УРОН ЗАКЛИНАНИЙ/ШКОЛЫ, ЛУЧ, ЛЕЧЕНИЕ ЗАКЛИНАНИЙ; ПОСЛЕ ПОПАДАНИЯ — кнопки с расходом ячейки или ресурса (!ad5 posthit). ЯРОСТЬ, НЕУДЕРЖИМАЯ ЯРОСТЬ (!ad5 relentless-reset), ПРИ УБИЙСТВЕ [ЗАКЛИНАНИЕМ]; метамагия (!ad5 meta: Усиленное, Продлённое, Удвоенное, Осторожное), ФОРМИРОВАНИЕ ЗАКЛИНАНИЙ; спасбросок может быть автоуспешным. Описание — docs/class-features.md.
+4.3.174: событие «ПОЛУЧЕН УРОН» несёт типыУрона; вызов AD5 FX при лечении.
 4.3.173: AD5 Counters — бонусы «СЧЁТНАКОП» к атаке/урону, строки счётчиков в подсказке токена, блок «СЧЁТЧИК:»/«СЧЁТЗАВЕРШИТЬ:» передаётся модулю счётчиков после применения способности.
 4.3.172: производительность — подсказка ран не пересобирается при перемещении, AutoFront поднимает только перекрытые токены.
 4.3.171: если выбранный токен не подходит под цель заклинания, концентрация этой карточки снимается (Sides 1.1.1: персонаж под управлением ГМ — сторона игроков).
@@ -798,7 +799,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.173', diagnostics = [], debug = false;
+    var VERSION = '4.3.174', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -6316,9 +6317,12 @@ var AD5 = (function () {
                 отАтаки:!!p.hasAttack,
                 периодический:!!p.periodicEffect,
                 область:!!p.persistentArea,
-                окружение:!!p.environmental
+                окружение:!!p.environmental,
+                типыУрона:(resistance&&resistance.rows||[]).filter(function(row){return Number(row.before)-Number(row.saved||0)>0;}).map(function(row){return String(row.type||'');})
             });
         }
+        // 4.3.174: AD5 FX — эффект лечения на токене (события лечения в AD5 События нет).
+        if(actualHealing>0){try{if(typeof AD5FX!=='undefined'&&AD5FX&&typeof AD5FX.healed==='function')AD5FX.healed(t.token,actualHealing);}catch(ignoreHealFx){}}
         if(sleepBeforeDamage&&Object.keys(sleepBeforeDamage.effects||{}).some(function(k){var e=sleepBeforeDamage.effects[k];return e.condition==='unconscious'&&e.source&&e.source.sleepSpell;})){
             var sleepAfterDamage=AD5EffectTurns.snapshot(t.token.id);
             if(!AD5EffectTurns.equals(sleepBeforeDamage,sleepAfterDamage))entry.effectTurns={before:entry.effectTurns?entry.effectTurns.before:sleepBeforeDamage,after:sleepAfterDamage};
