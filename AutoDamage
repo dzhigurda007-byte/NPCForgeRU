@@ -73,6 +73,8 @@ hp листа используется однократно как началь�
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
 4.3.163: классовые механики — атрибут листа ad5_features: КРИТ 19/18, КРИТ КОСТИ, ПЕРЕБРОС УРОНА, СКРЫТАЯ АТАКА, РАЗ В ХОД, УРОН ЗАКЛИНАНИЙ/ШКОЛЫ, ЛУЧ, ЛЕЧЕНИЕ ЗАКЛИНАНИЙ; ПОСЛЕ ПОПАДАНИЯ — кнопки с расходом ячейки или ресурса (!ad5 posthit). ЯРОСТЬ, НЕУДЕРЖИМАЯ ЯРОСТЬ (!ad5 relentless-reset), ПРИ УБИЙСТВЕ [ЗАКЛИНАНИЕМ]; метамагия (!ad5 meta: Усиленное, Продлённое, Удвоенное, Осторожное), ФОРМИРОВАНИЕ ЗАКЛИНАНИЙ; спасбросок может быть автоуспешным. Описание — docs/class-features.md.
+4.3.173: AD5 Counters — бонусы «СЧЁТНАКОП» к атаке/урону, строки счётчиков в подсказке токена, блок «СЧЁТЧИК:»/«СЧЁТЗАВЕРШИТЬ:» передаётся модулю счётчиков после применения способности.
+4.3.172: производительность — подсказка ран не пересобирается при перемещении, AutoFront поднимает только перекрытые токены.
 4.3.171: если выбранный токен не подходит под цель заклинания, концентрация этой карточки снимается (Sides 1.1.1: персонаж под управлением ГМ — сторона игроков).
 4.3.170: свойства оружия — из описания атаки (фехтовальное, лёгкое, тяжёлое, двуручное, универсальное, дальнобойное, метательное, досягаемость, посеребрённое, магическое, священный/сияющий клинок): Скрытая атака, Сражение большим оружием, опция «СВОЙСТВО <имя>» для РАЗ В ХОД / ПРИ ПОПАДАНИИ / ПОСЛЕ ПОПАДАНИЯ; событиеАтаки.свойстваОружия.
 4.3.169: перед атакой персонажа вызывается AD5Classes.ensure — лист, ещё не пересчитанный скриптом Classes, обновляется автоматически; без Classes — подсказка ГМ.
@@ -546,6 +548,11 @@ var AD5TokenEffects = (function () {
                 notes=notes.concat(AD5Transform.tooltipLines(token.id)||[]);
             }
         }catch(ignoreTransform){}
+        try{
+            if(typeof AD5Counters!=='undefined'&&AD5Counters&&typeof AD5Counters.tooltipLines==='function'){
+                notes=notes.concat(AD5Counters.tooltipLines(token.id)||[]);
+            }
+        }catch(ignoreCounters){}
         var buffParts=[],debuffParts=[];
         try{
             var legacyAttack=(typeof AD5AttackBuff!=='undefined'&&AD5AttackBuff)?AD5AttackBuff.value(token.id):0;
@@ -791,7 +798,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.172', diagnostics = [], debug = false;
+    var VERSION = '4.3.173', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -4136,6 +4143,15 @@ var AD5 = (function () {
                 out.attack=out.attackBuff+out.attackDebuff;
             }
         }catch(ignoreTransformModifiers){}
+        // 4.3.173: AD5 Counters — «СЧЁТНАКОП»: бонус за каждый накопленный заряд.
+        try{
+            if(typeof AD5Counters!=='undefined'&&AD5Counters&&typeof AD5Counters.combatModifiers==='function'){
+                var cm=AD5Counters.combatModifiers(id)||{},ca=Number(cm.attack)||0;
+                if(ca>=0)out.attackBuff+=ca;else out.attackDebuff+=ca;
+                if(Array.isArray(cm.damage)&&cm.damage.length)out.damage=out.damage.concat(JSON.parse(JSON.stringify(cm.damage)));
+                out.attack=out.attackBuff+out.attackDebuff;
+            }
+        }catch(ignoreCounterModifiers){}
         return out;
     }
     function rollEffectModifierRows(rows){
@@ -6392,6 +6408,20 @@ var AD5 = (function () {
                 });
             }
         }catch(ошибкаРегистрацииТриггера){record('Регистрация ТРИГ: '+String(ошибкаРегистрацииТриггера.message||ошибкаРегистрацииТриггера));}
+        // 4.3.173: AD5 Counters — блок «СЧЁТЧИК:»/«СЧЁТЗАВЕРШИТЬ:» из описания способности.
+        try{
+            if(!entry.undone&&typeof AD5Counters!=='undefined'&&AD5Counters&&typeof AD5Counters.onApplied==='function'&&/СЧ[ЁЕ]Т(?:ЧИК|ЗАВЕРШИТЬ)\s*[:：]/i.test(String(complexDescription||''))){
+                AD5Counters.onApplied({
+                    разрешено:!(active(f,'save')&&((saveCrit==='success')||(success&&saveMode==='none'))),
+                    источникПерсонажId:String(p.actor||c.id||''),
+                    источникТокенId:String(p.sourceToken||''),
+                    цельТокенId:String(t.token.id),
+                    имя:String(p.name||attackName(f)||'Способность'),
+                    описание:String(complexDescription||''),
+                    история:String(key)
+                });
+            }
+        }catch(ошибкаСчётчика){record('AD5 Counters: '+String(ошибкаСчётчика.message||ошибкаСчётчика));}
         if(typeof AD5SpellEffects!=='undefined')setTimeout(function(){
             try{
                 if(entry.undone)return;

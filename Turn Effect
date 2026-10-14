@@ -3,7 +3,9 @@ if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
     log('AD5EffectTurns: duplicate module skipped; keep one installed copy.');
 } else {
 /*
-AD5 Effect Turns 1.6.20
+AD5 Effect Turns 1.6.22
+1.6.22: строки AD5 Counters («СЧЁТ…:») не применяются как прямой эффект и не попадают в ПРВ/УСП.
+1.6.21: tokenIdsWithCondition; проверка «ПОКА» без лишнего клонирования.
 1.6.20: «кость вдохновения 1d8» — кнопка токена «Применить вдохновение барда» (!ad5fx inspire): кость к следующему броску атаки или спасброску, затем бафф пропадает.
 1.6.19: модификатор «снимается кнопкой» — кнопка токена «Снять: <эффект>» (!ad5fx dropfx), появляется и убирается сама (Вдохновение барда).
 1.6.18: ПОПАДЛЕЧЕНИЕ, ПОПАДТОЛЧ (СТОЛКНОВЕНИЕ, МАКС РАЗМЕР), ПОПАДАТАКУЕТ: носитель, ПОПАДСЕБЕ, ПОПАДДОСЯГ (payloadReachFor); модификатор «повтор промаха».
@@ -67,7 +69,7 @@ var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5
 // silently shadow every newer fix.
 var AD5EffectTurns = (function () {
     'use strict';
-    var VERSION='1.6.21', SCRIPT='AD5 Effect Turns';
+    var VERSION='1.6.22', SCRIPT='AD5 Effect Turns';
     var runtimeLastGroup=Object.create(null);
     var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
     var markerCacheRaw=null, markerCacheByName=Object.create(null);
@@ -221,7 +223,7 @@ var AD5EffectTurns = (function () {
     function equals(a,b){return stable(a)===stable(b);}
 
     function sectionParse(description){
-        var text=String(description==null?'':description)
+        var text=безСтрокСчётчика(description)
             .replace(/<br\s*\/?>/gi,' ')
             .replace(/<[^>]*>/g,' ')
             .replace(/&nbsp;|&#160;/gi,' ')
@@ -1057,7 +1059,14 @@ var AD5EffectTurns = (function () {
         return /^\s*(?:ПОПАД|ПОПАДУСЛ|ПОПАДЦЕЛЬ|ПОПАДУРОН|ПОПАДСПАС|ПОПАДПРВ|ПОПАДУСП|ПОПАДЭФФ|ПОПАДКОН|ПОПАДОБЛ|ПОПАДОБЛЦЕЛЬ|ПОПАДОБЛУРОН|ПОПАДОБЛСПАС|ПОПАДОБЛПРВ|ПОПАДОБЛУСП|ПОПАДОБЛИСКЛ|ПОПАДЗАМЕНА|ПОПАДПРОМАХ|ПОПАДСОСЕД|ПОПАДЛЕЧЕНИЕ|ПОПАДТОЛЧ|ПОПАДАТАКУЕТ|ПОПАДСЕБЕ|ПОПАДДОСЯГ)\s*[:：—–-]/i.test(String(line||''));
     }
     function убратьУсловныеСтроки(описание){
-        return условныеСтроки(описание).filter(function(x){return !/^\s*(?:ПОКА|СНЯТЬ|РАСХ|ДО|УСЛЭФ|УСЛ\s*ЭФФ|УСЛОВНЫЙ\s+ЭФФЕКТ)\s*[:：—–-]/i.test(x)&&!строкаHitPayload(x);}).join('\n');
+        return условныеСтроки(описание).filter(function(x){return !/^\s*(?:ПОКА|СНЯТЬ|РАСХ|ДО|УСЛЭФ|УСЛ\s*ЭФФ|УСЛОВНЫЙ\s+ЭФФЕКТ)\s*[:：—–-]/i.test(x)&&!строкаHitPayload(x)&&!строкаСчётчика(x);}).join('\n');
+    }
+    // 1.6.22: строки AD5 Counters («СЧЁТЧИК:», «СЧЁТЭФФ:» …) исполняет модуль счётчиков,
+    // а не прямое применение: эффект счётчика срабатывает позже, при заполнении/завершении.
+    function строкаСчётчика(line){return /^\s*СЧ[ЁЕ]Т[А-ЯЁ]*\s*[:：]/i.test(String(line||''));}
+    function безСтрокСчётчика(описание){
+        var text=String(описание==null?'':описание);if(!/СЧ[ЁЕ]Т[А-ЯЁ]*\s*[:：]/i.test(text))return text;
+        return условныеСтроки(text).filter(function(x){return !строкаСчётчика(x);}).join('\n');
     }
     function канонСобытияУсловия(raw){
         try{if(typeof AD5События!=='undefined'&&AD5События&&typeof AD5События.имяСобытия==='function'){var c=AD5События.имяСобытия(raw);if(c)return c;}}catch(ignore){}
