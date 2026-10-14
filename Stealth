@@ -3,18 +3,18 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
     log('AD5Visibility: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Visibility 1.1.0 — скрытность игроков и зрение NPC.
+ * AD5 Visibility 1.2.0 — скрытность игроков и зрение NPC.
  *
  * Маркер: «603-Stealthy» из набора Earthdawn Fourth Edition Token Marker Set.
  *
  * Скрытность
  * - Игрок бросает «Скрытность» из листа персонажа или кнопкой токена «Скрытность».
- *   Итог броска становится Сл для пассивной Внимательности каждого NPC.
- * - Проверка выполняется сразу после броска и затем в начале КАЖДОГО хода
- *   (любого участника), пока персонаж скрыт: проверяют все NPC, у которых он
- *   в этот момент в поле зрения. Поле зрения — по текущему повороту токена.
- * - NPC замечает, если пассивная Внимательность с учётом зрения ≥ Сл.
- *   Если заметил хотя бы один NPC — скрытность снимается, персонажа видят все.
+ *   Итог броска становится Сл проверки Внимательности NPC.
+ * - Проверяет только NPC, чей сейчас ход (при общей инициативе группы — токены
+ *   этой группы). Если скрытого персонажа нет в его поле зрения — проверки нет.
+ * - Проверка — бросок Внимательности к20 + бонус; зрение 50% — с помехой,
+ *   25% — с помехой и −5. Итог никогда не ниже пассивного восприятия NPC.
+ *   Итог ≥ Сл — NPC замечает; скрытность снимается, персонажа видят все.
  * - Пока персонаж скрыт: на токене маркер, NPC не используют против него реакции
  *   (AD5 Reactions спрашивает AD5Visibility.canSee).
  * - Атака или заклинание скрытого персонажа снимает скрытность.
@@ -28,8 +28,7 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
  * - Со спины NPC видит только на 5 фт.
  * - Дистанция считается от края до края токенов, поэтому крупные токены
  *   видят и замечаются дальше от центра.
- * - 100% — без штрафа; 50% — помеха (пассивная −5);
- *   25% — помеха и штраф −5 (пассивная −10).
+ * - 100% — обычный бросок; 50% — помеха; 25% — помеха и −5.
  * - Ослеплённый, бессознательный, недееспособный, парализованный, оглушённый,
  *   окаменевший или мёртвый NPC не замечает никого.
  *
@@ -38,14 +37,14 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
  *   !ad5stealth reveal [all]                     — (GM) снять скрытность
  *   !снять-скрытность [all]                      — то же
  *   !ad5stealth status                           — (GM) кто скрыт и от кого
- *   !ad5stealth check                            — (GM) перепроверить сейчас
+ *   !ad5stealth check                            — (GM) проверка NPC текущего хода
  *   !ad5stealth markers [ФИЛЬТР]                 — (GM) маркеры кампании (Earthdawn 4E)
  *   !ad5stealth marker ИМЯ                       — (GM) маркер скрытности (пусто — автоподбор)
  *   !ad5stealth buttons                          — (GM) кнопки «Скрытность» листам игроков
  */
 var AD5Visibility=AD5Visibility||(function(){
     'use strict';
-    var VERSION='1.1.0',SCRIPT='AD5 Скрытность';
+    var VERSION='1.2.0',SCRIPT='AD5 Скрытность';
     var ABILITY_NAME='Скрытность',ABILITY_ACTION='!ad5stealth roll @{selected|token_id} ?{Бросок Скрытности|Обычный,normal|С преимуществом,adv|С помехой,dis}';
     var FRONT_FULL=20,FRONT_HALF=60,BACK_FEET=5;
     // Состояния, при которых наблюдатель никого не замечает (маркеры AD5 Condition Engine).
@@ -174,10 +173,21 @@ var AD5Visibility=AD5Visibility||(function(){
         var bonus=numberOr(attrValue(cid,'perception_bonus'),NaN);if(Number.isFinite(bonus))return 10+bonus;
         return 10+numberOr(attrValue(cid,'wisdom_mod'),0);
     }
-    function detection(observer,target){
-        var pct=visionPercent(observer,target);if(!pct)return {pct:0,score:null};
-        var penalty=pct>=100?0:(pct>=50?5:10);
-        return {pct:pct,base:passivePerception(observer),penalty:penalty,score:passivePerception(observer)-penalty};
+    // Бонус Внимательности NPC: навык листа, иначе пассивная − 10.
+    function perceptionBonus(t){
+        var cid=String(t.get('represents')||'');if(!cid)return 0;
+        var npc=attrValue(cid,'npc_perception');if(npc!=='')return numberOr(npc,0);
+        var b=numberOr(attrValue(cid,'perception_bonus'),NaN);if(Number.isFinite(b))return b;
+        return passivePerception(t)-10;
+    }
+    // Бросок Внимательности observer против скрытого target (null — не видит).
+    function perceptionRoll(observer,target){
+        var pct=visionPercent(observer,target);if(!pct)return null;
+        var passive=passivePerception(observer),bonus=perceptionBonus(observer),dis=pct<100,penalty=pct<50?5:0;
+        var a=randomInteger(20),b=dis?randomInteger(20):null,die=dis?Math.min(a,b):a;
+        var raw=die+bonus-penalty,total=Math.max(passive,raw);
+        var text='зрение '+pct+'%, к20 '+(dis?a+'/'+b+' (помеха)':a)+(bonus>=0?' + ':' − ')+Math.abs(bonus)+(penalty?' − '+penalty:'')+' = '+(raw<passive?raw+' → не ниже пассивной: <b>'+total+'</b>':'<b>'+total+'</b>');
+        return {pct:pct,passive:passive,raw:raw,total:total,text:text};
     }
 
     // ---- Скрытность
@@ -186,8 +196,7 @@ var AD5Visibility=AD5Visibility||(function(){
         var r=root(),tag=markerTag(),prev=r.hidden[token.id];
         r.hidden[token.id]={dc:total,pid:pid||'',time:Date.now(),marker:tag,markerWasPresent:prev?!!prev.markerWasPresent:hasMarker(token,tag)};
         setMarker(token,tag,true);
-        whisper(pid,'<b>'+esc(tokenName(token))+'</b> скрывается: Скрытность <b>'+total+'</b>'+(detail?' ('+esc(detail)+')':'')+'.');
-        if(!check(token,null,'бросок',true))whisper(pid,'<b>'+esc(tokenName(token))+'</b>: никто из NPC не заметил.');
+        whisper(pid,'<b>'+esc(tokenName(token))+'</b> скрывается: Скрытность <b>'+total+'</b>'+(detail?' ('+esc(detail)+')':'')+'. NPC проверяют Внимательность в свой ход, если персонаж у них в поле зрения.');
     }
     function reveal(token,reason,pid,gmDetail){
         var r=root(),rec=r.hidden[token.id];if(!rec)return false;
@@ -199,27 +208,23 @@ var AD5Visibility=AD5Visibility||(function(){
         gm(text+(gmDetail?' '+esc(gmDetail):''));
         return true;
     }
-    // Проверка одного скрытого токена: observers — список наблюдателей или null (все NPC страницы).
-    function check(token,observers,why,report){
-        var rec=hiddenRec(token);if(!rec)return null;
-        var page=token.get('_pageid');
-        var list=(observers||npcObservers(page)).filter(function(o){return o.id!==token.id&&o.get('_pageid')===page;});
-        var spotted=null,lines=[];
-        list.forEach(function(o){
-            var d=detection(o,token);
-            if(report==='seen'&&!d.pct)return;
-            lines.push(esc(tokenName(o))+': '+(d.pct?('зрение '+d.pct+'%, пассивная '+d.base+(d.penalty?' −'+d.penalty:'')+' = '+d.score):'не видит'));
-            if(!spotted&&d.pct&&d.score>=rec.dc)spotted={observer:o,detail:d};
-        });
-        if(spotted)reveal(token,'замечен: '+tokenName(spotted.observer),rec.pid,'(пассивная '+spotted.detail.score+' ≥ Сл '+rec.dc+', зрение '+spotted.detail.pct+'%)');
-        if(report&&lines.length&&!(report==='seen'&&spotted))gm('<b>Скрытность</b> · '+esc(tokenName(token))+' · Сл '+rec.dc+' · '+esc(why||'проверка')+'<br>'+lines.join('<br>'));
-        return spotted;
-    }
-    function checkAll(observers,why,report){
+    // Ход NPC: каждый наблюдатель бросает Внимательность против каждого
+    // скрытого персонажа в своём поле зрения. Нет никого в поле зрения — нет броска.
+    function turnCheck(observers,why){
+        var lines=[];
         Object.keys(root().hidden).forEach(function(id){
-            var t=getObj('graphic',id);if(!t){delete root().hidden[id];return;}
-            check(t,observers,why,report);
+            var token=getObj('graphic',id);if(!token){delete root().hidden[id];return;}
+            var rec=hiddenRec(token),page=token.get('_pageid');
+            observers.forEach(function(o){
+                if(!hiddenRec(token)||o.id===token.id||o.get('_pageid')!==page)return;
+                var r=perceptionRoll(o,token);if(!r)return;
+                var seen=r.total>=rec.dc;
+                lines.push(esc(tokenName(o))+' → '+esc(tokenName(token))+': '+r.text+' против Сл '+rec.dc+' — '+(seen?'<b>заметил</b>':'не заметил'));
+                if(seen)reveal(token,'замечен: '+tokenName(o),rec.pid,'(Внимательность '+r.total+' ≥ Сл '+rec.dc+', зрение '+r.pct+'%)');
+            });
         });
+        if(lines.length)gm('<b>Скрытность</b> · '+esc(why)+'<br>'+lines.join('<br>'));
+        return lines.length;
     }
     // NPC «видит» цель, если она не скрыта. Механика зрения действует только при скрытности.
     function canSee(observer,target){
@@ -245,7 +250,7 @@ var AD5Visibility=AD5Visibility||(function(){
         if(!combatToken(t))throw new Error('Выделите токен персонажа.');
         var cid=String(t.get('represents')||'');if(!controls(msg.playerid,cid))throw new Error('Это не ваш персонаж.');
         if(side(t)!=='players')throw new Error('Скрытность этой механики — для персонажей игроков.');
-        var mode=String(args[3]||'normal').toLowerCase(),bonus=stealthBonus(cid),a=randomInteger(20),b=randomInteger(20),die=a;
+        var mode=String(args[3]||'normal').toLowerCase(),bonus=stealthBonus(cid),a=randomInteger(20),b=mode==='normal'?null:randomInteger(20),die=a;
         if(mode==='adv')die=Math.max(a,b);else if(mode==='dis')die=Math.min(a,b);
         var total=die+bonus,detail='к20 '+(mode==='normal'?a:a+' / '+b+(mode==='adv'?' (преим.)':' (помеха)'))+(bonus>=0?' + ':' − ')+Math.abs(bonus);
         hide(t,total,msg.playerid,detail);
@@ -304,16 +309,28 @@ var AD5Visibility=AD5Visibility||(function(){
         });
     }
 
-    // ---- Каждый ход (чей бы он ни был) скрытого персонажа проверяют все NPC,
-    // у которых он сейчас в поле зрения — с текущим поворотом их токенов.
-    // NPC вне поля зрения (за спиной дальше 5 фт) не проверяют.
+    // ---- Проверяет только NPC, чей сейчас ход (группа общей инициативы — вся).
     var lastTop='';
+    function currentObservers(){
+        var order;try{order=JSON.parse(Campaign().get('turnorder')||'[]')||[];}catch(e){return [];}
+        var row=order.length?order[0]:null,t=row&&String(row.id||'')!=='-1'&&getObj('graphic',String(row.id||''));
+        if(!t||!isObserver(t))return [];
+        var observers=[t];
+        try{
+            if(typeof NPCGroupInitiative!=='undefined'&&NPCGroupInitiative&&typeof NPCGroupInitiative.groupKey==='function'){
+                var key=NPCGroupInitiative.groupKey(t);
+                observers=npcObservers(t.get('_pageid')).filter(function(o){return NPCGroupInitiative.groupKey(o)===key;});
+                if(!observers.length)observers=[t];
+            }
+        }catch(ignore){}
+        return observers;
+    }
     function turnChanged(){
         var order;try{order=JSON.parse(Campaign().get('turnorder')||'[]')||[];}catch(e){return;}
         var row=order.length?order[0]:null,top=row?String(row.id||'')+'|'+String(row.custom||''):'';if(top===lastTop)return;lastTop=top;
         if(!row||!Object.keys(root().hidden).length)return;
-        var t=String(row.id||'')!=='-1'&&getObj('graphic',String(row.id||''));
-        checkAll(null,'ход '+(t?tokenName(t):String(row.custom||'—')),'seen');
+        var observers=currentObservers();if(!observers.length)return;
+        turnCheck(observers,'ход '+tokenName(observers[0]));
     }
 
     // ---- Кнопка токена «Скрытность» для листов игроков
@@ -350,7 +367,7 @@ var AD5Visibility=AD5Visibility||(function(){
         if(!ids.length)lines.push('Скрытых персонажей нет.');
         ids.forEach(function(id){
             var t=getObj('graphic',id),rec=root().hidden[id];if(!t)return;
-            var watch=npcObservers(t.get('_pageid')).map(function(o){var d=detection(o,t);return esc(tokenName(o))+' '+(d.pct?d.pct+'% ('+d.score+')':'—');});
+            var watch=npcObservers(t.get('_pageid')).map(function(o){var pct=visionPercent(o,t);return esc(tokenName(o))+' '+(pct?pct+'% (пассивная '+passivePerception(o)+')':'—');});
             lines.push(esc(tokenName(t))+': Сл '+rec.dc+(watch.length?' · '+watch.join(', '):''));
         });
         gm(lines.join('<br>'));
@@ -362,7 +379,7 @@ var AD5Visibility=AD5Visibility||(function(){
         if(sub==='roll'){rollCommand(msg,args);return;}
         if(!playerIsGM(msg.playerid))throw new Error('Команда доступна мастеру.');
         if(sub==='reveal'||sub==='off')revealCommand(msg,String(args[2]||'').toLowerCase()==='all');
-        else if(sub==='check')checkAll(null,'проверка мастера',true);
+        else if(sub==='check'){var obs=currentObservers();if(!obs.length)gm('Сейчас не ход NPC.');else if(!turnCheck(obs,'проверка мастера, ход '+tokenName(obs[0])))gm('В поле зрения NPC текущего хода скрытых нет.');}
         else if(sub==='marker'){var name=args.slice(2).join(' ').trim();root().marker=resolveMarker(name);gm('Маркер скрытности: <b>'+esc(markerTag())+'</b>.');}
         else if(sub==='markers')gm(markerList(args.slice(2).join(' ')));
         else if(sub==='buttons')ensureButtonsBatched(function(n){gm('Кнопка «'+ABILITY_NAME+'» добавлена листам игроков: '+n+'.');});
@@ -387,7 +404,7 @@ var AD5Visibility=AD5Visibility||(function(){
         ensureButtonsBatched(function(n){log(SCRIPT+' '+VERSION+' ready. Новых кнопок «'+ABILITY_NAME+'»: '+n+'.');});
         gm('<b>'+SCRIPT+' '+VERSION+'</b> запущен. Маркер скрытности: <b>'+esc(markerTag())+'</b> (список: <code>!ad5stealth markers</code>). Снять скрытность: <code>!снять-скрытность</code>.');
     });
-    return {version:VERSION,canSee:canSee,visionPercent:visionPercent,passivePerception:passivePerception,isHidden:function(t){return !!hiddenRec(typeof t==='string'?getObj('graphic',t):t);},reveal:function(t,reason){return reveal(typeof t==='string'?getObj('graphic',t):t,reason||'снято модулем');},check:checkAll};
+    return {version:VERSION,canSee:canSee,visionPercent:visionPercent,passivePerception:passivePerception,isHidden:function(t){return !!hiddenRec(typeof t==='string'?getObj('graphic',t):t);},reveal:function(t,reason){return reveal(typeof t==='string'?getObj('graphic',t):t,reason||'снято модулем');},check:function(){var o=currentObservers();return o.length?turnCheck(o,'проверка модуля'):0;}};
 }());
 
 }
