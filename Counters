@@ -61,7 +61,7 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
  */
 var AD5Counters=AD5Counters||(function(){
     'use strict';
-    var VERSION='1.0.0',SCRIPT='AD5 Счётчики';
+    var VERSION='1.0.1',SCRIPT='AD5 Счётчики';
     var COLORS={'фиолетовый':'#8a2be2','красный':'#d0312d','синий':'#2f6fdf','голубой':'#3fb6e8','зелёный':'#2fa84f','зеленый':'#2fa84f','жёлтый':'#e8c02f','желтый':'#e8c02f','оранжевый':'#ef7d1a','белый':'transparent','чёрный':'#222222','черный':'#222222','серый':'#8a8a8a','розовый':'#e85fa8'};
     var EVENTS={
         'НАЧАЛО ХОДА':{ev:'НАЧАЛО ХОДА',who:'bearerTurn'},'КОНЕЦ ХОДА':{ev:'КОНЕЦ ХОДА',who:'bearerTurn'},
@@ -71,6 +71,11 @@ var AD5Counters=AD5Counters||(function(){
         'ПОЛУЧЕН УРОН':{ev:'ПОЛУЧЕН УРОН',who:'bearerTarget'},'НАНЕС УРОН':{ev:'ПОЛУЧЕН УРОН',who:'bearerSource'},
         'УРОН ОТ ВЛАДЕЛЬЦА':{ev:'ПОЛУЧЕН УРОН',who:'ownerOnBearer'}
     };
+    // 1.0.1: после перезапуска песочницы Roll20 может отдавать объекты с задержкой.
+    // Запись удаляется, только если токена нет и после повторных проверок
+    // через 2, 5, 10 и 20 секунд (как в Tether); настоящее удаление токена
+    // обрабатывает destroy:graphic.
+    var READY_RETRY_DELAYS=[2000,5000,10000,20000];
     var SPENT_WINDOW_MS=3000,spent=Object.create(null),warned=Object.create(null);
 
     function root(){
@@ -263,7 +268,7 @@ var AD5Counters=AD5Counters||(function(){
     // Эффект счётчика: урон и/или состояния; {З} = накопленные заряды.
     function fire(c,why){
         var bearer=tok(c.bearer),spec=c.spec||{},charges=c.charges,owner=tok(c.owner),label=c.action||c.name,out=[];
-        if(!bearer){remove(c);return;}
+        if(!bearer)return;
         try{
             if(spec.damage){
                 var dm=/^(.*?\d[^\s]*)\s*(.*)$/.exec(spec.damage.trim()),formula=dm?dm[1]:spec.damage,type=(dm&&dm[2]||'силовое поле').trim(),r=rollFormula(formula,charges);
@@ -296,7 +301,7 @@ var AD5Counters=AD5Counters||(function(){
         var all=root().counters;
         Object.keys(all).forEach(function(id){
             var c=all[id];if(!c)return;
-            if(!tok(c.bearer)){remove(c);return;}
+            if(!tok(c.bearer))return;
             if(ev==='НАЧАЛО ХОДА'&&String(e.источникТокенId||'')===c.bearer&&c.turnsLeft){c.turnsLeft--;if(c.turnsLeft<=0){remove(c,'истекла длительность');return;}}
             (c.spec&&c.spec.triggers||[]).forEach(function(tr){
                 if(tr.ev!==ev||!matches(c,tr.who,e)||!root().counters[c.id])return;
@@ -435,8 +440,19 @@ var AD5Counters=AD5Counters||(function(){
 
     on('ready',function(){
         root();
-        Object.keys(root().counters).forEach(function(id){var c=root().counters[id];if(!c||!tok(c.bearer)){if(c)removeRing(c);delete root().counters[id];}});
-        var bearers={};Object.keys(root().counters).forEach(function(id){bearers[root().counters[id].bearer]=true;});Object.keys(bearers).forEach(redraw);
+        Object.keys(root().counters).forEach(function(id){if(!root().counters[id])delete root().counters[id];});
+        var bearers={};Object.keys(root().counters).forEach(function(id){var b=root().counters[id].bearer;if(tok(b))bearers[b]=true;});Object.keys(bearers).forEach(redraw);
+        (function reconcile(attempt){
+            var missing=Object.keys(root().counters).filter(function(id){return !tok(root().counters[id].bearer);});
+            if(!missing.length)return;
+            if(attempt+1<READY_RETRY_DELAYS.length){setTimeout(function(){
+                // Носители, появившиеся за это время, получают рамки.
+                var back={};Object.keys(root().counters).forEach(function(id){var c=root().counters[id];if(c&&missing.indexOf(id)>=0&&tok(c.bearer))back[c.bearer]=true;});Object.keys(back).forEach(redraw);
+                reconcile(attempt+1);
+            },READY_RETRY_DELAYS[attempt+1]-(attempt>=0?READY_RETRY_DELAYS[attempt]:0));return;}
+            missing.forEach(function(id){var c=root().counters[id];if(c){removeRing(c);delete root().counters[id];}});
+            log(SCRIPT+': удалены счётчики без токена-носителя: '+missing.length+'.');
+        })(-1);
         var ev=typeof AD5События!=='undefined'&&AD5События&&typeof AD5События.подписаться==='function';
         if(ev){
             ['НАЧАЛО ХОДА','КОНЕЦ ХОДА','ПОПАДАНИЕ','ПОЛУЧЕН УРОН'].forEach(function(name){AD5События.подписаться(name,function(e){onEvent(name,e||{});});});

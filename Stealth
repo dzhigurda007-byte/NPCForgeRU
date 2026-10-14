@@ -3,7 +3,7 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
     log('AD5Visibility: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Visibility 1.3.0 — скрытность игроков и зрение NPC.
+ * AD5 Visibility 1.3.1 — скрытность игроков и зрение NPC.
  *
  * Маркер: «603-Stealthy» из набора Earthdawn Fourth Edition Token Marker Set.
  *
@@ -49,8 +49,13 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
  */
 var AD5Visibility=AD5Visibility||(function(){
     'use strict';
-    var VERSION='1.3.0',SCRIPT='AD5 Скрытность';
+    var VERSION='1.3.1',SCRIPT='AD5 Скрытность';
     var ABILITY_NAME='Скрытность',ABILITY_ACTION='!ad5stealth roll @{selected|token_id} ?{Бросок Скрытности|Обычный,normal|С преимуществом,adv|С помехой,dis}';
+    // 1.0.1: после перезапуска песочницы Roll20 может отдавать объекты с задержкой.
+    // Запись удаляется, только если токена нет и после повторных проверок
+    // через 2, 5, 10 и 20 секунд (как в Tether); настоящее удаление токена
+    // обрабатывает destroy:graphic.
+    var READY_RETRY_DELAYS=[2000,5000,10000,20000];
     var FRONT_FULL=20,FRONT_HALF=60,BACK_FEET=5;
     // Состояния, при которых наблюдатель никого не замечает (маркеры AD5 Condition Engine).
     var NO_SIGHT_MARKERS=['bleeding-eye','sleepy','skull','dead','broken-shield','padlock','lightning-helix','white-tower'];
@@ -230,7 +235,7 @@ var AD5Visibility=AD5Visibility||(function(){
     function turnCheck(observers,why){
         var lines=[];
         Object.keys(root().hidden).forEach(function(id){
-            var token=getObj('graphic',id);if(!token){delete root().hidden[id];return;}
+            var token=getObj('graphic',id);if(!token)return;
             var rec=hiddenRec(token),page=token.get('_pageid');
             observers.forEach(function(o){
                 if(!hiddenRec(token)||o.id===token.id||o.get('_pageid')!==page)return;
@@ -321,7 +326,7 @@ var AD5Visibility=AD5Visibility||(function(){
         var hidden=root().hidden,ids=Object.keys(hidden);if(!ids.length)return;
         var f=fields(msg.content),c=sheetCharacter(msg,f),sourceId=String(f.ad5sourcetoken||'').trim();
         ids.forEach(function(id){
-            var t=getObj('graphic',id);if(!t){delete hidden[id];return;}
+            var t=getObj('graphic',id);if(!t)return;
             if(id===sourceId||(c&&t.get('represents')===c.id))reveal(t,msg.rolltemplate==='spell'?'заклинание':'атака');
         });
     }
@@ -406,7 +411,13 @@ var AD5Visibility=AD5Visibility||(function(){
     on('ready',function(){
         root();
         try{var o=JSON.parse(Campaign().get('turnorder')||'[]')||[];lastTop=o.length?String(o[0].id||'')+'|'+String(o[0].custom||''):'';}catch(ignore){}
-        Object.keys(root().hidden).forEach(function(id){if(!getObj('graphic',id))delete root().hidden[id];});
+        (function reconcile(attempt){
+            var missing=Object.keys(root().hidden).filter(function(id){return !getObj('graphic',id);});
+            if(!missing.length)return;
+            if(attempt+1<READY_RETRY_DELAYS.length){setTimeout(function(){reconcile(attempt+1);},READY_RETRY_DELAYS[attempt+1]-(attempt>=0?READY_RETRY_DELAYS[attempt]:0));return;}
+            missing.forEach(function(id){delete root().hidden[id];});
+            log(SCRIPT+': сняты записи скрытности без токена: '+missing.length+'.');
+        })(-1);
         on('chat:message',function(msg){
             try{
                 if(msg.type==='api'){if(/^!(?:ad5stealth|снять-скрытность)(?:\s|$)/i.test(msg.content||''))command(msg);return;}
