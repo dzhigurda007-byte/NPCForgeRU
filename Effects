@@ -3,13 +3,15 @@ if(typeof AD5FX!=='undefined'&&AD5FX) {
     log('AD5FX: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 FX 1.2.0 — визуальные эффекты боя и пинг активного хода.
+ * AD5 FX 1.3.0 — визуальные эффекты боя и пинг активного хода.
  *
- * Эффекты (встроенные эффекты Roll20 через spawnFx, по событиям AD5 События):
+ * Эффекты (по событиям AD5 События) — уменьшенные копии встроенных эффектов Roll20,
+ * по умолчанию втрое меньше (33%), чтобы не загромождать карту; !ad5vfx size 10–100,
+ * при 100 — встроенные эффекты как есть:
  *   - урон: цвет по типу урона (огонь, холод, кислота, яд, некротическая энергия,
  *     излучение, психический, силовое поле, электричество, звук; оружие — кровь);
  *   - критическое попадание — дополнительный взрыв;
- *   - попадание заклинанием-атакой — луч от заклинателя к цели;
+ *   - попадание заклинанием-атакой — вспышка на цели (при 100% — луч от заклинателя);
  *   - лечение — свечение (вызывает AutoDamage 4.3.174+);
  *   - смерть цели — вспышка смерти.
  *   Не больше 12 эффектов в секунду, чтобы массовая область не перегружала клиентов.
@@ -19,12 +21,13 @@ if(typeof AD5FX!=='undefined'&&AD5FX) {
  * Скрытый токен (слой GM) — пинг и фокус только у мастера.
  *
  * Команды (GM): !ad5vfx — меню; !ad5vfx fx|ping|focus on|off (focus — пинг
- * переносит камеру к токену); !ad5vfx test — эффекты на выделенном токене.
+ * переносит камеру к токену); !ad5vfx size N — размер эффектов в % (33 по умолчанию);
+ * !ad5vfx test — эффекты на выделенном токене.
  * С 1.2.0 команда — !ad5vfx: «!ad5fx» принадлежит Turn Effect.
  */
 var AD5FX=AD5FX||(function(){
     'use strict';
-    var VERSION='1.2.0',SCRIPT='AD5 FX';
+    var VERSION='1.3.0',SCRIPT='AD5 FX';
     var FX_PER_SECOND=12,fxWindow=0,fxCount=0;
     var TYPE_COLORS=[
         [/огон|fire/,'fire'],[/холод|cold|frost/,'frost'],[/кислот|acid/,'acid'],[/яд|poison/,'slime'],
@@ -36,6 +39,7 @@ var AD5FX=AD5FX||(function(){
         if(!state.AD5FX||typeof state.AD5FX!=='object')state.AD5FX={};
         var r=state.AD5FX;r.version=VERSION;
         ['fx','ping','focus'].forEach(function(k){if(typeof r[k]!=='boolean')r[k]=true;});
+        var sz=Number(r.size);r.size=Number.isFinite(sz)&&sz>=10&&sz<=100?Math.round(sz):33;
         return r;
     }
     function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
@@ -49,9 +53,39 @@ var AD5FX=AD5FX||(function(){
         var now=Date.now();if(now-fxWindow>1000){fxWindow=now;fxCount=0;}
         if(fxCount>=FX_PER_SECOND)return false;fxCount++;return true;
     }
+    // 1.3.0: эффекты в уменьшенном масштабе (по умолчанию 33% — втрое меньше встроенных),
+    // чтобы не загромождать карту. Встроенные эффекты Roll20 размер не меняют, поэтому
+    // эффект описывается своими параметрами частиц и запускается spawnFxWithDefinition.
+    // Значения SHAPES подобраны близко к встроенным эффектам при 100%; при масштабе
+    // уменьшаются размер частиц, скорость (радиус разлёта) и число частиц.
+    var RGB={fire:[230,80,10],frost:[130,200,255],acid:[110,220,40],slime:[90,170,30],death:[100,20,120],holy:[255,235,140],
+        charm:[230,90,200],magic:[120,120,255],smoke:[180,180,180],blood:[170,0,0],water:[60,120,230]};
+    var SHAPES={
+        splatter:{maxParticles:60,size:18,sizeRandom:8,lifeSpan:14,lifeSpanRandom:4,speed:9,speedRandom:4,emissionRate:60,duration:3,gravity:{x:0,y:0.3}},
+        burn:{maxParticles:100,size:35,sizeRandom:15,lifeSpan:25,lifeSpanRandom:7,speed:3,speedRandom:1.5,emissionRate:6,duration:25,gravity:{x:0,y:-0.05}},
+        glow:{maxParticles:60,size:30,sizeRandom:10,lifeSpan:20,lifeSpanRandom:5,speed:1,speedRandom:0.5,emissionRate:4,duration:20},
+        burst:{maxParticles:120,size:30,sizeRandom:10,lifeSpan:12,lifeSpanRandom:4,speed:14,speedRandom:6,emissionRate:120,duration:2},
+        nova:{maxParticles:200,size:30,sizeRandom:10,lifeSpan:18,lifeSpanRandom:4,speed:12,speedRandom:1,emissionRate:200,duration:2}
+    };
+    function definition(type,scale){
+        var m=/^([a-z]+)-([a-z]+)$/.exec(String(type||'')),shape=m&&SHAPES[m[1]],rgb=m&&RGB[m[2]];
+        if(!shape||!rgb)return null;
+        var d={angle:0,angleRandom:360,startColour:rgb.concat([1]),startColourRandom:[20,20,20,0],endColour:rgb.concat([0]),endColourRandom:[10,10,10,0]};
+        Object.keys(shape).forEach(function(k){d[k]=shape[k];});
+        ['size','sizeRandom','speed','speedRandom'].forEach(function(k){d[k]=Math.round(shape[k]*scale*100)/100;});
+        d.maxParticles=Math.max(8,Math.round(shape.maxParticles*scale));
+        d.emissionRate=Math.max(1,Math.round(shape.emissionRate*Math.max(scale,0.34)*100)/100);
+        if(shape.gravity)d.gravity={x:0,y:Math.round(shape.gravity.y*scale*1000)/1000};
+        return d;
+    }
     function fxAt(t,type){
-        if(!root().fx||!t||hidden(t)||typeof spawnFx!=='function'||!allow())return;
-        try{spawnFx(Number(t.get('left')),Number(t.get('top')),type,t.get('_pageid'));}catch(e){log(SCRIPT+': spawnFx '+type+': '+e.message);}
+        if(!root().fx||!t||hidden(t)||!allow())return;
+        var x=Number(t.get('left')),y=Number(t.get('top')),page=t.get('_pageid'),scale=root().size/100;
+        try{
+            var d=scale<1&&typeof spawnFxWithDefinition==='function'?definition(type,scale):null;
+            if(d)spawnFxWithDefinition(x,y,d,page);
+            else if(typeof spawnFx==='function')spawnFx(x,y,type,page);
+        }catch(e){log(SCRIPT+': fx '+type+': '+e.message);}
     }
     function fxBetween(a,b,type){
         if(!root().fx||!a||!b||hidden(a)||hidden(b)||a.get('_pageid')!==b.get('_pageid')||typeof spawnFxBetweenPoints!=='function'||!allow())return;
@@ -70,7 +104,10 @@ var AD5FX=AD5FX||(function(){
     }
     function onHit(e){
         if(!e||!e.заклинание)return;
-        fxBetween(tok(e.источникТокенId),tok(e.цельТокенId),'beam-magic');
+        // Луч заклинания (встроенный, его размер не меняется) — только в полном масштабе;
+        // в уменьшенном — небольшая вспышка на цели.
+        if(root().size>=100)fxBetween(tok(e.источникТокенId),tok(e.цельТокенId),'beam-magic');
+        else fxAt(tok(e.цельТокенId),'glow-magic');
     }
     function healed(token,amount){if(Number(amount)>0)fxAt(token,'glow-holy');}
     function onDeath(e){fxAt(tok(e.цельТокенId),'nova-death');}
@@ -103,7 +140,7 @@ var AD5FX=AD5FX||(function(){
     // ---------------------------------------------------------------- команды
     function menu(){
         var r=root(),b=function(label,cmd){return '<a style="display:inline-block;background:#3a3a5a;color:#fff;padding:3px 6px;margin:2px;border-radius:3px;text-decoration:none" href="'+cmd+'">'+esc(label)+'</a>';},sw=function(k,label){return b((r[k]?'✓ ':'✗ ')+label,'!ad5vfx '+k+' '+(r[k]?'off':'on'));};
-        gm('<b>'+SCRIPT+' '+VERSION+'</b><br>'+sw('fx','Эффекты')+sw('ping','Пинг хода')+sw('focus','Фокус камеры на токене')+'<br>'+b('Тест на выделенном','!ad5vfx test'));
+        gm('<b>'+SCRIPT+' '+VERSION+'</b><br>'+sw('fx','Эффекты')+sw('ping','Пинг хода')+sw('focus','Фокус камеры на токене')+'<br>Размер эффектов: '+r.size+'% '+b('Изменить','!ad5vfx size ?{Размер, % от встроенных (10–100)|33}')+b('Тест на выделенном','!ad5vfx test'));
     }
     function command(msg){
         if(!playerIsGM(msg.playerid))return;
@@ -111,6 +148,7 @@ var AD5FX=AD5FX||(function(){
         var sel=(msg.selected||[]).map(function(s){return getObj('graphic',s._id);}).filter(Boolean);
         if(sub==='move')sub='focus';
         if(['fx','ping','focus'].indexOf(sub)>=0&&(val==='on'||val==='off')){r[sub]=val==='on';menu();return;}
+        if(sub==='size'){var n=Number(String(a[2]||'').replace('%',''));if(!(n>=10&&n<=100)){gm('Размер: от 10 до 100 (% от встроенных эффектов Roll20).');return;}r.size=Math.round(n);menu();return;}
         if(sub==='test'){
             if(!sel.length){gm('Выделите токен.');return;}
             fxWindow=0;fxCount=0;var t=sel[0];
@@ -135,7 +173,7 @@ var AD5FX=AD5FX||(function(){
         on('chat:message',function(msg){if(msg.type==='api'&&/^!ad5vfx(?:\s|$)/i.test(msg.content||''))command(msg);});
         log(SCRIPT+' '+VERSION+' ready.'+(ev?'':' Нет AD5 События — эффекты урона отключены.'));
     });
-    return {version:VERSION,healed:healed,fxAt:fxAt,fxBetween:fxBetween,_test:{colorOf:colorOf,onDamage:onDamage,onHit:onHit,turnChanged:turnChanged}};
+    return {version:VERSION,healed:healed,fxAt:fxAt,fxBetween:fxBetween,_test:{definition:definition,colorOf:colorOf,onDamage:onDamage,onHit:onHit,turnChanged:turnChanged}};
 }());
 
 }
