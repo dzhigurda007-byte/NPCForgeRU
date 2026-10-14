@@ -3,10 +3,10 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
     log('AD5Counters: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Counters 1.3.1 — счётчики-рамки на токенах (заряды способностей).
+ * AD5 Counters 1.3.2 — счётчики-рамки на токенах (заряды способностей).
  *
  * Счётчик — кольцо из N делений вокруг токена (картинки 0…N из набора рамок).
- * Рамка лежит под токеном и переезжает вместе с ним; цвет задаётся тонированием.
+ * Рамка лежит на слое карты под токеном и переезжает вместе с ним; цвет — тонированием.
  * Несколько счётчиков на одном токене — концентрические кольца.
  *
  * Счётчик описывается строками в описании способности (как ТРИГ:/ПОКА:).
@@ -39,6 +39,8 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
  *                                     AD5 Effect Turns), части через «+»
  *   СЧЁТХОДЫ: 10                      рамка снимается через 10 ходов носителя
  *   СЧЁТЦВЕТ: фиолетовый | #8a2be2
+ * 1.3.2: рамки лежат на слое карты (под всеми токенами), над картинкой поля; порядок
+ * слоёв повторяется с задержкой после создания.
  * 1.3.1: рамка при перемещении носителя переставляется одной записью позиции; обработчик
  * движения регистрируется раньше обработчиков других модулей.
  * 1.3.0: заряды накопления тратятся кнопкой «★ Потратить: Имя» (действие токена) — бонус
@@ -68,12 +70,12 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
  *   !ad5counter complete ИМЯ          — завершить (сработает эффект)
  *   !ad5counter use TOKEN TARGET|- Имя способности — применить блок счётчика
  *       из описания способности листа без AD5-атаки (для владельца токена)
- * Мастер может переключить сторону рамки (ПКМ → выбрать сторону) — заряды
+ * Мастер может переключить сторону рамки на слое карты (ПКМ → выбрать сторону) — заряды
  * счётчика станут равны выбранной стороне.
  */
 var AD5Counters=AD5Counters||(function(){
     'use strict';
-    var VERSION='1.3.1',SCRIPT='AD5 Счётчики';
+    var VERSION='1.3.2',SCRIPT='AD5 Счётчики';
     var COLORS={'фиолетовый':'#8a2be2','красный':'#d0312d','синий':'#2f6fdf','голубой':'#3fb6e8','зелёный':'#2fa84f','зеленый':'#2fa84f','жёлтый':'#e8c02f','желтый':'#e8c02f','оранжевый':'#ef7d1a','белый':'transparent','чёрный':'#222222','черный':'#222222','серый':'#8a8a8a','розовый':'#e85fa8'};
     var EVENTS={
         'НАЧАЛО ХОДА':{ev:'НАЧАЛО ХОДА',who:'bearerTurn'},'КОНЕЦ ХОДА':{ev:'КОНЕЦ ХОДА',who:'bearerTurn'},
@@ -202,7 +204,15 @@ var AD5Counters=AD5Counters||(function(){
     function ringIndex(){return index().rings;}
     function ringGeometry(bearer,i){
         var base=Math.max(Number(bearer.get('width'))||70,Number(bearer.get('height'))||70),size=Math.round(base*(1.3+0.28*i));
-        return {left:Number(bearer.get('left')),top:Number(bearer.get('top')),width:size,height:size,rotation:0,layer:bearer.get('layer')==='objects'?'objects':bearer.get('layer')};
+        return {left:Number(bearer.get('left')),top:Number(bearer.get('top')),width:size,height:size,rotation:0,layer:bearer.get('layer')==='objects'?'map':bearer.get('layer')};
+    }
+    // 1.3.2: рамка носителя со слоя объектов лежит на слое карты — он всегда ниже всех
+    // токенов, и рамка не накрывает ни игроков, ни NPC. На слое карты рамка поднимается
+    // над картинкой поля. Порядок повторяется с задержкой: сразу после createObj Roll20
+    // (особенно Jumpgate) может ещё не принять toFront/toBack.
+    function placeOrder(g){
+        var id=g.id,apply=function(){var live=tok(id);if(!live)return;if(live.get('layer')==='map')toFront(live);else toBack(live);};
+        apply();setTimeout(apply,150);
     }
     function removeRing(c){var g=c&&c.ring&&tok(c.ring);if(c&&c.ring){c.ring=null;dirty();}if(g)g.remove();}
     function drawRing(c,i){
@@ -215,11 +225,11 @@ var AD5Counters=AD5Counters||(function(){
             g=createObj('graphic',{_pageid:bearer.get('_pageid'),layer:geo.layer,imgsrc:urls[side],left:geo.left,top:geo.top,width:geo.width,height:geo.height,
                 isdrawing:true,name:'AD5 счётчик: '+c.name,controlledby:'',tint_color:c.color,sides:urls.map(encodeURIComponent).join('|'),currentSide:side});
             if(!g){gm('Не удалось создать рамку «'+esc(c.name)+'»: картинки набора должны быть из вашей библиотеки Roll20.');return;}
-            c.ring=g.id;dirty();toBack(g);return;
+            c.ring=g.id;dirty();placeOrder(g);return;
         }
         var patch={},want=Object.assign({imgsrc:urls[side],currentSide:side,tint_color:c.color},geo);
         Object.keys(want).forEach(function(k){if(String(g.get(k))!==String(want[k]))patch[k]=want[k];});
-        if(Object.keys(patch).length){g.set(patch);if(patch.layer)toBack(g);}
+        if(Object.keys(patch).length){g.set(patch);if(patch.layer||patch.imgsrc)placeOrder(g);}
     }
     function redraw(bearerId){countersOf(bearerId).forEach(function(c,i){drawRing(c,i);});refreshTooltip(bearerId);}
     function refreshTooltip(bearerId){
