@@ -3,11 +3,15 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
     log('AD5Counters: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Counters 1.0.0 — счётчики-рамки на токенах (заряды способностей).
+ * AD5 Counters 1.1.0 — счётчики на токенах (заряды способностей).
  *
- * Счётчик — кольцо из N делений вокруг токена (картинки 0…N из набора рамок).
- * Рамка лежит под токеном и переезжает вместе с ним; цвет задаётся тонированием.
- * Несколько счётчиков на одном токене — концентрические кольца.
+ * Счётчик показан статус-маркером на токене-носителе без цифры: маркер — часть
+ * токена и перемещается вместе с ним. По умолчанию это цветная точка Roll20 в цвет
+ * счётчика (СЧЁТЦВЕТ); свой маркер — строкой СЧЁТМАРКЕР или командой marker.
+ * Заряды видны в подсказке токена (AD5 Wounds) и в !ad5counter list.
+ * Рамки-кольца из N делений (картинки 0…N) — по желанию: !ad5counter rings on.
+ * Рамка — отдельная картинка под токеном; API Roll20 не умеет группировать её с
+ * токеном, поэтому при перетаскивании она догоняет токен с задержкой.
  *
  * Счётчик описывается строками в описании способности (как ТРИГ:/ПОКА:).
  * Все строки начинаются с «СЧЁТ», поэтому остальные модули их не применяют.
@@ -38,6 +42,9 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
  *                                     AD5 Effect Turns), части через «+»
  *   СЧЁТХОДЫ: 10                      рамка снимается через 10 ходов носителя
  *   СЧЁТЦВЕТ: фиолетовый | #8a2be2
+ *   СЧЁТМАРКЕР: имя маркера           маркер на токене (имя из наборов кампании,
+ *                                     например Earthdawn); по умолчанию — точка
+ *                                     цвета счётчика
  * Отдельная способность-«детонатор»:
  *   СЧЁТЗАВЕРШИТЬ: Метка тьмы         при применении к цели завершает её
  *                                     счётчик «Метка тьмы» этого владельца:
@@ -50,18 +57,20 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
  *
  * Команды (GM, кроме use):
  *   !ad5counter images                — зарегистрировать набор из выделенного
+ *   !ad5counter rings on|off          — рамки-кольца вокруг токенов (по умолчанию off)
+ *   !ad5counter marker ИМЯ | маркер   — маркер счётчика на выделенном (пусто — цвет)
  *   !ad5counter list                  — счётчики выделенных токенов / страницы
  *   !ad5counter set ИМЯ N             — заряды на выделенном токене (+N/-N)
  *   !ad5counter remove ИМЯ|all        — снять с выделенного токена
  *   !ad5counter complete ИМЯ          — завершить (сработает эффект)
  *   !ad5counter use TOKEN TARGET|- Имя способности — применить блок счётчика
  *       из описания способности листа без AD5-атаки (для владельца токена)
- * Мастер может переключить сторону рамки (ПКМ → выбрать сторону) — заряды
- * счётчика станут равны выбранной стороне.
+ * При включённых рамках мастер может переключить сторону рамки (ПКМ → выбрать
+ * сторону) — заряды счётчика станут равны выбранной стороне.
  */
 var AD5Counters=AD5Counters||(function(){
     'use strict';
-    var VERSION='1.0.1',SCRIPT='AD5 Счётчики';
+    var VERSION='1.1.0',SCRIPT='AD5 Счётчики';
     var COLORS={'фиолетовый':'#8a2be2','красный':'#d0312d','синий':'#2f6fdf','голубой':'#3fb6e8','зелёный':'#2fa84f','зеленый':'#2fa84f','жёлтый':'#e8c02f','желтый':'#e8c02f','оранжевый':'#ef7d1a','белый':'transparent','чёрный':'#222222','черный':'#222222','серый':'#8a8a8a','розовый':'#e85fa8'};
     var EVENTS={
         'НАЧАЛО ХОДА':{ev:'НАЧАЛО ХОДА',who:'bearerTurn'},'КОНЕЦ ХОДА':{ev:'КОНЕЦ ХОДА',who:'bearerTurn'},
@@ -84,6 +93,7 @@ var AD5Counters=AD5Counters||(function(){
         r.seq=Number(r.seq)||0;
         r.sets=r.sets&&typeof r.sets==='object'?r.sets:{};
         r.counters=r.counters&&typeof r.counters==='object'?r.counters:{};
+        if(typeof r.rings!=='boolean')r.rings=false;
         return r;
     }
     function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
@@ -146,6 +156,7 @@ var AD5Counters=AD5Counters||(function(){
         if(!spec.full)spec.full=(spec.damage||spec.effect)&&!spec.accum?{mode:'now',repeat:false}:{mode:'none'};
         var turns=Number(field(list,'СЧ[ЁЕ]ТХОДЫ'));if(Number.isFinite(turns)&&turns>0)spec.turns=Math.floor(turns);
         var color=field(list,'СЧ[ЁЕ]ТЦВЕТ');if(color){var c=COLORS[color.trim().toLowerCase()]||color.trim();if(/^#[0-9a-f]{6}$/i.test(c)||c==='transparent')spec.color=c;}
+        var mk=field(list,'СЧ[ЁЕ]ТМАРКЕР');if(mk)spec.marker=mk.trim();
         return spec;
     }
 
@@ -170,6 +181,42 @@ var AD5Counters=AD5Counters||(function(){
     function countersOf(bearerId){
         var all=root().counters;return Object.keys(all).map(function(k){return all[k];}).filter(function(c){return c&&c.bearer===bearerId;}).sort(function(a,b){return a.created-b.created;});
     }
+    // ---------------------------------------------------------------- маркер на токене
+    // 1.1.0: счётчик по умолчанию показан статус-маркером носителя без цифры —
+    // маркер принадлежит самому токену и не отстаёт при перемещении (отдельную
+    // картинку API Roll20 сгруппировать с токеном не может). Заряды — в подсказке
+    // токена и в !ad5counter list; рамки-кольца — только по !ad5counter rings on.
+    var DOT_BY_COLOR={'#8a2be2':'purple','#d0312d':'red','#2f6fdf':'blue','#3fb6e8':'blue','#2fa84f':'green','#e8c02f':'yellow','#ef7d1a':'yellow','#e85fa8':'pink','#8a8a8a':'brown','#222222':'brown'};
+    var DOTS=['purple','red','blue','green','yellow','pink','brown'];
+    function markersOf(t){return String(t&&t.get('statusmarkers')||'').split(',').filter(Boolean);}
+    function markerBase(m){return String(m||'').replace(/@\d+$/,'');}
+    function sameMarker(a,b){a=markerBase(a);b=markerBase(b);return a===b||a.split('::')[0]===b.split('::')[0];}
+    function setMarker(t,tag,on){
+        if(!t||!tag)return;
+        var list=markersOf(t),out=[],present=false;
+        list.forEach(function(m){if(sameMarker(m,tag)){if(on&&!present)out.push(tag);present=true;}else out.push(m);});
+        if(on&&!present)out.push(tag);
+        var next=out.join(',');if(next!==String(t.get('statusmarkers')||''))t.set('statusmarkers',next);
+    }
+    function campaignMarkers(){try{return (JSON.parse(Campaign().get('_token_markers')||'[]')||[]).filter(function(m){return m&&m.tag;});}catch(e){return [];}}
+    function resolveMarker(text){
+        text=String(text||'').trim();if(!text)return null;
+        var list=campaignMarkers(),low=text.toLowerCase();
+        var hit=list.filter(function(m){return String(m.name).toLowerCase()===low||String(m.tag).toLowerCase()===low;})[0]||
+            list.filter(function(m){return String(m.name).toLowerCase().indexOf(low)===0;})[0]||
+            list.filter(function(m){return String(m.name).toLowerCase().indexOf(low)>=0;})[0];
+        return hit?String(hit.tag):text.replace(/[,\s]+/g,'-');
+    }
+    function defaultMarker(c,bearer){
+        // Цветная точка Roll20 в цвет счётчика; если на токене она уже занята — следующая свободная.
+        var taken=markersOf(bearer).map(markerBase);
+        countersOf(c.bearer).forEach(function(o){if(o!==c&&o.marker)taken.push(o.marker);});
+        var want=DOT_BY_COLOR[String(c.color||'').toLowerCase()]||'purple';
+        var order=[want].concat(DOTS.filter(function(d){return d!==want;}));
+        return order.filter(function(d){return taken.indexOf(d)<0;})[0]||want;
+    }
+    function markerUsedByOthers(c){return countersOf(c.bearer).some(function(o){return o!==c&&o.marker&&sameMarker(o.marker,c.marker);});}
+    function dropMarker(c){var t=tok(c.bearer);if(t&&c.marker&&!markerUsedByOthers(c))setMarker(t,c.marker,false);}
     function ringIndex(){var idx=Object.create(null),all=root().counters;Object.keys(all).forEach(function(k){if(all[k]&&all[k].ring)idx[all[k].ring]=k;});return idx;}
     function ringGeometry(bearer,i){
         var base=Math.max(Number(bearer.get('width'))||70,Number(bearer.get('height'))||70),size=Math.round(base*(1.3+0.28*i));
@@ -192,7 +239,15 @@ var AD5Counters=AD5Counters||(function(){
         Object.keys(want).forEach(function(k){if(String(g.get(k))!==String(want[k]))patch[k]=want[k];});
         if(Object.keys(patch).length){g.set(patch);if(patch.layer)toBack(g);}
     }
-    function redraw(bearerId){countersOf(bearerId).forEach(function(c,i){drawRing(c,i);});refreshTooltip(bearerId);}
+    function redraw(bearerId){
+        var t=tok(bearerId),rings=root().rings;
+        countersOf(bearerId).forEach(function(c,i){
+            if(t&&!c.marker)c.marker=defaultMarker(c,t);
+            if(t)setMarker(t,c.marker,true);
+            if(rings)drawRing(c,i);else removeRing(c);
+        });
+        refreshTooltip(bearerId);
+    }
     function refreshTooltip(bearerId){
         var t=tok(bearerId);if(!t)return;
         try{if(typeof AD5Wounds!=='undefined'&&AD5Wounds&&typeof AD5Wounds.sync==='function')AD5Wounds.sync(t);}catch(ignore){}
@@ -233,9 +288,14 @@ var AD5Counters=AD5Counters||(function(){
     }
     function attach(spec,bearer,ownerToken,ownerCid,actionName){
         var c=find(bearer.id,spec.name,ownerCid);
-        if(c){c.spec=spec;c.turnsLeft=spec.turns;c.max=spec.max;c.color=spec.color;c.full=spec.full;redraw(bearer.id);return c;}
+        if(c){
+            c.spec=spec;c.turnsLeft=spec.turns;c.max=spec.max;c.color=spec.color;c.full=spec.full;
+            if(spec.marker){var mk=resolveMarker(spec.marker);if(mk!==c.marker){dropMarker(c);c.marker=mk;}}
+            redraw(bearer.id);return c;
+        }
         c={id:newId(),name:spec.name,max:spec.max,charges:spec.start,bearer:bearer.id,owner:ownerToken?ownerToken.id:'',ownerCid:ownerCid||'',
-            color:spec.color,full:spec.full,spec:spec,turnsLeft:spec.turns,created:Date.now(),action:actionName||spec.name,filledNotified:false};
+            color:spec.color,full:spec.full,spec:spec,turnsLeft:spec.turns,created:Date.now(),action:actionName||spec.name,filledNotified:false,
+            marker:spec.marker?resolveMarker(spec.marker):''};
         root().counters[c.id]=c;
         redraw(bearer.id);
         gm('<b>'+esc(c.name)+'</b> → '+esc(tokenName(bearer))+': '+c.charges+'/'+c.max+'.');
@@ -244,7 +304,7 @@ var AD5Counters=AD5Counters||(function(){
     }
     function remove(c,reason){
         if(!c||!root().counters[c.id])return;
-        delete root().counters[c.id];delete spent[c.id];
+        dropMarker(c);delete root().counters[c.id];delete spent[c.id];
         if(c.full&&c.full.mode==='button')setButton(c,false);
         removeRing(c);redraw(c.bearer);
         if(reason)gm('<b>'+esc(c.name)+'</b> снят с '+esc(tokenName(tok(c.bearer)))+': '+esc(reason)+'.');
@@ -396,9 +456,9 @@ var AD5Counters=AD5Counters||(function(){
         gm('Набор рамок на <b>'+max+'</b> делений сохранён ('+urls.length+' картинок). Выделенные объекты можно удалить.');
     }
     function listText(tokens){
-        var rows=[];tokens.forEach(function(t){countersOf(t.id).forEach(function(c){rows.push(esc(tokenName(t))+': <b>'+esc(c.name)+'</b> '+c.charges+'/'+c.max+(c.turnsLeft?' · ходов '+c.turnsLeft:'')+(c.spec&&c.spec.accum?' · +'+(c.spec.accum.attack*c.charges)+' атака, +'+(c.spec.accum.damage*c.charges)+' урон':''));});});
+        var rows=[];tokens.forEach(function(t){countersOf(t.id).forEach(function(c){rows.push(esc(tokenName(t))+': <b>'+esc(c.name)+'</b> '+c.charges+'/'+c.max+' · маркер '+esc(String(c.marker||'').split('::')[0])+(c.turnsLeft?' · ходов '+c.turnsLeft:'')+(c.spec&&c.spec.accum?' · +'+(c.spec.accum.attack*c.charges)+' атака, +'+(c.spec.accum.damage*c.charges)+' урон':''));});});
         var sets=Object.keys(root().sets).sort(function(a,b){return a-b;}).join(', ')||'нет';
-        return '<b>'+SCRIPT+' '+VERSION+'</b> · наборы рамок: '+esc(sets)+'<br>'+(rows.join('<br>')||'Счётчиков нет.');
+        return '<b>'+SCRIPT+' '+VERSION+'</b> · рамки '+(root().rings?'включены':'выключены (только маркер)')+' · наборы рамок: '+esc(sets)+'<br>'+(rows.join('<br>')||'Счётчиков нет.');
     }
     function command(msg){
         var args=String(msg.content||'').trim().split(/\s+/),sub=String(args[1]||'list').toLowerCase();
@@ -406,6 +466,12 @@ var AD5Counters=AD5Counters||(function(){
         if(!playerIsGM(msg.playerid))throw new Error('Команда доступна мастеру.');
         var sel=selected(msg).filter(function(o){return o.get('_type')==='graphic';}),name=args.slice(2).join(' ');
         if(sub==='images'){registerImages(msg);return;}
+        if(sub==='rings'){
+            var v=String(args[2]||'').toLowerCase();if(v!=='on'&&v!=='off')throw new Error('Формат: !ad5counter rings on|off');
+            root().rings=v==='on';
+            var all={};Object.keys(root().counters).forEach(function(id){var c=root().counters[id];if(c)all[c.bearer]=true;});Object.keys(all).forEach(redraw);
+            gm('Рамки счётчиков '+(root().rings?'включены':'выключены — счётчики видны маркером на токене')+'.');return;
+        }
         if(sub==='list'){var page=Campaign().get('playerpageid');gm(listText(sel.length?sel:(findObjs({_type:'graphic',_pageid:page})||[]).filter(function(t){return countersOf(t.id).length;})));return;}
         if(!sel.length)throw new Error('Выделите токен-носитель.');
         sel.forEach(function(t){
@@ -417,7 +483,12 @@ var AD5Counters=AD5Counters||(function(){
                 countersOf(t.id).forEach(function(c){if(name.toLowerCase()==='all'||norm(c.name)===norm(name))remove(c,'снят мастером');});
             }else if(sub==='complete'){
                 var cc=find(t.id,name);if(!cc)throw new Error('Нет счётчика «'+name+'».');fire(cc,'завершено мастером');
-            }else throw new Error('Команды: images, list, set, remove, complete, use.');
+            }else if(sub==='marker'){
+                var mm=/^(.*?)\s*\|\s*(.*)$/.exec(name);if(!mm)throw new Error('Формат: !ad5counter marker ИМЯ | маркер (пусто — цвет счётчика)');
+                var cm=find(t.id,mm[1]);if(!cm)throw new Error('Нет счётчика «'+mm[1]+'».');
+                dropMarker(cm);cm.marker=mm[2].trim()?resolveMarker(mm[2]):'';redraw(t.id);
+                gm('<b>'+esc(cm.name)+'</b>: маркер '+esc(String(cm.marker).split('::')[0])+'.');
+            }else throw new Error('Команды: images, rings, list, set, remove, complete, marker, use.');
         });
     }
 
@@ -433,7 +504,7 @@ var AD5Counters=AD5Counters||(function(){
             redraw(c.bearer);
             return;
         }
-        if(!countersOf(g.id).length)return;
+        if(!countersOf(g.id).length||!root().rings)return;
         var keys=['left','top','width','height','layer','_pageid'];
         if(!prev||keys.some(function(k){return String(prev[k])!==String(g.get(k));}))redraw(g.id);
     }
@@ -442,6 +513,8 @@ var AD5Counters=AD5Counters||(function(){
         root();
         Object.keys(root().counters).forEach(function(id){if(!root().counters[id])delete root().counters[id];});
         var bearers={};Object.keys(root().counters).forEach(function(id){var b=root().counters[id].bearer;if(tok(b))bearers[b]=true;});Object.keys(bearers).forEach(redraw);
+        // Рамки без записи (остались от удалённых счётчиков) — убираем.
+        var known=ringIndex();(findObjs({_type:'graphic'})||[]).forEach(function(g){if(/^AD5 счётчик: /.test(String(g.get('name')||''))&&!known[g.id]&&g.get('isdrawing'))g.remove();});
         (function reconcile(attempt){
             var missing=Object.keys(root().counters).filter(function(id){return !tok(root().counters[id].bearer);});
             if(!missing.length)return;
@@ -474,10 +547,10 @@ var AD5Counters=AD5Counters||(function(){
                 else gm(esc(e.message||e));
             }
         });
-        gm('<b>'+SCRIPT+' '+VERSION+'</b> запущен.'+(ev?'':' <b>Нет AD5 События</b> — заряды по событиям не начисляются.')+' Наборы рамок: '+esc(Object.keys(root().sets).join(', ')||'не загружены (!ad5counter images)')+'.');
+        gm('<b>'+SCRIPT+' '+VERSION+'</b> запущен.'+(ev?'':' <b>Нет AD5 События</b> — заряды по событиям не начисляются.')+' Рамки: '+(root().rings?'включены':'выключены, счётчики — маркером на токене (!ad5counter rings on)')+'.');
     });
     return {version:VERSION,onApplied:onApplied,combatModifiers:combatModifiers,tooltipLines:tooltipLines,parse:parseBlock,list:countersOf,
-        _test:{rollFormula:rollFormula,onEvent:onEvent,onAttack:onAttack,setCharges:setCharges,fire:fire,libraryUrl:libraryUrl}};
+        _test:{defaultMarker:defaultMarker,resolveMarker:resolveMarker,rollFormula:rollFormula,onEvent:onEvent,onAttack:onAttack,setCharges:setCharges,fire:fire,libraryUrl:libraryUrl}};
 }());
 
 }
