@@ -1,0 +1,243 @@
+/* Installation guard: disable old unguarded versions before installing. */
+if(typeof AD5Sight!=='undefined'&&AD5Sight) {
+    log('AD5Sight: duplicate module skipped; keep one installed copy.');
+} else {
+/*
+ * AD5 Sight 1.0.0 — линия видимости по стенам динамического освещения и освещённость.
+ *
+ * Стены: пути (path/pathv2) на слое walls, закрытые двери (door) и окна со ставнями
+ * (window, isShuttered). Тип преграды: wall — блокирует, transparent — нет,
+ * oneWay — пропускает взгляд с одной стороны (oneWayReversed меняет сторону).
+ *
+ * Скорость: отрезки стен каждой страницы строятся один раз и хранятся в сетке-индексе
+ * (ячейки 280 px). Кэш сбрасывается только при добавлении, изменении или удалении
+ * стены, двери или окна. Проверка луча перебирает лишь отрезки в ячейках вдоль луча.
+ *
+ * Видимость токена: 5 лучей от центра наблюдателя — к центру и четырём углам цели.
+ *   canSee — хотя бы один луч свободен; visibility — сколько лучей свободно.
+ * Укрытие стенами считает AD5 Environment (5 точек поперёк цели): стена — преграда
+ * на всю высоту, все точки закрыты — полное укрытие.
+ *
+ * Освещённость (для скрытности): дневной свет страницы, источники света токенов
+ * (яркий/тусклый, с учётом стен), тёмное зрение наблюдателя (night vision токена или
+ * «тёмное зрение N» в листе: тьма → тусклый, тусклый → яркий), слепое зрение и
+ * чувство вибрации («слепое зрение N», «blindsight N») игнорируют темноту.
+ *   illumination(target, observer) → 'bright' | 'dim' | 'dark'
+ *
+ * Команды (GM): !ad5sight — выделите два токена: видимость, освещение, укрытие;
+ *               !ad5sight walls — число стен на странице; !ad5sight rebuild — сброс кэша.
+ */
+var AD5Sight=AD5Sight||(function(){
+    'use strict';
+    var VERSION='1.0.0',SCRIPT='AD5 Sight',CELL=280,EPS=1e-9;
+    var cache=Object.create(null),stamp=0;
+    // Дневной свет: доля ≥ BRIGHT — яркий, ≥ DIM — тусклый.
+    var DAYLIGHT_BRIGHT=0.75,DAYLIGHT_DIM=0.25;
+
+    function num(v,d){var n=Number(v);return Number.isFinite(n)?n:d;}
+    function bool(v){return v===true||v==='true'||v===1||v==='1';}
+    function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+    function pageOf(o){return String(o&&o.get&&(o.get('_pageid')||o.get('pageid'))||'');}
+    function parseJson(v){if(v==null||v==='')return null;if(typeof v==='object')return v;try{return JSON.parse(v);}catch(e){return null;}}
+
+    // ---------------------------------------------------------------- геометрия стен
+    function transformer(cx,cy,w,h,sx,sy,deg){
+        var a=num(deg,0)*Math.PI/180,c=Math.cos(a),s=Math.sin(a);sx=num(sx,1)||1;sy=num(sy,1)||1;
+        return function(x,y){var lx=(x-w/2)*sx,ly=(y-h/2)*sy;return [cx+lx*c-ly*s,cy+lx*s+ly*c];};
+    }
+    function pathSegments(p){
+        var data=parseJson(p.get('path')||p.get('_path'));if(!Array.isArray(data))return [];
+        var T=transformer(num(p.get('left'),0),num(p.get('top'),0),num(p.get('width'),0),num(p.get('height'),0),p.get('scaleX'),p.get('scaleY'),p.get('rotation'));
+        var out=[],prev=null,prevType='';
+        data.forEach(function(t){
+            if(!Array.isArray(t)||t.length<3)return;var type=String(t[0]),pt=T(num(t[t.length-2],0),num(t[t.length-1],0));
+            if(type==='M'&&prevType!=='M'){prev=pt;}
+            else if(prev){out.push([prev,pt]);prev=pt;}
+            prevType=type;
+        });
+        return out;
+    }
+    function pathV2Segments(p){
+        var pts=parseJson(p.get('points'));if(!Array.isArray(pts)||pts.length<2)return [];
+        var mx=Infinity,my=Infinity,Mx=-Infinity,My=-Infinity;
+        pts.forEach(function(q){mx=Math.min(mx,q[0]);my=Math.min(my,q[1]);Mx=Math.max(Mx,q[0]);My=Math.max(My,q[1]);});
+        var w=Mx-mx,h=My-my,T=transformer(num(p.get('x'),0),num(p.get('y'),0),w,h,1,1,p.get('rotation')),shape=String(p.get('shape')||'pol');
+        var local=pts.map(function(q){return [q[0]-mx,q[1]-my];}),ring=[];
+        if(shape==='rec'){ring=[[0,0],[w,0],[w,h],[0,h],[0,0]];}
+        else if(shape==='eli'){for(var i=0;i<=24;i++){var a=i/24*Math.PI*2;ring.push([w/2+Math.cos(a)*w/2,h/2+Math.sin(a)*h/2]);}}
+        else ring=local;
+        var world=ring.map(function(q){return T(q[0],q[1]);}),out=[];
+        for(var j=1;j<world.length;j++)out.push([world[j-1],world[j]]);
+        return out;
+    }
+    // Двери и окна: центр (x, -y) и две ручки (ось Y у них перевёрнута).
+    function portalSegment(o){
+        var path=parseJson(o.get('path'));if(!path||!path.handle0||!path.handle1)return [];
+        var x=num(o.get('x'),0),y=-num(o.get('y'),0);
+        return [[[x+num(path.handle0.x,0),y-num(path.handle0.y,0)],[x+num(path.handle1.x,0),y-num(path.handle1.y,0)]]];
+    }
+    function barrierOf(o){
+        var type=String(o.get('_type')||o.get('type')||'');
+        if(type==='door')return bool(o.get('isOpen'))?null:'wall';
+        if(type==='window')return bool(o.get('isShuttered'))?'wall':null;
+        var b=String(o.get('barrierType')||'wall');
+        return b==='transparent'||b==='none'?null:b;
+    }
+    function build(pageId){
+        var segs=[],grid=Object.create(null);
+        function add(o,list,kind){
+            var b=barrierOf(o);if(!b)return;
+            list.forEach(function(s){
+                var seg={x1:s[0][0],y1:s[0][1],x2:s[1][0],y2:s[1][1],oneWay:b==='oneWay',rev:bool(o.get('oneWayReversed')),id:o.id,kind:kind,mark:0};
+                var i=segs.push(seg)-1,c0=Math.floor(Math.min(seg.x1,seg.x2)/CELL),c1=Math.floor(Math.max(seg.x1,seg.x2)/CELL),r0=Math.floor(Math.min(seg.y1,seg.y2)/CELL),r1=Math.floor(Math.max(seg.y1,seg.y2)/CELL);
+                for(var cx=c0;cx<=c1;cx++)for(var cy=r0;cy<=r1;cy++){var k=cx+':'+cy;(grid[k]||(grid[k]=[])).push(i);}
+            });
+        }
+        (findObjs({_type:'path',_pageid:pageId,layer:'walls'})||[]).forEach(function(o){add(o,pathSegments(o),'path');});
+        (findObjs({_type:'pathv2',_pageid:pageId,layer:'walls'})||[]).forEach(function(o){add(o,pathV2Segments(o),'pathv2');});
+        ['door','window'].forEach(function(t){(findObjs({_type:t,_pageid:pageId})||[]).forEach(function(o){add(o,portalSegment(o),t);});});
+        return {segs:segs,grid:grid,dirty:false};
+    }
+    function pageCache(pageId){
+        pageId=String(pageId||'');var c=cache[pageId];
+        if(!c||c.dirty){try{c=cache[pageId]=build(pageId);}catch(e){log(SCRIPT+': стены страницы не прочитаны: '+e.message);c=cache[pageId]={segs:[],grid:Object.create(null),dirty:false};}}
+        return c;
+    }
+    function invalidate(pageId){if(pageId&&cache[pageId])cache[pageId].dirty=true;else if(!pageId)cache=Object.create(null);}
+
+    // ---------------------------------------------------------------- лучи
+    // Односторонняя стена пропускает взгляд, если свет идёт от цели к наблюдателю
+    // со стороны, куда смотрит нормаль стены (oneWayReversed — обратная сторона).
+    function oneWayPasses(seg,fromX,fromY,toX,toY){
+        var dx=seg.x2-seg.x1,dy=seg.y2-seg.y1,nx=dy,ny=-dx;if(seg.rev){nx=-nx;ny=-ny;}
+        return (toX-fromX)*nx+(toY-fromY)*ny>0;
+    }
+    function intersectT(ax,ay,bx,by,s){
+        var rx=bx-ax,ry=by-ay,sx=s.x2-s.x1,sy=s.y2-s.y1,den=rx*sy-ry*sx;if(Math.abs(den)<EPS)return null;
+        var qx=s.x1-ax,qy=s.y1-ay,t=(qx*sy-qy*sx)/den,u=(qx*ry-qy*rx)/den;
+        return (t>=-1e-7&&t<=1+1e-7&&u>=-1e-7&&u<=1+1e-7)?t:null;
+    }
+    // Первая преграда на луче A→B: {t:0..1, id, kind} или null. A — наблюдатель/источник.
+    // Обходятся только ячейки сетки, через которые проходит луч (алгоритм Amanatides–Woo);
+    // any=true — выход на первой найденной преграде.
+    function firstHit(pageId,ax,ay,bx,by,any){
+        var c=pageCache(pageId);if(!c.segs.length)return null;
+        stamp++;var best=null,dx=bx-ax,dy=by-ay;
+        var cx=Math.floor(ax/CELL),cy=Math.floor(ay/CELL),ex=Math.floor(bx/CELL),ey=Math.floor(by/CELL);
+        var stepX=dx>0?1:dx<0?-1:0,stepY=dy>0?1:dy<0?-1:0;
+        var tMaxX=stepX?(((stepX>0?cx+1:cx)*CELL-ax)/dx):Infinity,tMaxY=stepY?(((stepY>0?cy+1:cy)*CELL-ay)/dy):Infinity;
+        var tDX=stepX?CELL/Math.abs(dx):Infinity,tDY=stepY?CELL/Math.abs(dy):Infinity,guard=0;
+        while(guard++<100000){
+            var list=c.grid[cx+':'+cy];
+            if(list)for(var i=0;i<list.length;i++){
+                var s=c.segs[list[i]];if(s.mark===stamp)continue;s.mark=stamp;
+                var t=intersectT(ax,ay,bx,by,s);if(t===null)continue;
+                if(s.oneWay&&oneWayPasses(s,bx,by,ax,ay))continue;
+                if(!best||t<best.t)best={t:t,id:s.id,kind:s.kind};
+                if(any)return best;
+            }
+            var tExit=Math.min(tMaxX,tMaxY);
+            if(best&&best.t<=tExit+1e-9)return best;
+            if(cx===ex&&cy===ey)break;
+            if(tExit>1+1e-9)break;
+            if(tMaxX<tMaxY){cx+=stepX;tMaxX+=tDX;}else{cy+=stepY;tMaxY+=tDY;}
+        }
+        return best;
+    }
+    function blocked(pageId,ax,ay,bx,by){return !!firstHit(pageId,ax,ay,bx,by,true);}
+    function center(t){return {x:num(t.get('left'),0),y:num(t.get('top'),0)};}
+    function samplePoints(t){
+        var c=center(t),hw=num(t.get('width'),70)/2*0.9,hh=num(t.get('height'),70)/2*0.9;
+        return [c,{x:c.x-hw,y:c.y-hh},{x:c.x+hw,y:c.y-hh},{x:c.x+hw,y:c.y+hh},{x:c.x-hw,y:c.y+hh}];
+    }
+    function visibility(observer,target){
+        if(!observer||!target)return {visible:0,total:5,fraction:0};
+        var page=pageOf(observer);if(page!==pageOf(target))return {visible:0,total:5,fraction:0};
+        if(!pageCache(page).segs.length)return {visible:5,total:5,fraction:1};
+        var o=center(observer),pts=samplePoints(target),n=0;
+        pts.forEach(function(p){if(!blocked(page,o.x,o.y,p.x,p.y))n++;});
+        return {visible:n,total:pts.length,fraction:n/pts.length};
+    }
+    function canSee(observer,target){return visibility(observer,target).visible>0;}
+
+    // ---------------------------------------------------------------- освещённость
+    function pxPerFoot(pageId){var p=getObj('page',pageId),snap=num(p&&p.get('snapping_increment'),1)||1,scale=num(p&&p.get('scale_number'),5)||5;return 70*snap/scale;}
+    function radius(t){return Math.max(num(t.get('width'),70),num(t.get('height'),70))/2;}
+    function edgeFeet(a,b){var ca=center(a),cb=center(b),d=Math.sqrt(Math.pow(ca.x-cb.x,2)+Math.pow(ca.y-cb.y,2));return Math.max(0,d-radius(a)-radius(b))/pxPerFoot(pageOf(a));}
+    function senseFeet(observer,re){
+        var cid=String(observer.get('represents')||'');if(!cid)return 0;
+        var a=findObjs({_type:'attribute',_characterid:cid,name:'npc_senses'})[0],txt=String(a&&a.get('current')||'');
+        var m=re.exec(txt);if(!m)return 0;var n=Number(String(m[1]).replace(',','.'));
+        return /(?:м\b|метр)/i.test(m[2]||'')?n/0.3048:n;
+    }
+    var DARKVISION=/(?:darkvision|т[её]мное\s+зрение)\s*[:—-]?\s*(\d+(?:[.,]\d+)?)\s*(фт|фут\w*|ft|feet|м\b|метр\w*)?/i;
+    var BLINDSENSE=/(?:blindsight|tremorsense|слепое\s+зрение|чувство\s+вибрации|чувство\s+колебаний)\s*[:—-]?\s*(\d+(?:[.,]\d+)?)\s*(фт|фут\w*|ft|feet|м\b|метр\w*)?/i;
+    function darkvisionFeet(observer){
+        if(!observer)return 0;
+        if(bool(observer.get('has_night_vision')))return Math.max(num(observer.get('night_vision_distance'),0),senseFeet(observer,DARKVISION));
+        return senseFeet(observer,DARKVISION);
+    }
+    function daylight(pageId){
+        var p=getObj('page',pageId);if(!p)return 1;
+        if(p.get('dynamic_lighting_enabled')===false)return 1;
+        if(!bool(p.get('daylight_mode_enabled')))return 0;
+        var v=num(p.get('daylightModeOpacity'),1);return v>1?v/100:v;
+    }
+    // Освещённость клетки цели без учёта наблюдателя: 'bright' | 'dim' | 'dark'.
+    function lightAt(target){
+        var page=pageOf(target),p=getObj('page',page);
+        if(p&&p.get('dynamic_lighting_enabled')===false)return 'bright';
+        var day=daylight(page),level=day>=DAYLIGHT_BRIGHT?2:day>=DAYLIGHT_DIM?1:0;if(level===2)return 'bright';
+        var tc=center(target),ppf=pxPerFoot(page),rt=radius(target);
+        (findObjs({_type:'graphic',_pageid:page})||[]).some(function(l){
+            if(l.get('layer')==='gmlayer')return false;
+            var br=bool(l.get('emits_bright_light'))?num(l.get('bright_light_distance'),0):0,dm=bool(l.get('emits_low_light'))?num(l.get('low_light_distance'),0):0;
+            if(br<=0&&dm<=0)return false;
+            var lc=center(l),d=Math.max(0,Math.sqrt(Math.pow(lc.x-tc.x,2)+Math.pow(lc.y-tc.y,2))-rt)/ppf;
+            var lvl=d<=br?2:d<=Math.max(br,dm)?1:0;if(lvl<=level)return false;
+            if(l.id!==target.id&&blocked(page,lc.x,lc.y,tc.x,tc.y))return false;
+            level=lvl;return level===2;
+        });
+        return level===2?'bright':level===1?'dim':'dark';
+    }
+    // Освещённость цели для конкретного наблюдателя (тёмное и слепое зрение).
+    function illumination(target,observer){
+        var base=lightAt(target);if(!observer||base==='bright')return base;
+        var dist=edgeFeet(observer,target);
+        if(senseFeet(observer,BLINDSENSE)>=dist-1e-6)return 'bright';
+        if(darkvisionFeet(observer)>=dist-1e-6)return base==='dark'?'dim':'bright';
+        return base;
+    }
+
+    // ---------------------------------------------------------------- события и команды
+    function touch(o,prev){
+        var type=String(o&&o.get&&o.get('_type')||'');
+        if(type==='door'||type==='window'){invalidate(pageOf(o));return;}
+        if(o.get('layer')==='walls'||(prev&&prev.layer==='walls'))invalidate(pageOf(o));
+    }
+    ['path','pathv2','door','window'].forEach(function(t){
+        on('add:'+t,function(o){touch(o);});
+        on('change:'+t,function(o,prev){touch(o,prev);});
+        on('destroy:'+t,function(o){touch(o,{layer:'walls'});});
+    });
+    on('ready',function(){
+        on('chat:message',function(msg){
+            if(msg.type!=='api'||!/^!ad5sight(?:\s|$)/i.test(msg.content||'')||!playerIsGM(msg.playerid))return;
+            var arg=String(msg.content).split(/\s+/)[1]||'',sel=(msg.selected||[]).map(function(s){return getObj('graphic',s._id);}).filter(Boolean),page=sel[0]?pageOf(sel[0]):String(Campaign().get('playerpageid')||'');
+            var out;
+            if(/^rebuild$/i.test(arg)){invalidate();out='Кэш стен сброшен.';}
+            else if(/^walls$/i.test(arg)||sel.length<2){var c=pageCache(page);out='Стен (отрезков) на странице: <b>'+c.segs.length+'</b>, ячеек индекса: '+Object.keys(c.grid).length+'.'+(sel.length===1?'<br>Свет у '+esc(sel[0].get('name')||'токена')+': <b>'+lightAt(sel[0])+'</b>.':'')+' Выделите два токена (наблюдатель, цель) для проверки видимости.';}
+            else{
+                var v=visibility(sel[0],sel[1]),cov=null;
+                try{if(typeof AD5Environment!=='undefined'&&AD5Environment&&AD5Environment.coverBetween)cov=AD5Environment.coverBetween(sel[0],sel[1]);}catch(ignore){}
+                out=esc(sel[0].get('name')||'1')+' → '+esc(sel[1].get('name')||'2')+': свободных лучей '+v.visible+'/'+v.total+' ('+(v.visible?'видит':'не видит')+'); свет у цели: <b>'+lightAt(sel[1])+'</b>, для наблюдателя: <b>'+illumination(sel[1],sel[0])+'</b>'+(cov?'; укрытие: '+esc(cov.label||cov.tier):'')+'.';
+            }
+            sendChat(SCRIPT,'/w gm '+out,null,{noarchive:true});
+        });
+        log(SCRIPT+' '+VERSION+' ready.');
+    });
+    return {version:VERSION,firstHit:firstHit,blocked:blocked,visibility:visibility,canSee:canSee,lightAt:lightAt,illumination:illumination,darkvisionFeet:darkvisionFeet,invalidate:invalidate,
+        _test:{pathSegments:pathSegments,pathV2Segments:pathV2Segments,portalSegment:portalSegment,cache:function(p){return pageCache(p);}}};
+}());
+
+}

@@ -44,7 +44,7 @@ if(typeof AD5Reactions!=='undefined'&&AD5Reactions) {
 var AD5Reactions = (function(){
     'use strict';
 
-    var VERSION='1.6.13', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
+    var VERSION='1.6.14', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
     var opportunityPending=Object.create(null);
     var runtimePending=Object.create(null), seq=0, recentMove=Object.create(null), lastAreaCheck=null, movementHookRegistered=false, featherCollecting=Object.create(null), reactionRowCache=Object.create(null);
     // 1.4.2 Fast Fall: cache Feather Fall card discovery per character.
@@ -123,7 +123,9 @@ var AD5Reactions = (function(){
         return gap<=1e-9?scale:Math.round((gap+1)*scale*100)/100;
     }
     function canSeeForReaction(observer,target){
-        try{if(typeof AD5Visibility!=='undefined'&&AD5Visibility&&typeof AD5Visibility.canSee==='function')return !!AD5Visibility.canSee(observer,target);}catch(ignoreVisibility){}
+        try{if(typeof AD5Visibility!=='undefined'&&AD5Visibility&&typeof AD5Visibility.canSee==='function'&&!AD5Visibility.canSee(observer,target))return false;}catch(ignoreVisibility){}
+        // Стены динамического освещения (AD5 Sight): за стеной или закрытой дверью цель не видна.
+        try{if(typeof AD5Sight!=='undefined'&&AD5Sight&&typeof AD5Sight.canSee==='function'&&observer&&target&&observer.get&&target.get&&!AD5Sight.canSee(observer,target))return false;}catch(ignoreSight){}
         return true;
     }
     function rangeNumber(raw){

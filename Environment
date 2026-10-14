@@ -77,7 +77,7 @@ if(typeof AD5Environment!=='undefined'&&AD5Environment) {
  */
 var AD5Environment=(function(){
     'use strict';
-    var VERSION='1.6.10',SCRIPT='AD5 Environment',HEIGHT_HOOKED=false,BROWN='#8b4513',HEIGHT_LAYER='gmlayer',pendingTokenMoves=Object.create(null),forcedMoveGuards=Object.create(null),forcedMoveSequence=0;
+    var VERSION='1.7.0',SCRIPT='AD5 Environment',HEIGHT_HOOKED=false,BROWN='#8b4513',HEIGHT_LAYER='gmlayer',pendingTokenMoves=Object.create(null),forcedMoveGuards=Object.create(null),forcedMoveSequence=0;
     var COVER_RULES={quarter:{key:'quarter',label:'1/4 укрытия',ac:1,dex:1},half:{key:'half',label:'1/2 укрытия',ac:2,dex:2},threeQuarter:{key:'threeQuarter',label:'3/4 укрытия',ac:5,dex:5},full:{key:'full',label:'полное укрытие',ac:0,dex:0,full:true}};
     var TYPE_LABELS={phys:'ФИЗ',zaslow:'ЗАСЛОУ',zashigh:'ЗАСХАЙ',solid:'СОЛИД'};
     var POSTURE_MARKERS={crouch:'027-Blindsiding',lie:'302-Ambushing'};
@@ -478,7 +478,7 @@ var AD5Environment=(function(){
         var targetCx=Number(target.get('left'))||0,targetCy=Number(target.get('top'))||0;
         var targetInfo=bodyHeightFromSheet(target),targetHeight=Math.max(0.1,targetInfo.height),targetBase=elevation(target),targetTop=targetBase+targetHeight,areas=pageAreas(pageIdOf(target)).filter(function(a){var t=areaType(a.rec);if(t==='solid'&&containsPointArea(a,targetCx,targetCy))return false;return t==='phys'||t==='solid';}),usedMap={},samples=targetLateralPoints(sx,sy,target),hiddenSum=0,solidHidden=0;
         samples=samples.map(function(point){
-            var threshold=-Infinity,solid=false,blockers=[];
+            var threshold=-Infinity,solid=false,blockers=[],wall=wallHit(pageId,sx,sy,point.x,point.y);
             areas.forEach(function(a){
                 var type=areaType(a.rec),iv=lineAreaInterval(a,sx,sy,point.x,point.y);if(!iv||iv.exit<=0.0001||iv.enter>=0.9999)return;
                 var top=areaHeight(a.rec);if(type==='phys'&&top<=0)return;
@@ -489,6 +489,7 @@ var AD5Environment=(function(){
                 var req=targetHeightThresholdForArea(sourceZ,top,iv);if(req.blockedAll){threshold=Infinity;}else if(req.threshold>threshold)threshold=req.threshold;
                 if(req.blockedAll||req.threshold>targetBase+0.001){blockers.push({id:id,name:name,height:top,type:type,threshold:req.blockedAll?Infinity:req.threshold});usedMap[id]={id:id,name:name,height:top,type:type};}
             });
+            if(wall){threshold=Infinity;blockers.push({id:wall.id,name:'Стена',height:Infinity,type:'wall',threshold:Infinity});usedMap[wall.id]={id:wall.id,name:'Стена',height:Infinity,type:'wall'};}
             var hidden=solid||threshold===Infinity?1:Math.max(0,Math.min(1,(threshold-targetBase)/targetHeight));
             hiddenSum+=hidden;if(solid)solidHidden+=1;
             return {x:point.x,y:point.y,offset:point.offset,hidden:hidden,visible:1-hidden,threshold:threshold,solid:solid,blockers:blockers,targetBase:targetBase,targetTop:targetTop,sourceZ:sourceZ};
@@ -502,6 +503,12 @@ var AD5Environment=(function(){
         if(!isToken(source)||!isToken(target)||pageIdOf(source)!==pageIdOf(target))return emptyCover(null,[],0);
         var sourceInfo=bodyHeightFromSheet(source),sourceBase=elevation(source),sourceAim=sourceBase+sourceInfo.height*SOURCE_AIM_FRACTION,result=coverProfileFromPoint(pageIdOf(target),Number(source.get('left'))||0,Number(source.get('top'))||0,sourceAim,target);
         result.sourceBase=sourceBase;result.sourceBodyHeight=sourceInfo.height;result.sourcePosture=sourceInfo.posture;result.sourceAim=sourceAim;return result;
+    }
+    // 1.7.0: стены динамического освещения (AD5 Sight) — преграда на всю высоту:
+    // закрытые двери, окна со ставнями, пути слоя walls (односторонние — по направлению).
+    function wallHit(pageId,sx,sy,tx,ty,nearest){
+        try{if(typeof AD5Sight!=='undefined'&&AD5Sight&&typeof AD5Sight.firstHit==='function')return AD5Sight.firstHit(String(pageId||''),sx,sy,tx,ty,!nearest);}catch(ignore){}
+        return null;
     }
     function propagationLimit(pageId,sx,sy,tx,ty,effectHeight,ignoreCover,sourceBase){
         if(ignoreCover)return {blocked:false,fraction:1,area:null};
@@ -528,6 +535,8 @@ var AD5Environment=(function(){
             if(!Number.isFinite(exit)||exit<=0.001||enter>=0.999||exit<=enter+1e-7)return;
             if(enter<best){best=enter;blocker={id:a.rec.objectId||a.obj.id,name:objectName(a.obj,a.rec),height:top,type:type,area:a};}
         });
+        var wall=wallHit(pageId,sx,sy,tx,ty,true);
+        if(wall&&wall.t<best){best=wall.t;blocker={id:wall.id,name:'Стена',height:Infinity,type:'wall',area:null};}
         return blocker?{blocked:true,fraction:Math.max(0,Math.min(1,best)),area:blocker}:{blocked:false,fraction:1,area:null};
     }
     function areaExposure(origin,target,areaHeight,ignoreCover){

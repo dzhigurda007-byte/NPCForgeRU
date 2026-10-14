@@ -3,7 +3,7 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
     log('AD5Visibility: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Visibility 1.2.0 — скрытность игроков и зрение NPC.
+ * AD5 Visibility 1.3.0 — скрытность игроков и зрение NPC.
  *
  * Маркер: «603-Stealthy» из набора Earthdawn Fourth Edition Token Marker Set.
  *
@@ -29,6 +29,11 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
  * - Дистанция считается от края до края токенов, поэтому крупные токены
  *   видят и замечаются дальше от центра.
  * - 100% — обычный бросок; 50% — помеха; 25% — помеха и −5.
+ * - Стены динамического освещения (AD5 Sight): за стеной, закрытой дверью или
+ *   окном со ставнями NPC не видит цель (все 5 лучей к цели перекрыты).
+ * - Свет у цели (AD5 Sight): тусклый — помеха на Внимательность, темнота — NPC
+ *   не видит цель. Тёмное зрение NPC (night vision токена или «тёмное зрение N»
+ *   в листе): темнота → тусклый, тусклый → яркий; слепое зрение — свет не важен.
  * - Ослеплённый, бессознательный, недееспособный, парализованный, оглушённый,
  *   окаменевший или мёртвый NPC не замечает никого.
  *
@@ -44,7 +49,7 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
  */
 var AD5Visibility=AD5Visibility||(function(){
     'use strict';
-    var VERSION='1.2.0',SCRIPT='AD5 Скрытность';
+    var VERSION='1.3.0',SCRIPT='AD5 Скрытность';
     var ABILITY_NAME='Скрытность',ABILITY_ACTION='!ad5stealth roll @{selected|token_id} ?{Бросок Скрытности|Обычный,normal|С преимуществом,adv|С помехой,dis}';
     var FRONT_FULL=20,FRONT_HALF=60,BACK_FEET=5;
     // Состояния, при которых наблюдатель никого не замечает (маркеры AD5 Condition Engine).
@@ -159,11 +164,22 @@ var AD5Visibility=AD5Visibility||(function(){
         var gap=Math.max(0,dist-ro-rt)/pxPerFoot(page);
         var f=facing(observer),fx=f.x,fy=f.y;
         var front=(dx*fx+dy*fy)>=-rt; // хотя бы часть цели перед линией плеч
-        if(!front)return gap<=BACK_FEET+1e-6?100:0;
-        if(gap<=FRONT_FULL+1e-6)return 100;
-        if(gap<=FRONT_HALF+1e-6)return 50;
-        return 25;
+        var pct=!front?(gap<=BACK_FEET+1e-6?100:0):gap<=FRONT_FULL+1e-6?100:gap<=FRONT_HALF+1e-6?50:25;
+        // 1.3.0: стены динамического освещения — цель за стеной/закрытой дверью не видна.
+        if(pct&&wallsHide(observer,target))return 0;
+        return pct;
     }
+    function wallsHide(observer,target){
+        try{if(typeof AD5Sight!=='undefined'&&AD5Sight&&typeof AD5Sight.canSee==='function')return !AD5Sight.canSee(observer,target);}catch(ignore){}
+        return false;
+    }
+    // Заслонённость по PHB: тусклый свет — слабая (помеха на Внимательность),
+    // темнота — сильная (наблюдатель не видит цель). Тёмное и слепое зрение — в AD5 Sight.
+    function lightFor(observer,target){
+        try{if(typeof AD5Sight!=='undefined'&&AD5Sight&&typeof AD5Sight.illumination==='function')return AD5Sight.illumination(target,observer);}catch(ignore){}
+        return 'bright';
+    }
+    var LIGHT_LABEL={bright:'яркий свет',dim:'тусклый свет — помеха',dark:'темнота'};
     function passivePerception(t){
         var cid=String(t.get('represents')||'');if(!cid)return 10;
         var senses=attrValue(cid,'npc_senses'),m=/(?:passive\s+perception|пассивн[а-яё]*\s+(?:восприяти[а-яё]*|внимательност[а-яё]*))\s*:?\s*(\d+)/i.exec(senses);
@@ -183,11 +199,12 @@ var AD5Visibility=AD5Visibility||(function(){
     // Бросок Внимательности observer против скрытого target (null — не видит).
     function perceptionRoll(observer,target){
         var pct=visionPercent(observer,target);if(!pct)return null;
-        var passive=passivePerception(observer),bonus=perceptionBonus(observer),dis=pct<100,penalty=pct<50?5:0;
+        var light=lightFor(observer,target);if(light==='dark')return null;
+        var passive=passivePerception(observer),bonus=perceptionBonus(observer),dis=pct<100||light==='dim',penalty=pct<50?5:0;
         var a=randomInteger(20),b=dis?randomInteger(20):null,die=dis?Math.min(a,b):a;
         var raw=die+bonus-penalty,total=Math.max(passive,raw);
-        var text='зрение '+pct+'%, к20 '+(dis?a+'/'+b+' (помеха)':a)+(bonus>=0?' + ':' − ')+Math.abs(bonus)+(penalty?' − '+penalty:'')+' = '+(raw<passive?raw+' → не ниже пассивной: <b>'+total+'</b>':'<b>'+total+'</b>');
-        return {pct:pct,passive:passive,raw:raw,total:total,text:text};
+        var text='зрение '+pct+'%'+(light==='dim'?', тусклый свет':'')+', к20 '+(dis?a+'/'+b+' (помеха)':a)+(bonus>=0?' + ':' − ')+Math.abs(bonus)+(penalty?' − '+penalty:'')+' = '+(raw<passive?raw+' → не ниже пассивной: <b>'+total+'</b>':'<b>'+total+'</b>');
+        return {pct:pct,light:light,passive:passive,raw:raw,total:total,text:text};
     }
 
     // ---- Скрытность
@@ -367,7 +384,7 @@ var AD5Visibility=AD5Visibility||(function(){
         if(!ids.length)lines.push('Скрытых персонажей нет.');
         ids.forEach(function(id){
             var t=getObj('graphic',id),rec=root().hidden[id];if(!t)return;
-            var watch=npcObservers(t.get('_pageid')).map(function(o){var pct=visionPercent(o,t);return esc(tokenName(o))+' '+(pct?pct+'% (пассивная '+passivePerception(o)+')':'—');});
+            var watch=npcObservers(t.get('_pageid')).map(function(o){var pct=visionPercent(o,t),light=pct?lightFor(o,t):'';return esc(tokenName(o))+' '+(pct?pct+'%, '+LIGHT_LABEL[light]+' (пассивная '+passivePerception(o)+')':(wallsHide(o,t)?'за стеной':'—'));});
             lines.push(esc(tokenName(t))+': Сл '+rec.dc+(watch.length?' · '+watch.join(', '):''));
         });
         gm(lines.join('<br>'));
