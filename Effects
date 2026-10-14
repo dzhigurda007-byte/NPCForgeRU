@@ -3,11 +3,13 @@ if(typeof AD5FX!=='undefined'&&AD5FX) {
     log('AD5FX: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 FX 1.3.0 — визуальные эффекты боя и пинг активного хода.
+ * AD5 FX 1.3.1 — визуальные эффекты боя и пинг активного хода.
  *
- * Эффекты (по событиям AD5 События) — уменьшенные копии встроенных эффектов Roll20,
- * по умолчанию втрое меньше (33%), чтобы не загромождать карту; !ad5vfx size 10–100,
- * при 100 — встроенные эффекты как есть:
+ * Эффекты (по событиям AD5 События) — встроенные эффекты Roll20 (размер 100%).
+ * !ad5vfx size 10–99 — уменьшенные копии: скрипт создаёт «свои эффекты» (custfx) с
+ * меньшими частицами. 1.3.1: прямое описание эффекта (spawnFxWithDefinition) в
+ * Jumpgate теряет цвет — частицы белые, поэтому оно больше не используется.
+ * Что показывается:
  *   - урон: цвет по типу урона (огонь, холод, кислота, яд, некротическая энергия,
  *     излучение, психический, силовое поле, электричество, звук; оружие — кровь);
  *   - критическое попадание — дополнительный взрыв;
@@ -21,13 +23,13 @@ if(typeof AD5FX!=='undefined'&&AD5FX) {
  * Скрытый токен (слой GM) — пинг и фокус только у мастера.
  *
  * Команды (GM): !ad5vfx — меню; !ad5vfx fx|ping|focus on|off (focus — пинг
- * переносит камеру к токену); !ad5vfx size N — размер эффектов в % (33 по умолчанию);
+ * переносит камеру к токену); !ad5vfx size N — размер эффектов в % (100 по умолчанию);
  * !ad5vfx test — эффекты на выделенном токене.
  * С 1.2.0 команда — !ad5vfx: «!ad5fx» принадлежит Turn Effect.
  */
 var AD5FX=AD5FX||(function(){
     'use strict';
-    var VERSION='1.3.0',SCRIPT='AD5 FX';
+    var VERSION='1.3.1',SCRIPT='AD5 FX';
     var FX_PER_SECOND=12,fxWindow=0,fxCount=0;
     var TYPE_COLORS=[
         [/огон|fire/,'fire'],[/холод|cold|frost/,'frost'],[/кислот|acid/,'acid'],[/яд|poison/,'slime'],
@@ -39,7 +41,11 @@ var AD5FX=AD5FX||(function(){
         if(!state.AD5FX||typeof state.AD5FX!=='object')state.AD5FX={};
         var r=state.AD5FX;r.version=VERSION;
         ['fx','ping','focus'].forEach(function(k){if(typeof r[k]!=='boolean')r[k]=true;});
-        var sz=Number(r.size);r.size=Number.isFinite(sz)&&sz>=10&&sz<=100?Math.round(sz):33;
+        // 1.3.1: по умолчанию снова встроенные эффекты (100%): в Jumpgate цвета из
+        // spawnFxWithDefinition не применяются, и уменьшенные эффекты были белыми шарами.
+        if(r.sizeV!==2){r.sizeV=2;r.size=100;}
+        var sz=Number(r.size);r.size=Number.isFinite(sz)&&sz>=10&&sz<=100?Math.round(sz):100;
+        r.custfx=r.custfx&&typeof r.custfx==='object'?r.custfx:{};
         return r;
     }
     function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
@@ -78,13 +84,23 @@ var AD5FX=AD5FX||(function(){
         if(shape.gravity)d.gravity={x:0,y:Math.round(shape.gravity.y*scale*1000)/1000};
         return d;
     }
+    // Уменьшенный эффект — объект «своего эффекта» Roll20 (custfx, как из панели FX),
+    // создаётся один раз на тип и размер и запускается spawnFx по id.
+    function customFx(type,pct){
+        var r=root(),key=type+'@'+pct,id=r.custfx[key],o=id&&getObj('custfx',id);if(o)return o.id;
+        var d=definition(type,pct/100);if(!d)return null;
+        o=createObj('custfx',{name:'AD5 '+key,definition:d});if(!o)return null;
+        r.custfx[key]=o.id;return o.id;
+    }
+    function dropCustomFx(){
+        var r=root();Object.keys(r.custfx).forEach(function(k){var o=getObj('custfx',r.custfx[k]);if(o)o.remove();});r.custfx={};
+    }
     function fxAt(t,type){
-        if(!root().fx||!t||hidden(t)||!allow())return;
-        var x=Number(t.get('left')),y=Number(t.get('top')),page=t.get('_pageid'),scale=root().size/100;
+        if(!root().fx||!t||hidden(t)||typeof spawnFx!=='function'||!allow())return;
+        var x=Number(t.get('left')),y=Number(t.get('top')),page=t.get('_pageid'),pct=root().size;
         try{
-            var d=scale<1&&typeof spawnFxWithDefinition==='function'?definition(type,scale):null;
-            if(d)spawnFxWithDefinition(x,y,d,page);
-            else if(typeof spawnFx==='function')spawnFx(x,y,type,page);
+            var id=pct<100?customFx(type,pct):null;
+            spawnFx(x,y,id||type,page);
         }catch(e){log(SCRIPT+': fx '+type+': '+e.message);}
     }
     function fxBetween(a,b,type){
@@ -140,7 +156,7 @@ var AD5FX=AD5FX||(function(){
     // ---------------------------------------------------------------- команды
     function menu(){
         var r=root(),b=function(label,cmd){return '<a style="display:inline-block;background:#3a3a5a;color:#fff;padding:3px 6px;margin:2px;border-radius:3px;text-decoration:none" href="'+cmd+'">'+esc(label)+'</a>';},sw=function(k,label){return b((r[k]?'✓ ':'✗ ')+label,'!ad5vfx '+k+' '+(r[k]?'off':'on'));};
-        gm('<b>'+SCRIPT+' '+VERSION+'</b><br>'+sw('fx','Эффекты')+sw('ping','Пинг хода')+sw('focus','Фокус камеры на токене')+'<br>Размер эффектов: '+r.size+'% '+b('Изменить','!ad5vfx size ?{Размер, % от встроенных (10–100)|33}')+b('Тест на выделенном','!ad5vfx test'));
+        gm('<b>'+SCRIPT+' '+VERSION+'</b><br>'+sw('fx','Эффекты')+sw('ping','Пинг хода')+sw('focus','Фокус камеры на токене')+'<br>Размер эффектов: '+r.size+'% '+b('Изменить','!ad5vfx size ?{Размер, % от встроенных (10–100; 100 — встроенные)|100}')+b('Тест на выделенном','!ad5vfx test'));
     }
     function command(msg){
         if(!playerIsGM(msg.playerid))return;
@@ -148,7 +164,7 @@ var AD5FX=AD5FX||(function(){
         var sel=(msg.selected||[]).map(function(s){return getObj('graphic',s._id);}).filter(Boolean);
         if(sub==='move')sub='focus';
         if(['fx','ping','focus'].indexOf(sub)>=0&&(val==='on'||val==='off')){r[sub]=val==='on';menu();return;}
-        if(sub==='size'){var n=Number(String(a[2]||'').replace('%',''));if(!(n>=10&&n<=100)){gm('Размер: от 10 до 100 (% от встроенных эффектов Roll20).');return;}r.size=Math.round(n);menu();return;}
+        if(sub==='size'){var n=Number(String(a[2]||'').replace('%',''));if(!(n>=10&&n<=100)){gm('Размер: от 10 до 100 (% от встроенных эффектов Roll20).');return;}if(Math.round(n)!==r.size)dropCustomFx();r.size=Math.round(n);menu();return;}
         if(sub==='test'){
             if(!sel.length){gm('Выделите токен.');return;}
             fxWindow=0;fxCount=0;var t=sel[0];
