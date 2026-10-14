@@ -3,7 +3,7 @@ if(typeof AD5FX!=='undefined'&&AD5FX) {
     log('AD5FX: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 FX 1.0.0 — визуальные эффекты боя, пинг и маркер активного хода.
+ * AD5 FX 1.1.0 — визуальные эффекты боя, пинг и маркер активного хода.
  *
  * Эффекты (встроенные эффекты Roll20 через spawnFx, по событиям AD5 События):
  *   - урон: цвет по типу урона (огонь, холод, кислота, яд, некротическая энергия,
@@ -21,11 +21,12 @@ if(typeof AD5FX!=='undefined'&&AD5FX) {
  *
  * Команды (GM): !ad5fx — меню; !ad5fx fx|ping|marker on|off; !ad5fx move on|off
  * (пинг переносит камеру игроков); !ad5fx marker set — картинка маркера из выделенного;
+ * !ad5fx marker set arrow — то же, но картинка — стрелка над токеном (images/turn-arrow.png);
  * !ad5fx color #RRGGBB; !ad5fx test — эффекты на выделенном токене.
  */
 var AD5FX=AD5FX||(function(){
     'use strict';
-    var VERSION='1.0.0',SCRIPT='AD5 FX';
+    var VERSION='1.1.0',SCRIPT='AD5 FX';
     var FX_PER_SECOND=12,fxWindow=0,fxCount=0;
     var TYPE_COLORS=[
         [/огон|fire/,'fire'],[/холод|cold|frost/,'frost'],[/кислот|acid/,'acid'],[/яд|poison/,'slime'],
@@ -40,6 +41,7 @@ var AD5FX=AD5FX||(function(){
         if(typeof r.move!=='boolean')r.move=false;
         r.color=/^#[0-9a-f]{6}$/i.test(String(r.color||''))?r.color:'#ffd700';
         r.markerImg=String(r.markerImg||'');r.markerId=String(r.markerId||'');
+        r.markerStyle=r.markerStyle==='arrow'?'arrow':'ring';
         return r;
     }
     function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
@@ -96,8 +98,15 @@ var AD5FX=AD5FX||(function(){
     function placeMarker(t){
         var r=root();if(!r.marker||!t){removeMarker();return;}
         var img=markerImage();if(!img){removeMarker();return;}
-        var size=Math.round(Math.max(Number(t.get('width'))||70,Number(t.get('height'))||70)*1.25),layer=hidden(t)?'gmlayer':'objects';
-        var props={left:Number(t.get('left')),top:Number(t.get('top')),width:size,height:size,layer:layer,tint_color:r.color,rotation:0};
+        var tw=Number(t.get('width'))||70,th=Number(t.get('height'))||70,layer=hidden(t)?'gmlayer':'objects',props;
+        if(r.markerImg&&r.markerStyle==='arrow'){
+            // Стрелка над токеном: ширина — 40% токена (не меньше 28 px), пропорции 4:5, своя окраска.
+            var aw=Math.max(28,Math.round(Math.max(tw,th)*0.4)),ah=Math.round(aw*1.25);
+            props={left:Number(t.get('left')),top:Number(t.get('top'))-th/2-ah/2-4,width:aw,height:ah,layer:layer,tint_color:'transparent',rotation:0};
+        }else{
+            var size=Math.round(Math.max(tw,th)*1.25);
+            props={left:Number(t.get('left')),top:Number(t.get('top')),width:size,height:size,layer:layer,tint_color:r.color,rotation:0};
+        }
         var m=marker();
         if(m&&(m.get('_pageid')!==t.get('_pageid')||m.get('imgsrc')!==img)){removeMarker();m=null;}
         if(!m){
@@ -128,8 +137,8 @@ var AD5FX=AD5FX||(function(){
     function menu(){
         var r=root(),b=function(label,cmd){return '<a style="display:inline-block;background:#3a3a5a;color:#fff;padding:3px 6px;margin:2px;border-radius:3px;text-decoration:none" href="'+cmd+'">'+esc(label)+'</a>';},sw=function(k,label){return b((r[k]?'✓ ':'✗ ')+label,'!ad5fx '+k+' '+(r[k]?'off':'on'));};
         gm('<b>'+SCRIPT+' '+VERSION+'</b><br>'+sw('fx','Эффекты')+sw('ping','Пинг хода')+sw('move','Пинг переносит камеру')+sw('marker','Маркер хода')+
-            '<br>Маркер: '+(r.markerImg?'своя картинка':markerImage()?'рамка AD5 Counters':'<b>нет картинки</b>')+' · цвет '+esc(r.color)+'<br>'+
-            b('Картинка маркера из выделенного','!ad5fx marker set')+b('Цвет маркера','!ad5fx color ?{Цвет|#ffd700}')+b('Тест на выделенном','!ad5fx test'));
+            '<br>Маркер: '+(r.markerImg?(r.markerStyle==='arrow'?'своя стрелка над токеном':'своя картинка'):markerImage()?'рамка AD5 Counters':'<b>нет картинки</b>')+' · цвет '+esc(r.color)+'<br>'+
+            b('Стрелка из выделенного','!ad5fx marker set arrow')+b('Кольцо из выделенного','!ad5fx marker set')+b('Цвет маркера','!ad5fx color ?{Цвет|#ffd700}')+b('Тест на выделенном','!ad5fx test'));
     }
     function command(msg){
         if(!playerIsGM(msg.playerid))return;
@@ -138,9 +147,10 @@ var AD5FX=AD5FX||(function(){
         if(sub==='marker'&&val==='set'){
             var img=sel[0]&&libraryUrl(sel[0].get('imgsrc'));
             if(!img){gm('Выделите картинку маркера, загруженную в вашу библиотеку Roll20.');return;}
-            r.markerImg=img;removeMarker();var at=tok(activeId);if(at)placeMarker(at);gm('Картинка маркера хода сохранена.');return;
+            r.markerImg=img;r.markerStyle=String(a[3]||'').toLowerCase()==='arrow'||String(a[3]||'').toLowerCase()==='стрелка'?'arrow':'ring';
+            removeMarker();var at=tok(activeId);if(at)placeMarker(at);gm('Картинка маркера хода сохранена ('+(r.markerStyle==='arrow'?'стрелка над токеном':'кольцо под токеном')+').');return;
         }
-        if(sub==='marker'&&val==='reset'){r.markerImg='';removeMarker();var at2=tok(activeId);if(at2)placeMarker(at2);gm('Маркер хода: рамка AD5 Counters.');return;}
+        if(sub==='marker'&&val==='reset'){r.markerImg='';r.markerStyle='ring';removeMarker();var at2=tok(activeId);if(at2)placeMarker(at2);gm('Маркер хода: рамка AD5 Counters.');return;}
         if(['fx','ping','move','marker'].indexOf(sub)>=0&&(val==='on'||val==='off')){r[sub]=val==='on';if(sub==='marker'){if(r.marker){var at3=tok(activeId);if(at3)placeMarker(at3);}else removeMarker();}menu();return;}
         if(sub==='color'&&/^#[0-9a-f]{6}$/i.test(a[2]||'')){r.color=a[2];var m=marker();if(m)m.set('tint_color',r.color);menu();return;}
         if(sub==='test'){
