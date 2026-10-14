@@ -28,7 +28,8 @@ var AD5Diagnostics=AD5Diagnostics||(function(){
             ['Areas',typeof AD5Areas!=='undefined'?AD5Areas:null],
             ['FastFind',typeof AD5FastFind!=='undefined'?AD5FastFind:null],
             ['Visibility',typeof AD5Visibility!=='undefined'?AD5Visibility:null],
-            ['Counters',typeof AD5Counters!=='undefined'?AD5Counters:null]
+            ['Counters',typeof AD5Counters!=='undefined'?AD5Counters:null],
+            ['Runes',typeof AD5Runes!=='undefined'?AD5Runes:null]
         ];
     }
     function report(msg){
