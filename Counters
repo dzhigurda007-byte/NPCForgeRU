@@ -3,7 +3,7 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
     log('AD5Counters: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Counters 1.0.0 — счётчики-рамки на токенах (заряды способностей).
+ * AD5 Counters 1.1.0 — счётчики-рамки на токенах (заряды способностей).
  *
  * Счётчик — кольцо из N делений вокруг токена (картинки 0…N из набора рамок).
  * Рамка лежит под токеном и переезжает вместе с ним; цвет задаётся тонированием.
@@ -38,6 +38,10 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
  *                                     AD5 Effect Turns), части через «+»
  *   СЧЁТХОДЫ: 10                      рамка снимается через 10 ходов носителя
  *   СЧЁТЦВЕТ: фиолетовый | #8a2be2
+ * Способность только со строками счётчика (без атаки, урона и спасброска)
+ * срабатывает сама при броске из листа или кнопки токена: СЧЁТЗАВЕРШИТЬ завершает
+ * единственный подходящий счётчик владельца (при нескольких — кнопки выбора),
+ * СЧЁТЧИК на себя вешается сразу, на цель — по кнопке выбора цели.
  * Отдельная способность-«детонатор»:
  *   СЧЁТЗАВЕРШИТЬ: Метка тьмы         при применении к цели завершает её
  *                                     счётчик «Метка тьмы» этого владельца:
@@ -61,7 +65,7 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
  */
 var AD5Counters=AD5Counters||(function(){
     'use strict';
-    var VERSION='1.0.1',SCRIPT='AD5 Счётчики';
+    var VERSION='1.1.0',SCRIPT='AD5 Счётчики';
     var COLORS={'фиолетовый':'#8a2be2','красный':'#d0312d','синий':'#2f6fdf','голубой':'#3fb6e8','зелёный':'#2fa84f','зеленый':'#2fa84f','жёлтый':'#e8c02f','желтый':'#e8c02f','оранжевый':'#ef7d1a','белый':'transparent','чёрный':'#222222','черный':'#222222','серый':'#8a8a8a','розовый':'#e85fa8'};
     var EVENTS={
         'НАЧАЛО ХОДА':{ev:'НАЧАЛО ХОДА',who:'bearerTurn'},'КОНЕЦ ХОДА':{ev:'КОНЕЦ ХОДА',who:'bearerTurn'},
@@ -167,15 +171,29 @@ var AD5Counters=AD5Counters||(function(){
         return u.replace(/\/(?:thumb|med|max|original)\.(png|jpe?g|gif|webp)(\?[^|]*)?$/i,'/thumb.$1$2');
     }
     function setFor(max){var s=root().sets[String(max)];return Array.isArray(s)&&s.length===max+1?s:null;}
-    function countersOf(bearerId){
-        var all=root().counters;return Object.keys(all).map(function(k){return all[k];}).filter(function(c){return c&&c.bearer===bearerId;}).sort(function(a,b){return a.created-b.created;});
+    // 1.1.0: индексы носителей и рамок строятся один раз и сбрасываются при изменении
+    // счётчиков: change:graphic приходит на каждое движение любого токена, и раньше
+    // каждый раз перебирались все счётчики кампании.
+    var indexCache=null;
+    function dirty(){indexCache=null;}
+    function index(){
+        if(indexCache)return indexCache;
+        var byBearer=Object.create(null),rings=Object.create(null),all=root().counters;
+        Object.keys(all).forEach(function(k){
+            var c=all[k];if(!c)return;
+            (byBearer[c.bearer]||(byBearer[c.bearer]=[])).push(c);
+            if(c.ring)rings[c.ring]=k;
+        });
+        Object.keys(byBearer).forEach(function(b){byBearer[b].sort(function(x,y){return x.created-y.created;});});
+        indexCache={byBearer:byBearer,rings:rings};return indexCache;
     }
-    function ringIndex(){var idx=Object.create(null),all=root().counters;Object.keys(all).forEach(function(k){if(all[k]&&all[k].ring)idx[all[k].ring]=k;});return idx;}
+    function countersOf(bearerId){return (index().byBearer[bearerId]||[]).slice();}
+    function ringIndex(){return index().rings;}
     function ringGeometry(bearer,i){
         var base=Math.max(Number(bearer.get('width'))||70,Number(bearer.get('height'))||70),size=Math.round(base*(1.3+0.28*i));
         return {left:Number(bearer.get('left')),top:Number(bearer.get('top')),width:size,height:size,rotation:0,layer:bearer.get('layer')==='objects'?'objects':bearer.get('layer')};
     }
-    function removeRing(c){var g=c&&c.ring&&tok(c.ring);if(c)c.ring=null;if(g)g.remove();}
+    function removeRing(c){var g=c&&c.ring&&tok(c.ring);if(c&&c.ring){c.ring=null;dirty();}if(g)g.remove();}
     function drawRing(c,i){
         var bearer=tok(c.bearer);if(!bearer)return;
         var urls=setFor(c.max);
@@ -186,7 +204,7 @@ var AD5Counters=AD5Counters||(function(){
             g=createObj('graphic',{_pageid:bearer.get('_pageid'),layer:geo.layer,imgsrc:urls[side],left:geo.left,top:geo.top,width:geo.width,height:geo.height,
                 isdrawing:true,name:'AD5 счётчик: '+c.name,controlledby:'',tint_color:c.color,sides:urls.map(encodeURIComponent).join('|'),currentSide:side});
             if(!g){gm('Не удалось создать рамку «'+esc(c.name)+'»: картинки набора должны быть из вашей библиотеки Roll20.');return;}
-            c.ring=g.id;toBack(g);return;
+            c.ring=g.id;dirty();toBack(g);return;
         }
         var patch={},want=Object.assign({imgsrc:urls[side],currentSide:side,tint_color:c.color},geo);
         Object.keys(want).forEach(function(k){if(String(g.get(k))!==String(want[k]))patch[k]=want[k];});
@@ -233,10 +251,10 @@ var AD5Counters=AD5Counters||(function(){
     }
     function attach(spec,bearer,ownerToken,ownerCid,actionName){
         var c=find(bearer.id,spec.name,ownerCid);
-        if(c){c.spec=spec;c.turnsLeft=spec.turns;c.max=spec.max;c.color=spec.color;c.full=spec.full;redraw(bearer.id);return c;}
+        if(c){c.spec=spec;c.turnsLeft=spec.turns;c.max=spec.max;c.charges=Math.min(c.charges,c.max);c.color=spec.color;c.full=spec.full;redraw(bearer.id);return c;}
         c={id:newId(),name:spec.name,max:spec.max,charges:spec.start,bearer:bearer.id,owner:ownerToken?ownerToken.id:'',ownerCid:ownerCid||'',
             color:spec.color,full:spec.full,spec:spec,turnsLeft:spec.turns,created:Date.now(),action:actionName||spec.name,filledNotified:false};
-        root().counters[c.id]=c;
+        root().counters[c.id]=c;dirty();
         redraw(bearer.id);
         gm('<b>'+esc(c.name)+'</b> → '+esc(tokenName(bearer))+': '+c.charges+'/'+c.max+'.');
         if(c.charges>=c.max)onFull(c);
@@ -244,7 +262,7 @@ var AD5Counters=AD5Counters||(function(){
     }
     function remove(c,reason){
         if(!c||!root().counters[c.id])return;
-        delete root().counters[c.id];delete spent[c.id];
+        delete root().counters[c.id];delete spent[c.id];dirty();
         if(c.full&&c.full.mode==='button')setButton(c,false);
         removeRing(c);redraw(c.bearer);
         if(reason)gm('<b>'+esc(c.name)+'</b> снят с '+esc(tokenName(tok(c.bearer)))+': '+esc(reason)+'.');
@@ -315,8 +333,11 @@ var AD5Counters=AD5Counters||(function(){
         var src=String(e&&e.источникТокенId||'');if(!src)return;
         countersOf(src).forEach(function(c){
             if(!c.spec||!c.spec.accum||c.charges<=0)return;
+            // Списание сразу: бонус этой атаки берётся из снимка spent, а заряд за
+            // её попадание (ПОПАДАНИЕ) ложится уже на обнулённый счётчик и не
+            // теряется, если счётчик был полным.
             var n=c.charges;spent[c.id]={charges:n,until:Date.now()+SPENT_WINDOW_MS,bearer:src};
-            setTimeout(function(){var live=root().counters[c.id];if(live&&live.charges>=n){setCharges(live,live.charges-n);gm('<b>'+esc(live.name)+'</b>: потрачено зарядов '+n+' на атаку.');}},0);
+            setCharges(c,c.charges-n);gm('<b>'+esc(c.name)+'</b>: потрачено зарядов '+n+' на атаку.');
         });
     }
     function combatModifiers(tokenId){
@@ -383,6 +404,68 @@ var AD5Counters=AD5Counters||(function(){
         onApplied({разрешено:true,источникТокенId:source.id,цельТокенId:target?target.id:source.id,источникПерсонажId:cid,имя:name,описание:desc});
     }
 
+    // ---------------------------------------------------------------- карточки без атаки
+    // 1.1.0: способность только со строками счётчика (без атаки, урона и спасброска,
+    // например «Взрыв тьмы» с СЧЁТЗАВЕРШИТЬ) AutoDamage не обрабатывает — у неё нет
+    // броска. Такую карточку применяет сам модуль:
+    //   СЧЁТЗАВЕРШИТЬ — единственный подходящий счётчик владельца срабатывает сразу,
+    //     при нескольких — кнопки выбора носителя;
+    //   СЧЁТЧИК на себя — сразу на токен владельца; на цель — кнопка выбора цели.
+    function cardFields(content){
+        var out=Object.create(null),re=/\{\{([^=}]+)=([\s\S]*?)\}\}(?=\s*(?:\{\{|$))/g,m;
+        while((m=re.exec(content)))out[m[1].trim().toLowerCase()]=m[2];
+        return out;
+    }
+    function filled(v){return v!==undefined&&String(v).replace(/\$\[\[\d+\]\]/g,'x').trim()!==''&&!/^0$/.test(String(v).trim());}
+    function handledByAutoDamage(f,desc){
+        if(f.ad5source!==undefined||f.ad5target!==undefined||f.ad5reactionexec!==undefined)return true;
+        if(filled(f.dmg1)||filled(f.dmg2)||filled(f.savedc)||(filled(f.r1)&&(f.attack===undefined||filled(f.attack))))return true;
+        try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.recognizesDirect==='function'&&AD5EffectTurns.recognizesDirect(desc))return true;}catch(ignore){}
+        return false;
+    }
+    function playerTell(pid,text){
+        var p=pid&&!playerIsGM(pid)&&getObj('player',pid);
+        if(p)sendChat(SCRIPT,'/w "'+String(p.get('_displayname')||'').replace(/["\r\n]/g,'')+'" '+text,null,{noarchive:true});
+        gm(text);
+    }
+    function ownerToken(cid,hint){
+        var t=tok(hint);if(t&&String(t.get('represents'))===cid)return t;
+        var list=(findObjs({_type:'graphic',_subtype:'token',represents:cid})||[]);
+        if(list.length<=1)return list[0]||null;
+        var top=null;try{var o=JSON.parse(Campaign().get('turnorder')||'[]')||[];top=o[0]&&String(o[0].id||'');}catch(ignore){}
+        var page=Campaign().get('playerpageid');
+        return list.filter(function(x){return x.id===top;})[0]||list.filter(function(x){return x.get('_pageid')===page;})[0]||list[0];
+    }
+    // Кнопка в формате [текст](команда): так Roll20 подставляет &#64;{target|…} при нажатии.
+    function button(label,cmd){return '['+esc(label).replace(/[\[\]]/g,'')+']('+cmd+')';}
+    function autoCard(msg){
+        if(!msg.rolltemplate||!/СЧ[ЁЕ]Т(?:ЧИК|ЗАВЕРШИТЬ)\s*[:：]/i.test(msg.content||''))return;
+        var f=cardFields(String(msg.content)),desc=String(f.description||f.desc||f.atk_desc||'');
+        if(!/СЧ[ЁЕ]Т(?:ЧИК|ЗАВЕРШИТЬ)\s*[:：]/i.test(desc)||handledByAutoDamage(f,desc))return;
+        var name=String(f.rname!==undefined?f.rname:(f.name||'')).trim(),cid=String(f.characterid||f.charid||'').trim();
+        if(!getObj('character',cid)){
+            // Карточка листа без id персонажа: имя в charname (игрок) или name (NPC, rname — способность).
+            var who=String(f.charname||(f.rname!==undefined?f.name:'')||'').trim(),byName=who?(findObjs({_type:'character',name:who})||[])[0]:null;cid=byName?byName.id:'';
+        }
+        if(!cid)return;
+        var spec;try{spec=parseBlock(desc);}catch(e){playerTell(msg.playerid,'<b>'+esc(name)+'</b>: '+esc(e.message));return;}
+        if(!spec)return;
+        var source=ownerToken(cid,f.ad5sourcetoken),label=name||spec.name||spec.complete;
+        if(spec.complete){
+            var want=norm(spec.complete),all=root().counters;
+            var list=Object.keys(all).map(function(k){return all[k];}).filter(function(c){return c&&norm(c.name)===want&&c.ownerCid===cid&&tok(c.bearer);});
+            if(list.length===1)fire(list[0],'завершено: '+label);
+            else if(!list.length)playerTell(msg.playerid,'<b>'+esc(label)+'</b>: нет активного счётчика «'+esc(spec.complete)+'».');
+            else if(!source)playerTell(msg.playerid,'<b>'+esc(label)+'</b>: несколько счётчиков «'+esc(spec.complete)+'», но токен владельца не найден.');
+            else playerTell(msg.playerid,'<b>'+esc(label)+'</b>: на ком завершить «'+esc(spec.complete)+'»? '+list.map(function(c){
+                return button(tokenName(tok(c.bearer))+' ('+c.charges+'/'+c.max+')','!ad5counter use '+source.id+' '+c.bearer+' '+name);}).join(' '));
+        }
+        if(spec.completeOnly)return;
+        if(!source){playerTell(msg.playerid,'<b>'+esc(label)+'</b>: токен владельца не найден — выделите его и повторите.');return;}
+        if(spec.on==='target')playerTell(msg.playerid,'<b>'+esc(label)+'</b>: '+button('Выбрать цель','!ad5counter use '+source.id+' &#64;{target|Цель|token_id} '+name));
+        else attach(spec,source,source,cid,label);
+    }
+
     // ---------------------------------------------------------------- команды
     function selected(msg){return (msg.selected||[]).map(function(s){return getObj(s._type,s._id);}).filter(Boolean);}
     function registerImages(msg){
@@ -423,7 +506,9 @@ var AD5Counters=AD5Counters||(function(){
 
     // ---------------------------------------------------------------- рамки и токены
     function graphicChanged(g,prev){
-        var idx=ringIndex();
+        var idx=index();
+        if(!idx.rings[g.id]&&!idx.byBearer[g.id])return;
+        idx=idx.rings;
         if(idx[g.id]){
             // Изменения через API событий не порождают: это действие мастера.
             var c=root().counters[idx[g.id]];if(!c)return;
@@ -440,7 +525,7 @@ var AD5Counters=AD5Counters||(function(){
 
     on('ready',function(){
         root();
-        Object.keys(root().counters).forEach(function(id){if(!root().counters[id])delete root().counters[id];});
+        Object.keys(root().counters).forEach(function(id){if(!root().counters[id])delete root().counters[id];});dirty();
         var bearers={};Object.keys(root().counters).forEach(function(id){var b=root().counters[id].bearer;if(tok(b))bearers[b]=true;});Object.keys(bearers).forEach(redraw);
         (function reconcile(attempt){
             var missing=Object.keys(root().counters).filter(function(id){return !tok(root().counters[id].bearer);});
@@ -450,7 +535,7 @@ var AD5Counters=AD5Counters||(function(){
                 var back={};Object.keys(root().counters).forEach(function(id){var c=root().counters[id];if(c&&missing.indexOf(id)>=0&&tok(c.bearer))back[c.bearer]=true;});Object.keys(back).forEach(redraw);
                 reconcile(attempt+1);
             },READY_RETRY_DELAYS[attempt+1]-(attempt>=0?READY_RETRY_DELAYS[attempt]:0));return;}
-            missing.forEach(function(id){var c=root().counters[id];if(c){removeRing(c);delete root().counters[id];}});
+            missing.forEach(function(id){var c=root().counters[id];if(c){removeRing(c);delete root().counters[id];}});dirty();
             log(SCRIPT+': удалены счётчики без токена-носителя: '+missing.length+'.');
         })(-1);
         var ev=typeof AD5События!=='undefined'&&AD5События&&typeof AD5События.подписаться==='function';
@@ -461,13 +546,14 @@ var AD5Counters=AD5Counters||(function(){
         on('change:graphic',function(g,prev){try{graphicChanged(g,prev);}catch(e){log(SCRIPT+': '+e.message);}});
         on('destroy:graphic',function(g){
             var idx=ringIndex();
-            if(idx[g.id]){var c=root().counters[idx[g.id]];if(c){c.ring=null;remove(c,'рамка удалена');}return;}
+            if(idx[g.id]){var c=root().counters[idx[g.id]];if(c){c.ring=null;dirty();remove(c,'рамка удалена');}return;}
             countersOf(g.id).forEach(function(c){remove(c);});
         });
         on('chat:message',function(msg){
             try{
                 if(msg.type==='api'){if(/^!ad5counter(?:\s|$)/i.test(msg.content||''))command(msg);return;}
                 onChat(msg);
+                autoCard(msg);
             }catch(e){
                 var p=msg.playerid&&!playerIsGM(msg.playerid)&&getObj('player',msg.playerid);
                 if(p)sendChat(SCRIPT,'/w "'+String(p.get('_displayname')||'').replace(/["\r\n]/g,'')+'" '+esc(e.message||e),null,{noarchive:true});
