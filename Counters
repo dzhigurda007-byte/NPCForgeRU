@@ -3,7 +3,7 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
     log('AD5Counters: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Counters 1.2.0 — счётчики-рамки на токенах (заряды способностей).
+ * AD5 Counters 1.3.0 — счётчики-рамки на токенах (заряды способностей).
  *
  * Счётчик — кольцо из N делений вокруг токена (картинки 0…N из набора рамок).
  * Рамка лежит под токеном и переезжает вместе с ним; цвет задаётся тонированием.
@@ -24,9 +24,9 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
  *       ПОПАДАНИЕ ВЛАДЕЛЬЦА          — владелец способности попал по носителю
  *       УРОН ОТ ВЛАДЕЛЬЦА            — носитель получил урон от владельца
  *       НАЧАЛО ХОДА ВЛАДЕЛЬЦА, КОНЕЦ ХОДА ВЛАДЕЛЬЦА
- *   СЧЁТНАКОП: АТАКА 2 УРОН 5         бонус за каждый заряд; все заряды
- *                                     тратятся на следующую атаку носителя,
- *                                     после чего счётчик снимается
+ *   СЧЁТНАКОП: АТАКА 2 УРОН 5         бонус за каждый заряд; кнопка
+ *                                     «★ Потратить» переносит все заряды на
+ *                                     следующую атаку, счётчик снимается
  *   СЧЁТПОЛНЫЙ: КНОПКА Удар тьмы      при полной рамке появляется кнопка
  *                                     способности; после её использования
  *                                     счётчик снимается и кнопка исчезает
@@ -39,13 +39,15 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
  *                                     AD5 Effect Turns), части через «+»
  *   СЧЁТХОДЫ: 10                      рамка снимается через 10 ходов носителя
  *   СЧЁТЦВЕТ: фиолетовый | #8a2be2
+ * 1.3.0: заряды накопления тратятся кнопкой «★ Потратить: Имя» (действие токена) — бонус
+ * к следующей атаке, счётчик исчезает; детонатор (СЧЁТЗАВЕРШИТЬ) срабатывает на цели,
+ * выбранной курсором Roll20 (NPCForge 2.8.1+), у старых листов — по кнопке выбора цели.
  * 1.2.0: счётчик снимается, когда сработал его эффект, использована кнопка полного
  * счётчика, потрачены заряды накопления или снят эффект, наложенный той же
  * способностью вместе со счётчиком (Turn Effect 1.6.24+ сообщает об этом).
  * Способность только со строками счётчика (без атаки, урона и спасброска)
- * срабатывает сама при броске из листа или кнопки токена: СЧЁТЗАВЕРШИТЬ завершает
- * единственный подходящий счётчик владельца (при нескольких — кнопки выбора),
- * СЧЁТЧИК на себя вешается сразу, на цель — по кнопке выбора цели.
+ * срабатывает сама при броске из листа или кнопки токена: СЧЁТЗАВЕРШИТЬ — на цели,
+ * выбранной курсором, СЧЁТЧИК на себя вешается сразу, на цель — по кнопке выбора цели.
  * Отдельная способность-«детонатор»:
  *   СЧЁТЗАВЕРШИТЬ: Метка тьмы         при применении к цели завершает её
  *                                     счётчик «Метка тьмы» этого владельца:
@@ -69,7 +71,7 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
  */
 var AD5Counters=AD5Counters||(function(){
     'use strict';
-    var VERSION='1.2.0',SCRIPT='AD5 Счётчики';
+    var VERSION='1.3.0',SCRIPT='AD5 Счётчики';
     var COLORS={'фиолетовый':'#8a2be2','красный':'#d0312d','синий':'#2f6fdf','голубой':'#3fb6e8','зелёный':'#2fa84f','зеленый':'#2fa84f','жёлтый':'#e8c02f','желтый':'#e8c02f','оранжевый':'#ef7d1a','белый':'transparent','чёрный':'#222222','черный':'#222222','серый':'#8a8a8a','розовый':'#e85fa8'};
     var EVENTS={
         'НАЧАЛО ХОДА':{ev:'НАЧАЛО ХОДА',who:'bearerTurn'},'КОНЕЦ ХОДА':{ev:'КОНЕЦ ХОДА',who:'bearerTurn'},
@@ -94,6 +96,7 @@ var AD5Counters=AD5Counters||(function(){
         r.seq=Number(r.seq)||0;
         r.sets=r.sets&&typeof r.sets==='object'?r.sets:{};
         r.counters=r.counters&&typeof r.counters==='object'?r.counters:{};
+        r.primed=r.primed&&typeof r.primed==='object'?r.primed:{};
         return r;
     }
     function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
@@ -259,9 +262,10 @@ var AD5Counters=AD5Counters||(function(){
         var c=find(bearer.id,spec.name,ownerCid);
         if(c){c.spec=spec;c.turnsLeft=spec.turns;c.max=spec.max;c.charges=Math.min(c.charges,c.max);c.color=spec.color;c.full=spec.full;c.action=actionName||c.action;linkEffect(c);redraw(bearer.id);return c;}
         c={id:newId(),name:spec.name,max:spec.max,charges:spec.start,bearer:bearer.id,owner:ownerToken?ownerToken.id:'',ownerCid:ownerCid||'',
-            color:spec.color,full:spec.full,spec:spec,turnsLeft:spec.turns,created:Date.now(),action:actionName||spec.name,filledNotified:false};
+            color:spec.color,full:spec.full,spec:spec,turnsLeft:spec.turns,created:Date.now(),action:actionName||spec.name,filledNotified:false,
+            bearerCid:String(bearer.get('represents')||'')};
         root().counters[c.id]=c;dirty();
-        linkEffect(c);
+        linkEffect(c);syncSpendButton(c);
         // Эффекты способности могут записаться позже счётчика в той же транзакции.
         if(!c.link)setTimeout(function(){var live=root().counters[c.id];if(live&&!live.link)linkEffect(live);},0);
         redraw(bearer.id);
@@ -294,6 +298,7 @@ var AD5Counters=AD5Counters||(function(){
         if(!c||!root().counters[c.id])return;
         delete root().counters[c.id];dirty();
         if(c.full&&c.full.mode==='button')setButton(c,false);
+        if(c.spec&&c.spec.accum)setSpendButton(c,false);
         removeRing(c);redraw(c.bearer);
         if(reason)gm('<b>'+esc(c.name)+'</b> снят с '+esc(tokenName(tok(c.bearer)))+': '+esc(reason)+'.');
     }
@@ -301,6 +306,7 @@ var AD5Counters=AD5Counters||(function(){
         var before=c.charges;c.charges=Math.max(0,Math.min(c.max,Math.floor(Number(n)||0)));
         if(c.charges===before)return;
         if(c.charges<c.max){c.filledNotified=false;if(c.full&&c.full.mode==='button')setButton(c,false);}
+        syncSpendButton(c);
         redraw(c.bearer);
         if(c.charges>=c.max&&before<c.max)onFull(c,why);
     }
@@ -359,27 +365,48 @@ var AD5Counters=AD5Counters||(function(){
     }
     // Все заряды «накопления» уходят в следующую атаку носителя. Списание —
     // после текущего события: урон попадания считается по снимку модификаторов.
-    // 1.2.0: заряды тратятся на атаку целиком, и счётчик после этого снимается.
+    // 1.3.0: заряды накопления тратит владелец кнопкой «★ Потратить: Имя» (действие
+    // токена носителя): бонус ждёт следующей атаки носителя (root().primed, переживает
+    // перезапуск), счётчик сразу исчезает. Атака забирает бонус; все цели этой атаки
+    // получают его в течение SPENT_WINDOW_MS.
+    function spendName(c){return '★ Потратить: '+c.name;}
+    // Кнопка листа общая для всех копий NPC, поэтому команда берёт выделенный токен;
+    // кнопка снимается, только когда ни у одной копии нет зарядов этого счётчика.
+    function setSpendButton(c,on){
+        var bearer=tok(c.bearer),cid=String(c.bearerCid||(bearer&&bearer.get('represents'))||'');if(!cid)return;
+        var list=findObjs({_type:'ability',_characterid:cid,name:spendName(c)})||[];
+        if(!on){
+            var all=root().counters,still=Object.keys(all).some(function(k){var o=all[k];return o&&o!==c&&o.spec&&o.spec.accum&&o.charges>0&&norm(o.name)===norm(c.name)&&String(o.bearerCid||'')===cid;});
+            if(!still)list.forEach(function(a){a.remove();});return;
+        }
+        var action='!ad5counter spend @{selected|token_id} '+c.name;
+        if(!list.length)createObj('ability',{characterid:cid,name:spendName(c),action:action,istokenaction:true});
+        else if(list[0].get('action')!==action)list[0].set({action:action,istokenaction:true});
+    }
+    function syncSpendButton(c){if(c&&c.spec&&c.spec.accum)setSpendButton(c,!!root().counters[c.id]&&c.charges>0);}
+    function spendCommand(msg,args){
+        var c=root().counters[String(args[2]||'')]||find(String(args[2]||''),args.slice(3).join(' '),null);
+        if(!c)throw new Error('На выделенном токене нет счётчика «'+args.slice(3).join(' ')+'» — выделите носителя.');
+        var bearer=tok(c.bearer),ch=bearer&&getObj('character',String(bearer.get('represents')||''));
+        if(!playerIsGM(msg.playerid)&&!(ch&&String(ch.get('controlledby')||'').split(',').some(function(x){x=x.trim();return x===msg.playerid||x==='all';})))throw new Error('Это не ваш токен.');
+        if(!c.spec||!c.spec.accum||c.charges<=0)throw new Error('Нет зарядов для траты.');
+        var n=c.charges,bonus={attack:c.spec.accum.attack*n,damage:c.spec.accum.damage*n,label:c.name+' ×'+n};
+        var pr=root().primed;(pr[c.bearer]||(pr[c.bearer]=[])).push(bonus);
+        remove(c,null);
+        tellOwners(ch?ch.id:'','<b>'+esc(c.name)+'</b>: потрачено зарядов '+n+' — следующая атака '+esc(tokenName(bearer))+': '+(bonus.attack?'+'+bonus.attack+' к атаке':'')+(bonus.attack&&bonus.damage?', ':'')+(bonus.damage?'+'+bonus.damage+' к урону':'')+'.');
+    }
     function onAttack(e){
-        var src=String(e&&e.источникТокенId||'');if(!src)return;
-        var now=Date.now();
-        countersOf(src).forEach(function(c){
-            if(!c.spec||!c.spec.accum||c.charges<=0)return;
-            var n=c.charges,list=(spent[src]||[]).filter(function(x){return x.until>now;});
-            list.push({attack:c.spec.accum.attack*n,damage:c.spec.accum.damage*n,label:c.name+' ×'+n,until:now+SPENT_WINDOW_MS});
-            spent[src]=list;
-            remove(c,'потрачено зарядов '+n+' на атаку');
-        });
+        var src=String(e&&e.источникТокенId||''),pr=root().primed;if(!src||!pr[src])return;
+        var now=Date.now(),list=(spent[src]||[]).filter(function(x){return x.until>now;});
+        pr[src].forEach(function(b){list.push({attack:b.attack,damage:b.damage,label:b.label,until:now+SPENT_WINDOW_MS});});
+        delete pr[src];spent[src]=list;
     }
     function combatModifiers(tokenId){
         var out={attack:0,damage:[]},now=Date.now(),id=String(tokenId||'');
-        countersOf(id).forEach(function(c){
-            if(!c.spec||!c.spec.accum||c.charges<=0)return;
-            out.attack+=c.spec.accum.attack*c.charges;
-            if(c.spec.accum.damage)out.damage.push({formula:String(c.spec.accum.damage*c.charges),sign:1,label:c.name+' ×'+c.charges});
-        });
         var list=(spent[id]||[]).filter(function(x){return x.until>now;});
         if(list.length)spent[id]=list;else delete spent[id];
+        // Бонус, ещё не забранный атакой (модификаторы считаются до события атаки).
+        if(!list.length)list=(root().primed[id]||[]);
         list.forEach(function(x){out.attack+=x.attack;if(x.damage)out.damage.push({formula:String(x.damage),sign:1,label:x.label});});
         return out;
     }
@@ -451,8 +478,11 @@ var AD5Counters=AD5Counters||(function(){
     function filled(v){return v!==undefined&&String(v).replace(/\$\[\[\d+\]\]/g,'x').trim()!==''&&!/^0$/.test(String(v).trim());}
     function handledByAutoDamage(f,desc){
         if(f.ad5source!==undefined||f.ad5target!==undefined||f.ad5reactionexec!==undefined)return true;
+        // 1.3.0: только поля карточки. Проверка recognizesDirect по тексту описания
+        // ошибочно считала «к6 силового поля за заряд» механикой AutoDamage, и карточка
+        // детонатора не обрабатывалась никем. Механические строки AD5 (атака, урон,
+        // спасбросок, эффекты) NPCForge и AutoDamage помечают полем ad5source.
         if(filled(f.dmg1)||filled(f.dmg2)||filled(f.savedc)||(filled(f.r1)&&(f.attack===undefined||filled(f.attack))))return true;
-        try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.recognizesDirect==='function'&&AD5EffectTurns.recognizesDirect(desc))return true;}catch(ignore){}
         return false;
     }
     function playerTell(pid,text){
@@ -470,6 +500,11 @@ var AD5Counters=AD5Counters||(function(){
     }
     // Кнопка в формате [текст](команда): так Roll20 подставляет &#64;{target|…} при нажатии.
     function button(label,cmd){return '['+esc(label).replace(/[\[\]]/g,'')+']('+cmd+')';}
+    function detonate(pid,cid,target,name,label){
+        var c=find(target.id,name,cid)||find(target.id,name,null);
+        if(!c){playerTell(pid,'<b>'+esc(label||name)+'</b>: на '+esc(tokenName(target))+' нет счётчика «'+esc(name)+'».');return false;}
+        fire(c,'завершено: '+(label||name));return true;
+    }
     function autoCard(msg){
         if(!msg.rolltemplate||!/СЧ[ЁЕ]Т(?:ЧИК|ЗАВЕРШИТЬ)\s*[:：]/i.test(msg.content||''))return;
         var f=cardFields(String(msg.content)),desc=String(f.description||f.desc||f.atk_desc||'');
@@ -484,13 +519,11 @@ var AD5Counters=AD5Counters||(function(){
         if(!spec)return;
         var source=ownerToken(cid,f.ad5sourcetoken),label=name||spec.name||spec.complete;
         if(spec.complete){
-            var want=norm(spec.complete),all=root().counters;
-            var list=Object.keys(all).map(function(k){return all[k];}).filter(function(c){return c&&norm(c.name)===want&&c.ownerCid===cid&&tok(c.bearer);});
-            if(list.length===1)fire(list[0],'завершено: '+label);
-            else if(!list.length)playerTell(msg.playerid,'<b>'+esc(label)+'</b>: нет активного счётчика «'+esc(spec.complete)+'».');
-            else if(!source)playerTell(msg.playerid,'<b>'+esc(label)+'</b>: несколько счётчиков «'+esc(spec.complete)+'», но токен владельца не найден.');
-            else playerTell(msg.playerid,'<b>'+esc(label)+'</b>: на ком завершить «'+esc(spec.complete)+'»? '+list.map(function(c){
-                return button(tokenName(tok(c.bearer))+' ('+c.charges+'/'+c.max+')','!ad5counter use '+source.id+' '+c.bearer+' '+name);}).join(' '));
+            // 1.3.0: цель детонации выбирается курсором Roll20. NPCForge 2.8.1 кладёт его
+            // в саму кнопку способности (поле ad5countertarget); у старых листов — кнопка в чате.
+            var picked=tok(String(f.ad5countertarget||'').trim());
+            if(picked)detonate(msg.playerid,cid,picked,spec.complete,label);
+            else playerTell(msg.playerid,'<b>'+esc(label)+'</b>: '+button('Выбрать цель','!ad5counter fire '+cid+' &#64;{target|Цель|token_id} '+spec.complete));
         }
         if(spec.completeOnly)return;
         if(!source){playerTell(msg.playerid,'<b>'+esc(label)+'</b>: токен владельца не найден — выделите его и повторите.');return;}
@@ -518,6 +551,14 @@ var AD5Counters=AD5Counters||(function(){
     function command(msg){
         var args=String(msg.content||'').trim().split(/\s+/),sub=String(args[1]||'list').toLowerCase();
         if(sub==='use'){useCommand(msg,args);return;}
+        if(sub==='fire'){
+            // !ad5counter fire CID TARGET Имя счётчика — детонация по выбранной цели.
+            var fc=getObj('character',String(args[2]||'')),ft=tok(args[3]),fname=args.slice(4).join(' ');
+            if(!fc||!ft||!fname)throw new Error('Формат: !ad5counter fire CHARACTER_ID TARGET_ID Имя счётчика');
+            if(!playerIsGM(msg.playerid)&&String(fc.get('controlledby')||'').split(',').indexOf(msg.playerid)<0)throw new Error('Это не ваш персонаж.');
+            detonate(msg.playerid,fc.id,ft,fname,fname);return;
+        }
+        if(sub==='spend'){spendCommand(msg,args);return;}
         if(!playerIsGM(msg.playerid))throw new Error('Команда доступна мастеру.');
         var sel=selected(msg).filter(function(o){return o.get('_type')==='graphic';}),name=args.slice(2).join(' ');
         if(sub==='images'){registerImages(msg);return;}
@@ -580,6 +621,7 @@ var AD5Counters=AD5Counters||(function(){
             var idx=ringIndex();
             if(idx[g.id]){var c=root().counters[idx[g.id]];if(c){c.ring=null;dirty();remove(c,'рамка удалена');}return;}
             countersOf(g.id).forEach(function(c){remove(c);});
+            delete root().primed[g.id];
         });
         on('chat:message',function(msg){
             try{

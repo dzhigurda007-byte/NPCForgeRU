@@ -3,7 +3,8 @@ if(typeof NPCForge!=='undefined'&&NPCForge) {
     log('NPCForge: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * NPC Forge RU v2.8.0 — массовый импорт очередью (без зависания Roll20), права игрокам и группы-оглавления
+ * NPC Forge RU v2.8.1 — массовый импорт очередью (без зависания Roll20), права игрокам и группы-оглавления
+ * 2.8.1: способность с СЧЁТЗАВЕРШИТЬ (детонатор AD5 Counters) открывает курсор выбора цели Roll20 при нажатии.
  *   !npc-settings — кому выдавать новых NPC (мастер / все / выбранные игроки) и группа импорта
  *   !npc-give --player|Имя|all|none [--group|Название] — права уже созданным NPC (выделенные токены или группа)
  *   !npc-place --group|Название — поставить токены всей группы на текущую карту
@@ -15,7 +16,7 @@ if(typeof NPCForge!=='undefined'&&NPCForge) {
 var NPCForge = NPCForge || (function () {
     'use strict';
 
-    var VERSION = '2.8.0';
+    var VERSION = '2.8.1';
     var STARTUP_SCHEMA_MIN = '2.6.5'; // UI-only version bumps must not rebuild every NPC sheet.
     var SCRIPT = 'NPC Forge RU';
     function tokenActionName(rank,label){return Array(Math.max(0,Number(rank)||0)+1).join('\u200b')+String(label||'').replace(/^\u200b+/,'');}
@@ -583,6 +584,9 @@ var NPCForge = NPCForge || (function () {
                 var desc=findObjs({_type:'attribute',_characterid:charId,name:prefix+'desc'})[0]?'desc':'description';
                 if(!findObjs({_type:'attribute',_characterid:charId,name:prefix+desc}).length){upsert(charId,prefix+desc,'');}
                 roll=privatePrefix(charId)+'&{template:npcaction} {{name=@{'+charId+'|character_name}}} {{charname=@{'+charId+'|character_name}}} {{characterid='+charId+'}} {{rname=@{'+charId+'|'+prefix+'name}}} {{description=@{'+charId+'|'+prefix+desc+'}}}';
+                // 2.8.1: детонатор счётчика (СЧЁТЗАВЕРШИТЬ) — курсор выбора цели Roll20 сразу при нажатии.
+                if(/(?:^|\n)\s*СЧ[ЁЕ]ТЗАВЕРШИТЬ\s*[:：]/i.test(String(abilityDescription||'').replace(/<br\s*\/?>/gi,'\n')))
+                    roll=roll.replace('&{template:npcaction}','&{template:npcaction} {{ad5countertarget=@{target|Цель|token_id}}}');
             }
             upsert(charId,prefix+'rollbase',roll);
             var command='@{'+charId+'|'+prefix+'rollbase} {{ad5sourcetoken=@{selected|token_id}}}';
