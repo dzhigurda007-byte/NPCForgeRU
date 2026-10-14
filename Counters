@@ -3,7 +3,7 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
     log('AD5Counters: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Counters 1.3.2 — счётчики-рамки на токенах (заряды способностей).
+ * AD5 Counters 1.4.0 — счётчики-рамки на токенах (заряды способностей).
  *
  * Счётчик — кольцо из N делений вокруг токена (картинки 0…N из набора рамок).
  * Рамка лежит на слое карты под токеном и переезжает вместе с ним; цвет — тонированием.
@@ -39,6 +39,16 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
  *                                     AD5 Effect Turns), части через «+»
  *   СЧЁТХОДЫ: 10                      рамка снимается через 10 ходов носителя
  *   СЧЁТЦВЕТ: фиолетовый | #8a2be2
+ *   СЧЁТПОВТОР: 1                     повторное применение способности к тому же
+ *                                     носителю добавляет заряды
+ * В описании атаки (отдельно от блока счётчика):
+ *   СЧЁТТРАТА: Печать Завета 2к8 излучение | Белый Клинок 1к6 АТАКА 1
+ *                                     атака забирает все заряды названных
+ *                                     счётчиков атакующего: урон и бонус атаки
+ *                                     за каждый заряд, счётчики исчезают
+ * 1.4.0: СЧЁТПОВТОР: N — повторное применение способности добавляет N зарядов (заряд за
+ * каждое попадание без отдельного наложения); СЧЁТТРАТА в описании атаки — атака забирает
+ * заряды названных счётчиков атакующего в урон/бонус атаки (AutoDamage 4.3.177+).
  * 1.3.2: рамки лежат на слое карты (под всеми токенами), над картинкой поля; порядок
  * слоёв повторяется с задержкой после создания.
  * 1.3.1: рамка при перемещении носителя переставляется одной записью позиции; обработчик
@@ -75,7 +85,7 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
  */
 var AD5Counters=AD5Counters||(function(){
     'use strict';
-    var VERSION='1.3.2',SCRIPT='AD5 Счётчики';
+    var VERSION='1.4.0',SCRIPT='AD5 Счётчики';
     var COLORS={'фиолетовый':'#8a2be2','красный':'#d0312d','синий':'#2f6fdf','голубой':'#3fb6e8','зелёный':'#2fa84f','зеленый':'#2fa84f','жёлтый':'#e8c02f','желтый':'#e8c02f','оранжевый':'#ef7d1a','белый':'transparent','чёрный':'#222222','черный':'#222222','серый':'#8a8a8a','розовый':'#e85fa8'};
     var EVENTS={
         'НАЧАЛО ХОДА':{ev:'НАЧАЛО ХОДА',who:'bearerTurn'},'КОНЕЦ ХОДА':{ev:'КОНЕЦ ХОДА',who:'bearerTurn'},
@@ -161,6 +171,7 @@ var AD5Counters=AD5Counters||(function(){
         spec.damage=field(list,'СЧ[ЁЕ]ТУРОН');
         spec.effect=field(list,'СЧ[ЁЕ]ТЭФФ');
         if(!spec.full)spec.full=(spec.damage||spec.effect)&&!spec.accum?{mode:'now',repeat:false}:{mode:'none'};
+        var rep=Number(field(list,'СЧ[ЁЕ]ТПОВТОР'));if(Number.isFinite(rep)&&rep>0)spec.repeat=Math.floor(rep);
         var turns=Number(field(list,'СЧ[ЁЕ]ТХОДЫ'));if(Number.isFinite(turns)&&turns>0)spec.turns=Math.floor(turns);
         var color=field(list,'СЧ[ЁЕ]ТЦВЕТ');if(color){var c=COLORS[color.trim().toLowerCase()]||color.trim();if(/^#[0-9a-f]{6}$/i.test(c)||c==='transparent')spec.color=c;}
         return spec;
@@ -272,7 +283,12 @@ var AD5Counters=AD5Counters||(function(){
     }
     function attach(spec,bearer,ownerToken,ownerCid,actionName){
         var c=find(bearer.id,spec.name,ownerCid);
-        if(c){c.spec=spec;c.turnsLeft=spec.turns;c.max=spec.max;c.charges=Math.min(c.charges,c.max);c.color=spec.color;c.full=spec.full;c.action=actionName||c.action;linkEffect(c);redraw(bearer.id);return c;}
+        if(c){
+            c.spec=spec;c.turnsLeft=spec.turns;c.max=spec.max;c.charges=Math.min(c.charges,c.max);c.color=spec.color;c.full=spec.full;c.action=actionName||c.action;linkEffect(c);
+            // 1.4.0: СЧЁТПОВТОР — повторное применение той же способности добавляет заряды.
+            if(spec.repeat){setCharges(c,c.charges+spec.repeat,'повтор «'+(actionName||spec.name)+'»');return c;}
+            redraw(bearer.id);return c;
+        }
         c={id:newId(),name:spec.name,max:spec.max,charges:spec.start,bearer:bearer.id,owner:ownerToken?ownerToken.id:'',ownerCid:ownerCid||'',
             color:spec.color,full:spec.full,spec:spec,turnsLeft:spec.turns,created:Date.now(),action:actionName||spec.name,filledNotified:false,
             bearerCid:String(bearer.get('represents')||'')};
@@ -407,19 +423,48 @@ var AD5Counters=AD5Counters||(function(){
         remove(c,null);
         tellOwners(ch?ch.id:'','<b>'+esc(c.name)+'</b>: потрачено зарядов '+n+' — следующая атака '+esc(tokenName(bearer))+': '+(bonus.attack?'+'+bonus.attack+' к атаке':'')+(bonus.attack&&bonus.damage?', ':'')+(bonus.damage?'+'+bonus.damage+' к урону':'')+'.');
     }
-    function onAttack(e){
-        var src=String(e&&e.источникТокенId||''),pr=root().primed;if(!src||!pr[src])return;
-        var now=Date.now(),list=(spent[src]||[]).filter(function(x){return x.until>now;});
-        pr[src].forEach(function(b){list.push({attack:b.attack,damage:b.damage,label:b.label,until:now+SPENT_WINDOW_MS});});
-        delete pr[src];spent[src]=list;
+    // 1.4.0: «СЧЁТТРАТА: Печать Завета 2к8 излучение | Белый Клинок 1к6 излучение АТАКА 1»
+    // в описании атаки — эта атака забирает все заряды названных счётчиков атакующего:
+    // формула урона и бонус атаки умножаются на число зарядов, счётчики исчезают.
+    function spendLines(description){
+        var text=field(lines(description),'СЧ[ЁЕ]ТТРАТА');if(!text)return [];
+        return text.split('|').map(function(part){
+            part=part.trim();var atk=0,am=/\s+АТАКА\s*([+-]?\d+)\s*$/i.exec(part);if(am){atk=Number(am[1]);part=part.slice(0,am.index).trim();}
+            var m=/^(.*?)\s+(\d*)[кдdk](\d+)(?:\s*([+-])\s*(\d+))?(?:\s+(.+))?$/i.exec(part),flat=m?null:/^(.*?)\s+(\d+)(?:\s+(.+))?$/.exec(part);
+            if(m)return {name:m[1].trim(),dice:Number(m[2]||1),sides:Number(m[3]),bonus:m[4]?(m[4]==='-'?-1:1)*Number(m[5]):0,type:(m[6]||'').trim(),attack:atk};
+            if(flat)return {name:flat[1].trim(),dice:0,sides:0,bonus:Number(flat[2]),type:(flat[3]||'').trim(),attack:atk};
+            return part?{name:part,dice:0,sides:0,bonus:0,type:'',attack:atk}:null;
+        }).filter(function(x){return x&&x.name;});
     }
-    function combatModifiers(tokenId){
+    function spendBonus(item,c){
+        var n=c.charges,f=item.dice?(item.dice*n)+'d'+item.sides:'';
+        if(item.bonus)f+=(f?(item.bonus>0?'+':'-'):(item.bonus<0?'-':''))+Math.abs(item.bonus*n);
+        return {attack:item.attack*n,damage:f,type:item.type,label:c.name+' ×'+n};
+    }
+    function onAttack(e){
+        var src=String(e&&e.источникТокенId||'');if(!src)return;
+        var pr=root().primed,now=Date.now(),action=String(e.имяДействия||''),list=(spent[src]||[]).filter(function(x){return x.until>now;}),changed=false;
+        if(pr[src]){pr[src].forEach(function(b){list.push({attack:b.attack,damage:b.damage,type:'',label:b.label,action:action,until:now+SPENT_WINDOW_MS});});delete pr[src];changed=true;}
+        spendLines(e.описание).forEach(function(item){
+            var c=find(src,item.name,null);if(!c||c.charges<=0)return;
+            var b=spendBonus(item,c);list.push({attack:b.attack,damage:b.damage,type:b.type,label:b.label,action:action,until:now+SPENT_WINDOW_MS});changed=true;
+            remove(c,'заряды ('+c.charges+') вложены в «'+(action||'атаку')+'»');
+        });
+        if(changed)spent[src]=list;
+    }
+    // ctx {description, name} — текущая атака (AutoDamage 4.3.177+): бонус СЧЁТТРАТА по
+    // ещё не потраченным зарядам и бонусы, уже списанные именно этой атакой.
+    function combatModifiers(tokenId,ctx){
         var out={attack:0,damage:[]},now=Date.now(),id=String(tokenId||'');
         var list=(spent[id]||[]).filter(function(x){return x.until>now;});
         if(list.length)spent[id]=list;else delete spent[id];
+        if(ctx&&ctx.name)list=list.filter(function(x){return !x.action||x.action===ctx.name;});
         // Бонус, ещё не забранный атакой (модификаторы считаются до события атаки).
-        if(!list.length)list=(root().primed[id]||[]);
-        list.forEach(function(x){out.attack+=x.attack;if(x.damage)out.damage.push({formula:String(x.damage),sign:1,label:x.label});});
+        if(!list.length)list=(root().primed[id]||[]).slice();
+        if(ctx&&ctx.description&&!list.some(function(x){return x.action&&x.action===ctx.name;}))spendLines(ctx.description).forEach(function(item){
+            var c=find(id,item.name,null);if(c&&c.charges>0)list.push(spendBonus(item,c));
+        });
+        list.forEach(function(x){out.attack+=Number(x.attack)||0;if(x.damage)out.damage.push({formula:String(x.damage),sign:1,label:x.label,type:x.type||''});});
         return out;
     }
     // Использование кнопки «полной рамки» обнуляет счётчик.

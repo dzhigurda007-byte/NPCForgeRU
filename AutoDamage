@@ -73,6 +73,7 @@ hp листа используется однократно как началь�
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
 4.3.163: классовые механики — атрибут листа ad5_features: КРИТ 19/18, КРИТ КОСТИ, ПЕРЕБРОС УРОНА, СКРЫТАЯ АТАКА, РАЗ В ХОД, УРОН ЗАКЛИНАНИЙ/ШКОЛЫ, ЛУЧ, ЛЕЧЕНИЕ ЗАКЛИНАНИЙ; ПОСЛЕ ПОПАДАНИЯ — кнопки с расходом ячейки или ресурса (!ad5 posthit). ЯРОСТЬ, НЕУДЕРЖИМАЯ ЯРОСТЬ (!ad5 relentless-reset), ПРИ УБИЙСТВЕ [ЗАКЛИНАНИЕМ]; метамагия (!ad5 meta: Усиленное, Продлённое, Удвоенное, Осторожное), ФОРМИРОВАНИЕ ЗАКЛИНАНИЙ; спасбросок может быть автоуспешным. Описание — docs/class-features.md.
+4.3.177: AD5 Counters получает описание и имя текущей атаки (СЧЁТТРАТА — заряды счётчиков в урон этой атаки).
 4.3.176: ТОЛЧ/ТЯГ без явного токена атакующего и с несколькими копиями персонажа — ближайшая к цели копия.
 4.3.175: ресурсы, заряды и метамагия списываются после проверки «можно ли колдовать» и не повторяются при повторе/перескоке; Удвоенное — по уровню ячейки; «урон по цели раз в ход» снова срабатывает каждый раунд; раны: верные прежние хиты после синхронизации листа, без записей для токенов без ран, без ложной раны при правке единственной записи трекера; без AutoFront на каждое перемещение и без двойной перерисовки подсказки; спасброски не разбираются без ожидающих запросов; кнопки, которые никто не нажал, удаляются из памяти.
 4.3.174: событие «ПОЛУЧЕН УРОН» несёт типыУрона; вызов AD5 FX при лечении.
@@ -805,7 +806,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.176', diagnostics = [], debug = false;
+    var VERSION = '4.3.177', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -4127,6 +4128,7 @@ var AD5 = (function () {
     function emptyCombatModifiers(){
         return {attack:0,attackBuff:0,attackDebuff:0,attackRolls:[],ac:0,acBuff:0,acDebuff:0,damage:[],saves:{strength:0,dexterity:0,constitution:0,intelligence:0,wisdom:0,charisma:0},saveRolls:{},checks:{strength:0,dexterity:0,constitution:0,intelligence:0,wisdom:0,charisma:0},checkRolls:{},saveModes:{}};
     }
+    var counterAttackCtx=null;
     function effectModifiersForToken(tokenOrId){
         var id=typeof tokenOrId==='string'?tokenOrId:(tokenOrId&&tokenOrId.id),out=emptyCombatModifiers();
         if(!id)return out;
@@ -4157,7 +4159,7 @@ var AD5 = (function () {
         // 4.3.173: AD5 Counters — «СЧЁТНАКОП»: бонус за каждый накопленный заряд.
         try{
             if(typeof AD5Counters!=='undefined'&&AD5Counters&&typeof AD5Counters.combatModifiers==='function'){
-                var cm=AD5Counters.combatModifiers(id)||{},ca=Number(cm.attack)||0;
+                var cm=AD5Counters.combatModifiers(id,counterAttackCtx)||{},ca=Number(cm.attack)||0;
                 if(ca>=0)out.attackBuff+=ca;else out.attackDebuff+=ca;
                 if(Array.isArray(cm.damage)&&cm.damage.length)out.damage=out.damage.concat(JSON.parse(JSON.stringify(cm.damage)));
                 out.attack=out.attackBuff+out.attackDebuff;
@@ -8392,6 +8394,9 @@ var AD5 = (function () {
                 requireActorOnPartyPage(c.id);
                 if (t && t.cid !== a.cid) throw new Error('Лист цели изменился.');
                 var sourceAttack={value:0,token:null,source:'',modifiers:emptyCombatModifiers()};
+                // 4.3.177: AD5 Counters «СЧЁТТРАТА» — бонус зависит от самой атаки (описание, имя).
+                counterAttackCtx={description:String(f.description!==undefined?f.description:(f.desc||'')),name:String(attackName(f)||'')};
+                setTimeout(function(){counterAttackCtx=null;},0);
                 if(hasAttack||isDmg)sourceAttack=sourceAttackModifier(msg,f,c.id,t&&t.token,pid);
                 // 4.3.49: enforce the row/spell range against the selected physical
                 // target before any hit/miss or NPC attack reaction is resolved.
