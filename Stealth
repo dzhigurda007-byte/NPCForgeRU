@@ -3,18 +3,31 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
     log('AD5Visibility: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Visibility 1.4.0 — скрытность игроков и зрение NPC.
+ * AD5 Visibility 1.5.0 — скрытность игроков и зрение NPC.
  *
  * Маркер: «603-Stealthy» из набора Earthdawn Fourth Edition Token Marker Set.
  *
- * Скрытность
+ * Скрытность — сбалансированный режим (по умолчанию, 1.5.0)
  * - Игрок бросает «Скрытность» из листа персонажа или кнопкой токена «Скрытность».
  *   Итог броска становится Сл проверки Внимательности NPC.
- * - Проверяет только NPC, чей сейчас ход (при общей инициативе группы — токены
- *   этой группы). Если скрытого персонажа нет в его поле зрения — проверки нет.
- * - Проверка — бросок Внимательности к20 + бонус; зрение 50% — с помехой,
- *   25% — с помехой и −5. Итог никогда не ниже пассивного восприятия NPC.
- *   Итог ≥ Сл — NPC замечает; скрытность снимается, персонажа видят все.
+ * - Спрятаться нельзя на виду: если NPC видит персонажа в зоне 100%, на ярком свету
+ *   и без укрытия, бросок отклоняется. Нужны укрытие, тень или выход из поля зрения.
+ * - Проверяет NPC, чей сейчас ход (при общей инициативе — вся группа), и только если
+ *   персонаж в его поле зрения:
+ *     • спокойный NPC — пассивная Внимательность без броска с поправками:
+ *       зона 50% −5, зона 25% −10, тусклый свет −5, укрытие ½ −2, ¾ −5;
+ *     • персонаж на виду (зона 100%, яркий свет, без укрытия) — замечен без броска;
+ *     • NPC «настороже» — бросок к20 + Внимательность с теми же поправками, не ниже
+ *       пассивной с поправками.
+ *   Итог ≥ Сл — NPC замечает, скрытность снимается.
+ * - Настороженность: кнопка токена «Настороже» у каждого листа NPC без контроля игрока
+ *   (переключатель), макрос мастера «Тревога» — все NPC карты настороже / отбой.
+ *   Заметивший NPC и NPC, которые видят его или раскрытого персонажа, настораживаются
+ *   сами; атака из скрытности настораживает тех, кто видит атакующего.
+ * - Пока персонаж скрыт, на слое мастера отмечено место, где он спрятался («◌ Имя»).
+ * - Строгий режим (!ad5stealth mode strict): спрятаться можно где угодно, каждый NPC
+ *   бросает к20 каждый ход (зона 50% — помеха, 25% — помеха и −5, итог не ниже
+ *   пассивной), заметивший снимает скрытность для всех.
  * - Пока персонаж скрыт: на токене маркер, NPC не используют против него реакции
  *   (AD5 Reactions спрашивает AD5Visibility.canSee).
  * - Атака или заклинание скрытого персонажа снимает скрытность.
@@ -46,13 +59,18 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
  *   !ad5stealth markers [ФИЛЬТР]                 — (GM) маркеры кампании (Earthdawn 4E)
  *   !ad5stealth marker ИМЯ                       — (GM) маркер скрытности (пусто — автоподбор)
  *   !ad5stealth buttons                          — (GM) кнопки «Скрытность» листам игроков
+ *   !ad5stealth mode balanced|strict             — (GM) режим скрытности
+ *   !ad5stealth alert [TOKEN_ID] [on|off]        — (GM) настороже (кнопка токена «Настороже»)
+ *   !ad5stealth alarm on|off                     — (GM) тревога для всех NPC карты (макрос «Тревога»)
+ *   !ad5stealth alertmarker ИМЯ                  — (GM) маркер настороженности (пусто — автоподбор)
+ *   !ad5stealth alertbuttons                     — (GM) кнопки «Настороже» листам NPC
  *   !ad5stealth fov [on|all|off|clear]           — (GM) показать поле зрения выделенных
  *       токенов (без выделения — всех NPC на карте) на слое мастера; off/clear — убрать.
  *       Макрос мастера «Поле-зрения» создаётся автоматически (действие токена).
  */
 var AD5Visibility=AD5Visibility||(function(){
     'use strict';
-    var VERSION='1.4.0',SCRIPT='AD5 Скрытность';
+    var VERSION='1.5.0',SCRIPT='AD5 Скрытность';
     var ABILITY_NAME='Скрытность',ABILITY_ACTION='!ad5stealth roll @{selected|token_id} ?{Бросок Скрытности|Обычный,normal|С преимуществом,adv|С помехой,dis}';
     // 1.0.1: после перезапуска песочницы Roll20 может отдавать объекты с задержкой.
     // Запись удаляется, только если токена нет и после повторных проверок
@@ -68,6 +86,8 @@ var AD5Visibility=AD5Visibility||(function(){
         if(!state.AD5Visibility||typeof state.AD5Visibility!=='object')state.AD5Visibility={};
         var r=state.AD5Visibility;r.version=VERSION;
         r.hidden=r.hidden&&typeof r.hidden==='object'?r.hidden:{};
+        r.alert=r.alert&&typeof r.alert==='object'?r.alert:{};
+        r.mode=r.mode==='strict'?'strict':'balanced';
         return r;
     }
     function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
@@ -215,17 +235,121 @@ var AD5Visibility=AD5Visibility||(function(){
         return {pct:pct,light:light,passive:passive,raw:raw,total:total,text:text};
     }
 
+    // ---- 1.5.0: сбалансированный режим (по умолчанию; !ad5stealth mode strict — прежний).
+    // Спрятаться нельзя на виду: NPC видит персонажа в зоне 100%, на ярком свету и без
+    // укрытия. В ход NPC без тревоги сравнивается пассивная Внимательность с поправками
+    // (зона 50% −5, 25% −10, тусклый свет −5, укрытие −2/−5), без броска; цель на виду
+    // в зоне 100% на ярком свету замечается сразу. NPC «настороже» (кнопка токена или
+    // макрос «Тревога») бросает Внимательность каждый свой ход, не ниже пассивной.
+    // Заметивший NPC снимает скрытность; NPC, которые видят его или раскрытого
+    // персонажа, становятся настороже.
+    function coverFor(observer,target){
+        try{if(typeof AD5Environment!=='undefined'&&AD5Environment&&typeof AD5Environment.coverBetween==='function'){var c=AD5Environment.coverBetween(observer,target)||{};return {tier:String(c.tier||'none'),bonus:Number(c.acBonus)||0,full:!!c.full,label:String(c.label||'')};}}catch(ignore){}
+        return {tier:'none',bonus:0,full:false,label:''};
+    }
+    function isAlert(t){return !!(t&&root().alert[t.id]);}
+    // Как observer воспринимает target: null — не видит; иначе поправки и признак «на виду».
+    function sightProfile(observer,target){
+        var pct=visionPercent(observer,target);if(!pct)return null;
+        var light=lightFor(observer,target);if(light==='dark')return null;
+        var cover=coverFor(observer,target);if(cover.full)return null;
+        var penalty=(pct===50?5:pct===25?10:0)+(light==='dim'?5:0)+cover.bonus;
+        return {pct:pct,light:light,cover:cover,penalty:penalty,inPlain:pct===100&&light==='bright'&&cover.tier==='none'};
+    }
+    function profileText(sp){return 'зрение '+sp.pct+'%'+(sp.light==='dim'?', тусклый свет':'')+(sp.cover.tier!=='none'?', '+sp.cover.label:'');}
+    function balancedCheck(observer,target,dc){
+        var sp=sightProfile(observer,target);if(!sp)return null;
+        var passive=passivePerception(observer),eff=passive-sp.penalty;
+        if(sp.inPlain)return {seen:true,total:null,text:profileText(sp)+' — <b>на виду</b>, без броска'};
+        if(!isAlert(observer))return {seen:eff>=dc,total:eff,text:profileText(sp)+', пассивная '+passive+(sp.penalty?' − '+sp.penalty:'')+' = <b>'+eff+'</b>'};
+        var bonus=perceptionBonus(observer),a=randomInteger(20),raw=a+bonus-sp.penalty,total=Math.max(eff,raw);
+        return {seen:total>=dc,total:total,text:profileText(sp)+', <b>настороже</b>: к20 '+a+(bonus>=0?' + ':' − ')+Math.abs(bonus)+(sp.penalty?' − '+sp.penalty:'')+' = '+(raw<eff?raw+' → не ниже пассивной: <b>'+total+'</b>':'<b>'+total+'</b>')};
+    }
+    // Кто видит персонажа «на виду» прямо сейчас (спрятаться нельзя).
+    function plainWatchers(token){
+        return npcObservers(token.get('_pageid')).filter(function(o){var sp=sightProfile(o,token);return sp&&sp.inPlain;});
+    }
+
+    // ---- Настороже / Тревога
+    var ALERT_ABILITY='Настороже',ALERT_ACTION='!ad5stealth alert @{selected|token_id}';
+    var ALERT_PRIORITY=[/alert/i,/aware/i,/vigil/i,/watch(?!ful)/i,/guard/i,/sentry/i];
+    function alertMarker(){
+        var r=root();if(r.alertMarker)return r.alertMarker;
+        var list=campaignMarkers().filter(function(m){return !MARKERS_IN_USE.test(String(m.name||''))&&!/eye|stealth|hid/i.test(String(m.name||''));});
+        for(var i=0;i<ALERT_PRIORITY.length;i++){var hit=list.filter(function(m){return ALERT_PRIORITY[i].test(String(m.name||''));})[0];if(hit)return String(hit.tag);}
+        return 'sentry-gun';
+    }
+    function setAlert(t,on,why){
+        if(!isToken(t))return false;var r=root(),was=!!r.alert[t.id];
+        if(on===was)return false;
+        if(on)r.alert[t.id]={time:Date.now(),why:String(why||'')};else delete r.alert[t.id];
+        setMarker(t,alertMarker(),on);return true;
+    }
+    // NPC, которые видят token (или его самого видит раскрытый персонаж), настораживаются.
+    function alertWitnesses(token,why){
+        var page=token.get('_pageid'),n=[];
+        npcObservers(page).forEach(function(o){
+            if(o.id===token.id||isAlert(o))return;
+            var sees=false;try{sees=typeof AD5Sight!=='undefined'&&AD5Sight&&typeof AD5Sight.canSee==='function'?AD5Sight.canSee(o,token):visionPercent(o,token)>0;}catch(ignore){}
+            if(sees&&lightFor(o,token)!=='dark'&&setAlert(o,true,why))n.push(tokenName(o));
+        });
+        return n;
+    }
+    function alertCommand(msg,args){
+        if(!playerIsGM(msg.playerid))throw new Error('Команда доступна мастеру.');
+        var ids=String(args[2]||'').trim(),mode=String(args[3]||'toggle').toLowerCase(),list=[];
+        var t=ids&&getObj('graphic',ids);if(t)list=[t];else list=selectedTokens(msg).filter(isToken);
+        if(!list.length)throw new Error('Выделите NPC.');
+        var out=list.map(function(x){var on=mode==='on'?true:mode==='off'?false:!isAlert(x);setAlert(x,on,'мастер');return esc(tokenName(x))+': '+(on?'<b>настороже</b>':'спокоен');});
+        gm('Настороженность — '+out.join(', ')+'.');
+    }
+    function alarmCommand(msg,mode){
+        if(!playerIsGM(msg.playerid))throw new Error('Команда доступна мастеру.');
+        var page=partyPageId(),list=npcObservers(page),on=mode!=='off',n=0;
+        list.forEach(function(o){if(setAlert(o,on,'тревога'))n++;});
+        gm(on?'<b>Тревога!</b> Настороже NPC на карте: '+list.length+(n<list.length?' (новых '+n+')':'')+'. Каждый свой ход они бросают Внимательность против скрытых персонажей.':'Отбой тревоги: NPC успокоены — '+n+'.');
+    }
+    function isNpcSheet(cid){return attrValue(cid,'npc')==='1'&&!playerControlled(cid);}
+    function ensureAlertButton(cid){
+        if(!getObj('character',cid)||!isNpcSheet(cid))return false;
+        var list=findObjs({_type:'ability',_characterid:cid,name:ALERT_ABILITY})||[];
+        if(!list.length){createObj('ability',{characterid:cid,name:ALERT_ABILITY,action:ALERT_ACTION,istokenaction:true});return true;}
+        if(list[0].get('action')!==ALERT_ACTION||!list[0].get('istokenaction'))list[0].set({action:ALERT_ACTION,istokenaction:true});
+        return false;
+    }
+    var ALARM_MACRO='Тревога',ALARM_ACTION='!ad5stealth alarm ?{Тревога|Поднять тревогу,on|Отбой,off}';
+    function ensureGmMacro(name,action){
+        (findObjs({_type:'player'})||[]).filter(function(p){return playerIsGM(p.id);}).forEach(function(p){
+            var m=(findObjs({_type:'macro',playerid:p.id,name:name})||[])[0];
+            if(!m)createObj('macro',{playerid:p.id,name:name,action:action,visibleto:'',istokenaction:true});
+            else if(m.get('action')!==action)m.set('action',action);
+        });
+    }
+
+    // ---- Последнее известное место (слой мастера)
+    function dropGhost(token){
+        clearGhost(token.id);
+        var o=createObj('text',{pageid:token.get('_pageid'),layer:'gmlayer',left:Number(token.get('left')),top:Number(token.get('top')),text:'◌ '+tokenName(token),font_size:16,color:'#9aa6b2',controlledby:''});
+        if(o){var r=root();r.ghosts=r.ghosts||{};r.ghosts[token.id]=o.id;}
+    }
+    function clearGhost(id){var r=root(),g=r.ghosts&&r.ghosts[id];if(!g)return;var o=getObj('text',g);if(o)o.remove();delete r.ghosts[id];}
+
     // ---- Скрытность
     function hiddenRec(t){return t?root().hidden[t.id]||null:null;}
     function hide(token,total,pid,detail){
+        if(root().mode==='balanced'){
+            var watchers=plainWatchers(token);
+            if(watchers.length){whisper(pid,'<b>'+esc(tokenName(token))+'</b> не может спрятаться: на виду у '+esc(watchers.map(tokenName).join(', '))+' (яркий свет, без укрытия, вблизи). Нужны укрытие, тень или выход из поля зрения.');return false;}
+        }
         var r=root(),tag=markerTag(),prev=r.hidden[token.id];
         r.hidden[token.id]={dc:total,pid:pid||'',time:Date.now(),marker:tag,markerWasPresent:prev?!!prev.markerWasPresent:hasMarker(token,tag)};
         setMarker(token,tag,true);
+        try{dropGhost(token);}catch(ignoreGhost){}
         whisper(pid,'<b>'+esc(tokenName(token))+'</b> скрывается: Скрытность <b>'+total+'</b>'+(detail?' ('+esc(detail)+')':'')+'. NPC проверяют Внимательность в свой ход, если персонаж у них в поле зрения.');
     }
     function reveal(token,reason,pid,gmDetail){
         var r=root(),rec=r.hidden[token.id];if(!rec)return false;
-        delete r.hidden[token.id];
+        delete r.hidden[token.id];clearGhost(token.id);
         if(!rec.markerWasPresent)setMarker(token,rec.marker||markerTag(),false);
         var text='<b>'+esc(tokenName(token))+'</b> больше не скрыт — '+esc(reason)+'.';
         pid=pid||rec.pid;
@@ -242,6 +366,17 @@ var AD5Visibility=AD5Visibility||(function(){
             var rec=hiddenRec(token),page=token.get('_pageid');
             observers.forEach(function(o){
                 if(!hiddenRec(token)||o.id===token.id||o.get('_pageid')!==page)return;
+                if(root().mode==='balanced'){
+                    var b=balancedCheck(o,token,rec.dc);if(!b)return;
+                    lines.push(esc(tokenName(o))+' → '+esc(tokenName(token))+': '+b.text+' против Сл '+rec.dc+' — '+(b.seen?'<b>заметил</b>':'не заметил'));
+                    if(b.seen){
+                        reveal(token,'замечен: '+tokenName(o),rec.pid,b.total===null?'(на виду)':'(Внимательность '+b.total+' ≥ Сл '+rec.dc+')');
+                        var al=alertWitnesses(o,'союзник заметил '+tokenName(token)).concat(alertWitnesses(token,'видит '+tokenName(token)));
+                        setAlert(o,true,'заметил '+tokenName(token));
+                        if(al.length)lines.push('Настороже: '+esc(al.filter(function(x,i){return al.indexOf(x)===i;}).join(', ')));
+                    }
+                    return;
+                }
                 var r=perceptionRoll(o,token);if(!r)return;
                 var seen=r.total>=rec.dc;
                 lines.push(esc(tokenName(o))+' → '+esc(tokenName(token))+': '+r.text+' против Сл '+rec.dc+' — '+(seen?'<b>заметил</b>':'не заметил'));
@@ -330,7 +465,9 @@ var AD5Visibility=AD5Visibility||(function(){
         var f=fields(msg.content),c=sheetCharacter(msg,f),sourceId=String(f.ad5sourcetoken||'').trim();
         ids.forEach(function(id){
             var t=getObj('graphic',id);if(!t)return;
-            if(id===sourceId||(c&&t.get('represents')===c.id))reveal(t,msg.rolltemplate==='spell'?'заклинание':'атака');
+            if(id===sourceId||(c&&t.get('represents')===c.id)){
+                if(reveal(t,msg.rolltemplate==='spell'?'заклинание':'атака')&&root().mode==='balanced'){var al=alertWitnesses(t,'атака из скрытности');if(al.length)gm('Настороже после атаки: '+esc(al.join(', '))+'.');}
+            }
         });
     }
 
@@ -371,6 +508,13 @@ var AD5Visibility=AD5Visibility||(function(){
         var a=list[0];if(a.get('action')!==ABILITY_ACTION||!a.get('istokenaction'))a.set({action:ABILITY_ACTION,istokenaction:true});
         return false;
     }
+    function ensureAlertButtonsBatched(done){
+        var ids=(findObjs({_type:'character'})||[]).map(function(c){return c.id;}),n=0;
+        (function step(){
+            ids.splice(0,10).forEach(function(cid){try{if(ensureAlertButton(cid))n++;}catch(e){log(SCRIPT+': '+e.message);}});
+            if(ids.length)setTimeout(step,50);else if(done)done(n);
+        })();
+    }
     function ensureButtonsBatched(done){
         var ids=(findObjs({_type:'character'})||[]).map(function(c){return c.id;}),n=0;
         (function step(){
@@ -388,11 +532,16 @@ var AD5Visibility=AD5Visibility||(function(){
         if(!n)gm('Скрытых токенов '+(all||!selectedTokens(msg).length?'нет':'среди выделенных нет')+'.');
     }
     function status(){
-        var ids=Object.keys(root().hidden),lines=['<b>'+SCRIPT+' '+VERSION+'</b> · маркер: '+esc(markerTag())];
+        var r=root(),ids=Object.keys(r.hidden),balanced=r.mode==='balanced',lines=['<b>'+SCRIPT+' '+VERSION+'</b> · режим: '+(balanced?'сбалансированный':'строгий')+' · маркер: '+esc(markerTag())+' · настороже: '+esc(alertMarker())];
+        var alertNames=Object.keys(r.alert).map(function(id){return getObj('graphic',id);}).filter(Boolean).map(tokenName);
+        lines.push('Настороже: '+(alertNames.length?esc(alertNames.join(', ')):'никто'));
         if(!ids.length)lines.push('Скрытых персонажей нет.');
         ids.forEach(function(id){
-            var t=getObj('graphic',id),rec=root().hidden[id];if(!t)return;
-            var watch=npcObservers(t.get('_pageid')).map(function(o){var pct=visionPercent(o,t),light=pct?lightFor(o,t):'';return esc(tokenName(o))+' '+(pct?pct+'%, '+LIGHT_LABEL[light]+' (пассивная '+passivePerception(o)+')':(wallsHide(o,t)?'за стеной':'—'));});
+            var t=getObj('graphic',id),rec=r.hidden[id];if(!t)return;
+            var watch=npcObservers(t.get('_pageid')).map(function(o){
+                if(balanced){var sp=sightProfile(o,t);if(!sp)return esc(tokenName(o))+' — '+(wallsHide(o,t)?'за стеной':'не видит');
+                    return esc(tokenName(o))+' '+(sp.inPlain?'<b>на виду</b>':profileText(sp)+', '+(isAlert(o)?'настороже, бросок':'пассивная '+(passivePerception(o)-sp.penalty)));}
+                var pct=visionPercent(o,t),light=pct?lightFor(o,t):'';return esc(tokenName(o))+' '+(pct?pct+'%, '+LIGHT_LABEL[light]+' (пассивная '+passivePerception(o)+')':(wallsHide(o,t)?'за стеной':'—'));});
             lines.push(esc(tokenName(t))+': Сл '+rec.dc+(watch.length?' · '+watch.join(', '):''));
         });
         gm(lines.join('<br>'));
@@ -468,6 +617,11 @@ var AD5Visibility=AD5Visibility||(function(){
         else if(sub==='marker'){var name=args.slice(2).join(' ').trim();root().marker=resolveMarker(name);gm('Маркер скрытности: <b>'+esc(markerTag())+'</b>.');}
         else if(sub==='markers')gm(markerList(args.slice(2).join(' ')));
         else if(sub==='fov')fovCommand(msg,String(args[2]||'on').toLowerCase());
+        else if(sub==='alert')alertCommand(msg,args);
+        else if(sub==='alarm')alarmCommand(msg,String(args[2]||'on').toLowerCase());
+        else if(sub==='alertmarker'){var an=args.slice(2).join(' ').trim();root().alertMarker=an?resolveMarker(an):null;gm('Маркер настороженности: <b>'+esc(alertMarker())+'</b>.');}
+        else if(sub==='alertbuttons')ensureAlertButtonsBatched(function(n){gm('Кнопка «'+ALERT_ABILITY+'» добавлена листам NPC: '+n+'.');});
+        else if(sub==='mode'){var md=String(args[2]||'').toLowerCase();if(md!=='balanced'&&md!=='strict')throw new Error('Режим: balanced (сбалансированный) или strict (бросок каждого NPC каждый ход).');root().mode=md;gm('Режим скрытности: <b>'+(md==='balanced'?'сбалансированный':'строгий')+'</b>.');}
         else if(sub==='buttons')ensureButtonsBatched(function(n){gm('Кнопка «'+ABILITY_NAME+'» добавлена листам игроков: '+n+'.');});
         else status();
     }
@@ -491,7 +645,10 @@ var AD5Visibility=AD5Visibility||(function(){
             }catch(e){whisper(msg.playerid,esc(e.message||e));}
         });
         on('change:campaign:turnorder',function(){try{turnChanged();}catch(e){log(SCRIPT+': '+e.message);}});
-        on('destroy:graphic',function(t){delete root().hidden[t.id];if(fovStore()[t.id])clearFov(t.id);});
+        on('destroy:graphic',function(t){delete root().hidden[t.id];delete root().alert[t.id];clearGhost(t.id);if(fovStore()[t.id])clearFov(t.id);});
+        on('add:character',function(c){setTimeout(function(){try{ensureAlertButton(c.id);}catch(ignore){}},3000);});
+        try{ensureGmMacro(ALARM_MACRO,ALARM_ACTION);}catch(e){log(SCRIPT+': макрос тревоги — '+e.message);}
+        setTimeout(function(){ensureAlertButtonsBatched(function(n){if(n)log(SCRIPT+': кнопки «'+ALERT_ABILITY+'» добавлены листам NPC: '+n+'.');});},4000);
         on('change:graphic',function(t,prev){try{fovChanged(t,prev);}catch(e){log(SCRIPT+': поле зрения — '+e.message);}});
         try{ensureFovMacro();}catch(e){log(SCRIPT+': макрос поля зрения — '+e.message);}
         on('add:character',function(c){var cid=c.id;setTimeout(function(){try{ensureButton(cid);}catch(ignore){}},3000);});
