@@ -3,7 +3,7 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
     log('AD5Visibility: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Visibility 1.12.0 — скрытность игроков и зрение NPC.
+ * AD5 Visibility 1.13.0 — скрытность игроков и зрение NPC.
  *
  * Маркер: «603-Stealthy» из набора Earthdawn Fourth Edition Token Marker Set.
  *
@@ -54,9 +54,10 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
  * - Проверка проводится в начале хода NPC и в конце перемещения: скрытый персонаж
  *   закончил движение — его проверяют все NPC, которые его видят; NPC закончил
  *   движение — он проверяет скрытых в своём поле зрения. Смена высоты — тоже движение.
- * - Бросок ищущего (настороже, строгий режим) — один раз на пару «NPC → персонаж» до
- *   начала следующего хода NPC; до тех пор — пассивная; новый бросок Скрытности — новая
- *   попытка. «Замечает без броска» действует при любом перемещении.
+ * - Бросок ищущего (настороже, строгий режим) по паре «NPC → персонаж» до начала
+ *   следующего хода NPC повторяется, только если шанс обнаружения стал выше, чем при
+ *   прошлом броске (ближе, светлее, без укрытия); тот же или ниже — только пассивная.
+ *   Новый бросок Скрытности — новая попытка. «Замечает без броска» — при любом перемещении.
  * - Высоты (AD5 Height): дистанция трёхмерная — разница мировых высот (полёт + местность)
  *   добавляется к расстоянию по карте; укрытие с учётом высот — AD5 Environment;
  *   другой этаж (AD5 Floors) — NPC не видит.
@@ -94,7 +95,7 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
  */
 var AD5Visibility=AD5Visibility||(function(){
     'use strict';
-    var VERSION='1.12.0',SCRIPT='AD5 Скрытность';
+    var VERSION='1.13.0',SCRIPT='AD5 Скрытность';
     var ABILITY_NAME='Скрытность',ABILITY_ACTION='!ad5stealth roll @{selected|token_id} ?{Бросок Скрытности|Обычный,normal|С преимуществом,adv|С помехой,dis}';
     // 1.0.1: после перезапуска песочницы Roll20 может отдавать объекты с задержкой.
     // Запись удаляется, только если токена нет и после повторных проверок
@@ -320,12 +321,18 @@ var AD5Visibility=AD5Visibility||(function(){
     }
     function profileText(sp){return Math.round(sp.gap)+' фт, '+(sp.back?'за спиной':sp.light==='dim'?'полутень':'яркий свет')+(sp.cover.tier!=='none'?', '+sp.cover.label:'');}
     function modText(n){return n>0?' − '+n:n<0?' + '+(-n):'';}
-    // 1.12.0: бросок ищущего (NPC настороже) — один раз на пару «NPC → скрытый» до начала
-    // следующего хода этого NPC. Повторно в тот же промежуток — пассивная с поправками;
-    // «замечает без броска» действует всегда. Новый бросок Скрытности — новая попытка.
+    // 1.13.0: бросок ищущего (NPC настороже) по паре «NPC → скрытый» до начала следующего
+    // хода этого NPC повторяется, только если шанс обнаружения стал выше, чем при последнем
+    // броске (ближе, светлее, без укрытия, без помехи). Тот же или ниже шанс — без броска,
+    // только пассивная. «Замечает без броска» действует всегда. Новая Скрытность — заново.
     function rolledStore(){var r=root();r.rolled=r.rolled&&typeof r.rolled==='object'?r.rolled:{};return r.rolled;}
-    function hasRolled(o,t){var m=rolledStore()[o.id];return !!(m&&m[t.id]);}
-    function markRolled(o,t){var st=rolledStore();(st[o.id]||(st[o.id]={}))[t.id]=true;}
+    function rolledChance(o,t){var m=rolledStore()[o.id],v=m&&m[t.id];return v===true?1:(typeof v==='number'?v:null);}
+    function hasRolled(o,t,chance){var prev=rolledChance(o,t);return prev!==null&&(chance===undefined||chance<=prev+1e-9);}
+    function markRolled(o,t,chance){var st=rolledStore(),m=st[o.id]||(st[o.id]={}),prev=typeof m[t.id]==='number'?m[t.id]:0;m[t.id]=Math.max(prev,typeof chance==='number'?chance:1);}
+    // Шанс броска к20 + бонус − штраф (с помехой — оба куба) достичь Сл, с полом «пассивная».
+    function rollChance(dc,bonus,penalty,dis,floor){
+        if(floor>=dc)return 1;var need=dc-bonus+penalty,p=Math.max(0,Math.min(1,(21-need)/20));return dis?p*p:p;
+    }
     function resetRolledObserver(id){delete rolledStore()[id];}
     function resetRolledTarget(id){var st=rolledStore();Object.keys(st).forEach(function(o){if(st[o])delete st[o][id];});}
     function balancedCheck(observer,target,dc){
@@ -333,8 +340,9 @@ var AD5Visibility=AD5Visibility||(function(){
         var passive=passivePerception(observer),eff=passive-sp.penalty;
         if(sp.inPlain)return {seen:true,total:null,text:profileText(sp)+' — <b>замечает без броска</b>'};
         if(!isAlert(observer))return {seen:eff>=dc,total:eff,text:profileText(sp)+', пассивная '+passive+modText(sp.penalty)+' = <b>'+eff+'</b>'};
-        if(hasRolled(observer,target))return {seen:eff>=dc,total:eff,text:profileText(sp)+', настороже, бросок в этом ходу уже был — пассивная '+passive+modText(sp.penalty)+' = <b>'+eff+'</b>'};
-        markRolled(observer,target);
+        var chance=rollChance(dc,perceptionBonus(observer),sp.rollPenalty,sp.rollDis,eff);
+        if(hasRolled(observer,target,chance))return {seen:eff>=dc,total:eff,text:profileText(sp)+', настороже, шанс не выше прежнего броска — пассивная '+passive+modText(sp.penalty)+' = <b>'+eff+'</b>'};
+        markRolled(observer,target,chance);
         var bonus=perceptionBonus(observer),a=randomInteger(20),b2=sp.rollDis?randomInteger(20):null,die=sp.rollDis?Math.min(a,b2):a,raw=die+bonus-sp.rollPenalty,total=Math.max(eff,raw);
         return {seen:total>=dc,total:total,text:profileText(sp)+', <b>настороже</b>: к20 '+(sp.rollDis?a+'/'+b2+' (помеха)':a)+(bonus>=0?' + ':' − ')+Math.abs(bonus)+modText(sp.rollPenalty)+' = '+(raw<eff?raw+' → не ниже '+eff+': <b>'+total+'</b>':'<b>'+total+'</b>')};
     }
@@ -468,14 +476,16 @@ var AD5Visibility=AD5Visibility||(function(){
                     }
                     return;
                 }
-                if(hasRolled(o,token)){
-                    if(!visionPercent(o,token)||lightFor(o,token)==='dark')return;
+                var spct=visionPercent(o,token),slight=spct?lightFor(o,token):'dark';
+                if(!spct||slight==='dark')return;
+                var sChance=rollChance(rec.dc,perceptionBonus(o),spct<50?5:0,spct<100||slight==='dim',passivePerception(o));
+                if(hasRolled(o,token,sChance)){
                     var pp=passivePerception(o),ps=pp>=rec.dc;
-                    lines.push(esc(tokenName(o))+' → '+esc(tokenName(token))+': бросок в этом ходу уже был — пассивная '+pp+' против Сл '+rec.dc+' — '+(ps?'<b>заметил</b>':'не заметил'));
+                    lines.push(esc(tokenName(o))+' → '+esc(tokenName(token))+': шанс не выше прежнего броска — пассивная '+pp+' против Сл '+rec.dc+' — '+(ps?'<b>заметил</b>':'не заметил'));
                     if(ps)reveal(token,'замечен: '+tokenName(o),rec.pid,'(пассивная '+pp+' ≥ Сл '+rec.dc+')');
                     return;
                 }
-                var r=perceptionRoll(o,token);if(!r)return;markRolled(o,token);
+                var r=perceptionRoll(o,token);if(!r)return;markRolled(o,token,sChance);
                 var seen=r.total>=rec.dc;
                 lines.push(esc(tokenName(o))+' → '+esc(tokenName(token))+': '+r.text+' против Сл '+rec.dc+' — '+(seen?'<b>заметил</b>':'не заметил'));
                 if(seen)reveal(token,'замечен: '+tokenName(o),rec.pid,'(Внимательность '+r.total+' ≥ Сл '+rec.dc+', зрение '+r.pct+'%)');
