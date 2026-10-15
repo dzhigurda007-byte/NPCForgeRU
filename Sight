@@ -3,7 +3,7 @@ if(typeof AD5Sight!=='undefined'&&AD5Sight) {
     log('AD5Sight: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Sight 1.2.0 — линия видимости по стенам динамического освещения и освещённость.
+ * AD5 Sight 1.3.0 — линия видимости по стенам динамического освещения и освещённость.
  *
  * Стены: пути (path/pathv2) на слое walls, закрытые двери (door) и окна со ставнями
  * (window, isShuttered). Тип преграды: wall — блокирует, transparent — нет,
@@ -26,15 +26,15 @@ if(typeof AD5Sight!=='undefined'&&AD5Sight) {
  *
  * Команды (GM): !ad5sight — выделите два токена: видимость, освещение, укрытие;
  *               !ad5sight walls — число стен на странице; !ad5sight rebuild — сброс кэша;
- *               !ad5sight ambient bright|dim|dark|off — общий свет всей кампании (без
- *               выделения, на всех картах без исключений): основа света, источники света
+ *               !ad5sight ambient bright|dim|dark|off — общий свет карты, которую мастер
+ *               сейчас открыл (без выделения, на всей карте): основа света, источники света
  *               токенов (яркий и тусклый радиус, в т.ч. старое освещение) освещают вокруг
  *               себя, стены перекрывают свет. off — свет из динамического освещения
  *               страниц; без него всё ярко.
  */
 var AD5Sight=AD5Sight||(function(){
     'use strict';
-    var VERSION='1.2.0',SCRIPT='AD5 Sight',CELL=280,EPS=1e-9;
+    var VERSION='1.3.0',SCRIPT='AD5 Sight',CELL=280,EPS=1e-9;
     var cache=Object.create(null),stamp=0;
     // Дневной свет: доля ≥ BRIGHT — яркий, ≥ DIM — тусклый.
     var DAYLIGHT_BRIGHT=0.75,DAYLIGHT_DIM=0.25;
@@ -197,15 +197,22 @@ var AD5Sight=AD5Sight||(function(){
         var v=num(p.get('daylightModeOpacity'),1);return v>1?v/100:v;
     }
     // Освещённость клетки цели без учёта наблюдателя: 'bright' | 'dim' | 'dark'.
-    // 1.2.0: общий свет кампании (!ad5sight ambient bright|dim|dark|off) — действует на
-    // всех страницах без исключений, в том числе с динамическим освещением (заменяет
-    // дневной свет страницы). Источники света токенов повышают его, стены перекрывают.
-    // Не задан — как раньше: без динамического освещения всё ярко, с ним — дневной свет.
+    // 1.3.0: общий свет карты (!ad5sight ambient bright|dim|dark|off) — для карты, которую
+    // мастер сейчас открыл; действует на всей карте, в том числе с динамическим освещением
+    // (заменяет дневной свет страницы). Источники света токенов повышают его, стены
+    // перекрывают. Не задан — как раньше: без динамического освещения всё ярко, с ним —
+    // дневной свет.
     var AMBIENT_LEVEL={bright:2,dim:1,dark:0},AMBIENT_LABEL={bright:'яркий свет (день)',dim:'полутень (сумерки)',dark:'темнота (ночь, подземелье)'};
     function sightRoot(){if(!state.AD5Sight||typeof state.AD5Sight!=='object')state.AD5Sight={};return state.AD5Sight;}
-    function ambient(){var a=sightRoot().ambientAll;return AMBIENT_LEVEL[a]!==undefined?a:null;}
+    function ambientMap(){var r=sightRoot();r.ambient=r.ambient&&typeof r.ambient==='object'?r.ambient:{};return r.ambient;}
+    function ambient(page){var a=ambientMap()[String(page||'')];return AMBIENT_LEVEL[a]!==undefined?a:null;}
+    // Карта мастера: последняя открытая им страница, иначе страница игроков.
+    function gmPage(pid){
+        var p=pid&&getObj('player',pid),last=p&&String(p.get('_lastpage')||'');
+        return last&&getObj('page',last)?last:String(Campaign().get('playerpageid')||'');
+    }
     function baseLevel(page){
-        var amb=ambient();if(amb!==null)return AMBIENT_LEVEL[amb];
+        var amb=ambient(page);if(amb!==null)return AMBIENT_LEVEL[amb];
         var p=getObj('page',page);if(p&&p.get('dynamic_lighting_enabled')===false)return 2;
         var day=daylight(page);return day>=DAYLIGHT_BRIGHT?2:day>=DAYLIGHT_DIM?1:0;
     }
@@ -277,11 +284,14 @@ var AD5Sight=AD5Sight||(function(){
             var arg=String(msg.content).split(/\s+/)[1]||'',sel=(msg.selected||[]).map(function(s){return getObj('graphic',s._id);}).filter(Boolean),page=sel[0]?pageOf(sel[0]):String(Campaign().get('playerpageid')||'');
             var out;
             if(/^ambient$/i.test(arg)){
-                var lv=String(String(msg.content).split(/\s+/)[2]||'').toLowerCase(),r=sightRoot(),before=ambient();
-                if(lv==='off'||lv==='нет')delete r.ambientAll;else if(AMBIENT_LEVEL[lv]!==undefined)r.ambientAll=lv;else if(lv){sendChat(SCRIPT,'/w gm Формат: <code>!ad5sight ambient bright|dim|dark|off</code>',null,{noarchive:true});return;}
-                var cur=ambient(),icon={bright:'☀️',dim:'🌒',dark:'🌑'}[cur]||'💡';
-                out=icon+' <b>Общее освещение: '+(cur?AMBIENT_LABEL[cur]:'не задано')+'</b>'+(lv&&cur!==before?' (было: '+(before?AMBIENT_LABEL[before]:'не задано')+')':'')+'. '+(cur?'Действует на всех картах: основа света для скрытности и зрения; источники света токенов (факел, фонарь, «Свет») освещают вокруг себя, стены перекрывают свет.':'Свет берётся из динамического освещения страниц; где оно выключено — всё ярко.');
+                var lv=String(String(msg.content).split(/\s+/)[2]||'').toLowerCase(),map=ambientMap(),pid=gmPage(msg.playerid),pg=getObj('page',pid),before=ambient(pid);
+                if(lv==='off'||lv==='нет')delete map[pid];else if(AMBIENT_LEVEL[lv]!==undefined)map[pid]=lv;else if(lv){sendChat(SCRIPT,'/w gm Формат: <code>!ad5sight ambient bright|dim|dark|off</code>',null,{noarchive:true});return;}
+                var cur=ambient(pid),icon={bright:'☀️',dim:'🌒',dark:'🌑'}[cur]||'💡',others=Object.keys(map).filter(function(k){return k!==pid&&getObj('page',k);});
+                out=icon+' <b>Карта «'+esc(pg?pg.get('name'):pid)+'»: '+(cur?AMBIENT_LABEL[cur]:'общий свет не задан')+'</b>'+(lv&&cur!==before?' (было: '+(before?AMBIENT_LABEL[before]:'не задан')+')':'')+'. '+(cur?'Основа света на всей карте для скрытности и зрения; источники света токенов (факел, фонарь, «Свет») освещают вокруг себя, стены перекрывают свет.':(pg&&pg.get('dynamic_lighting_enabled')===false?'Динамическое освещение выключено — для скриптов всё ярко.':'Свет берётся из динамического освещения карты.'))+
+                    (others.length?'<br>Другие карты: '+others.map(function(k){var o=getObj('page',k);return esc(o.get('name'))+' — '+AMBIENT_LABEL[map[k]];}).join('; ')+'.':'');
                 try{if(typeof AD5Visibility!=='undefined'&&AD5Visibility&&typeof AD5Visibility.refreshFov==='function')AD5Visibility.refreshFov();}catch(ignoreFov){}
+                // Старое общее значение 1.2.0 (на все карты) больше не используется.
+                delete sightRoot().ambientAll;
             }
             else if(/^rebuild$/i.test(arg)){invalidate();out='Кэш стен сброшен.';}
             else if(/^walls$/i.test(arg)||sel.length<2){var c=pageCache(page);out='Стен (отрезков) на странице: <b>'+c.segs.length+'</b>, ячеек индекса: '+Object.keys(c.grid).length+'.'+(sel.length===1?'<br>Свет у '+esc(sel[0].get('name')||'токена')+': <b>'+lightAt(sel[0])+'</b>.':'')+' Выделите два токена (наблюдатель, цель) для проверки видимости.';}
