@@ -3,7 +3,7 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
     log('AD5Visibility: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Visibility 1.9.0 — скрытность игроков и зрение NPC.
+ * AD5 Visibility 1.10.0 — скрытность игроков и зрение NPC.
  *
  * Маркер: «603-Stealthy» из набора Earthdawn Fourth Edition Token Marker Set.
  *
@@ -48,7 +48,9 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
  * - Спереди сектор 180°: до 20 фт — 100%, до 60 фт — 50%, дальше — 25%.
  * - Со спины NPC замечает только вплотную — до 10 фт (правило выше).
  * - Автоповорот: при перемещении токен поворачивается по направлению движения
- *   (!ad5stealth autoface on|off).
+ *   (!ad5stealth autoface on|off — для всех; кнопка токена «Автоповорот» на листе игрока
+ *   или атрибут ad5_autoface = off — для одного персонажа).
+ * - Персонажи игроков видят на 360° (нет «спины»).
  * - Дистанция считается от края до края токенов, поэтому крупные токены
  *   видят и замечаются дальше от центра.
  * - 100% — обычный бросок; 50% — помеха; 25% — помеха и −5.
@@ -83,7 +85,7 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
  */
 var AD5Visibility=AD5Visibility||(function(){
     'use strict';
-    var VERSION='1.9.0',SCRIPT='AD5 Скрытность';
+    var VERSION='1.10.0',SCRIPT='AD5 Скрытность';
     var ABILITY_NAME='Скрытность',ABILITY_ACTION='!ad5stealth roll @{selected|token_id} ?{Бросок Скрытности|Обычный,normal|С преимуществом,adv|С помехой,dis}';
     // 1.0.1: после перезапуска песочницы Roll20 может отдавать объекты с задержкой.
     // Запись удаляется, только если токена нет и после повторных проверок
@@ -206,12 +208,14 @@ var AD5Visibility=AD5Visibility||(function(){
         var ro=radius(observer),rt=radius(target),dist=Math.sqrt(dx*dx+dy*dy);
         var gap=Math.max(0,dist-ro-rt)/pxPerFoot(page);
         var f=facing(observer),fx=f.x,fy=f.y;
-        var front=(dx*fx+dy*fy)>=-rt; // хотя бы часть цели перед линией плеч
+        // 1.10.0: персонажи игроков видят на 360° — у них нет «спины».
+        var front=allRound(observer)||(dx*fx+dy*fy)>=-rt; // хотя бы часть цели перед линией плеч
         var pct=!front?(gap<=BACK_FEET+1e-6?100:0):gap<=FRONT_FULL+1e-6?100:gap<=FRONT_HALF+1e-6?50:25;
         // 1.3.0: стены динамического освещения — цель за стеной/закрытой дверью не видна.
         if(pct&&wallsHide(observer,target))pct=0;
         return {pct:pct,gap:gap,front:front};
     }
+    function allRound(t){return !!t&&side(t)==='players';}
     function visionPercent(observer,target){return visionInfo(observer,target).pct;}
     function wallsHide(observer,target){
         try{if(typeof AD5Sight!=='undefined'&&AD5Sight&&typeof AD5Sight.canSee==='function')return !AD5Sight.canSee(observer,target);}catch(ignore){}
@@ -563,6 +567,9 @@ var AD5Visibility=AD5Visibility||(function(){
     function ensureButton(cid){
         if(!getObj('character',cid)||!isPcSheet(cid))return false;
         var list=(findObjs({_type:'ability',_characterid:cid,name:ABILITY_NAME})||[]);
+        var face=(findObjs({_type:'ability',_characterid:cid,name:FACE_ABILITY})||[])[0];
+        if(!face)createObj('ability',{characterid:cid,name:FACE_ABILITY,action:FACE_ACTION,istokenaction:true});
+        else if(face.get('action')!==FACE_ACTION||!face.get('istokenaction'))face.set({action:FACE_ACTION,istokenaction:true});
         if(!list.length){createObj('ability',{characterid:cid,name:ABILITY_NAME,action:ABILITY_ACTION,istokenaction:true});return true;}
         var a=list[0];if(a.get('action')!==ABILITY_ACTION||!a.get('istokenaction'))a.set({action:ABILITY_ACTION,istokenaction:true});
         return false;
@@ -677,21 +684,21 @@ var AD5Visibility=AD5Visibility||(function(){
     // каждой — свет в ней для этого NPC (общий свет, источники света, тёмное зрение,
     // стены) и итог проверки цели среднего размера; одинаковые клетки ряда слиты.
     var FOV_CELL_FT=10,FOV_KIND_COLOR={plain:'#2fa84f',p0:'#e8c02f',p5:'#ef7d1a',p10:'#d0312d',p15:'#7a1f1f'};
-    function cellKind(t,page,ppf,cx,cy,ro,f,px,py){
+    function cellKind(t,page,ppf,cx,cy,ro,f,px,py,round){
         var dx=px-cx,dy=py-cy,dist=Math.sqrt(dx*dx+dy*dy),gap=Math.max(0,dist-ro-FOV_TARGET_RADIUS)/ppf;
-        if((dx*f.x+dy*f.y)<-FOV_TARGET_RADIUS)return null;
+        if(!round&&(dx*f.x+dy*f.y)<-FOV_TARGET_RADIUS)return null;
         try{if(typeof AD5Sight!=='undefined'&&AD5Sight&&AD5Sight.blocked&&AD5Sight.blocked(page,cx,cy,px,py))return null;}catch(ignore){}
         var light='bright';try{if(typeof AD5Sight!=='undefined'&&AD5Sight&&AD5Sight.illuminationAt)light=AD5Sight.illuminationAt(page,px,py,FOV_TARGET_RADIUS,t);}catch(ignore2){}
         if(light==='dark')return null;
         var z=zoneRule(light,gap);return z.auto?'plain':'p'+z.pen;
     }
     function drawLightZones(t,page,ppf,cx,cy,ro,f){
-        var b=brightRules(),range=Math.max(b.far+30,FRONT_HALF+30),cell=FOV_CELL_FT*ppf,n=Math.ceil((ro+range*ppf)/cell),refs=[];
+        var round=allRound(t),b=brightRules(),range=Math.max(b.far+30,FRONT_HALF+30),cell=FOV_CELL_FT*ppf,n=Math.ceil((ro+range*ppf)/cell),refs=[];
         for(var gy=-n;gy<=n;gy++){
             var run=null;
             var flush=function(){if(run){refs.push(drawPolygon(page,[{x:run.x0,y:run.y0},{x:run.x1,y:run.y0},{x:run.x1,y:run.y1},{x:run.x0,y:run.y1}],FOV_KIND_COLOR[run.kind],{width:1}));run=null;}};
             for(var gx=-n;gx<=n;gx++){
-                var px=cx+gx*cell,py=cy+gy*cell,d=Math.sqrt(Math.pow(px-cx,2)+Math.pow(py-cy,2)),kind=d>ro+range*ppf?null:cellKind(t,page,ppf,cx,cy,ro,f,px,py);
+                var px=cx+gx*cell,py=cy+gy*cell,d=Math.sqrt(Math.pow(px-cx,2)+Math.pow(py-cy,2)),kind=d>ro+range*ppf?null:cellKind(t,page,ppf,cx,cy,ro,f,px,py,round);
                 if(run&&run.kind===kind){run.x1=px+cell/2;continue;}
                 flush();if(kind)run={kind:kind,x0:px-cell/2,x1:px+cell/2,y0:py-cell/2,y1:py+cell/2};
             }
@@ -704,12 +711,13 @@ var AD5Visibility=AD5Visibility||(function(){
         var page=t.get('_pageid'),ppf=pxPerFoot(page),cx=Number(t.get('left')),cy=Number(t.get('top')),ro=radius(t),f=facing(t),dir=Math.atan2(f.y,f.x),refs=[];
         function keep(r){if(r)refs.push(r);}
         drawLightZones(t,page,ppf,cx,cy,ro,f).forEach(keep);
-        [FRONT_FULL,FRONT_HALF].forEach(function(ft){keep(drawPolygon(page,fovPolygon(page,cx,cy,dir,Math.PI,ro+ft*ppf+FOV_TARGET_RADIUS),'#ffffff',{fill:'transparent',width:1}));});
-        keep(drawPolygon(page,fovPolygon(page,cx,cy,dir+Math.PI,Math.PI,ro+BACK_FEET*ppf+FOV_TARGET_RADIUS),FOV_BACK_COLOR));
+        var round=allRound(t),spread=round?Math.PI*2:Math.PI;
+        [FRONT_FULL,FRONT_HALF].forEach(function(ft){keep(drawPolygon(page,fovPolygon(page,cx,cy,dir,spread,ro+ft*ppf+FOV_TARGET_RADIUS),'#ffffff',{fill:'transparent',width:1}));});
+        if(!round)keep(drawPolygon(page,fovPolygon(page,cx,cy,dir+Math.PI,Math.PI,ro+BACK_FEET*ppf+FOV_TARGET_RADIUS),FOV_BACK_COLOR));
         var dv=darkvisionFor(t);
         if(dv>0){var ring=[],rr=ro+dv*ppf;for(var i=0;i<=48;i++){var a=Math.PI*2*i/48;ring.push({x:cx+Math.cos(a)*rr,y:cy+Math.sin(a)*rr});}keep(drawPolygon(page,ring,'#a855f7',{fill:'transparent',width:2}));}
         keep(drawText(page,cx,cy-ro-14,tokenName(t)+' · пасс '+passivePerception(t)+(isAlert(t)?' · НАСТОРОЖЕ':'')+(dv>0?' · тёмн. '+Math.round(dv)+' фт':''),isAlert(t)?'#ff6b6b':'#ffffff',14));
-        partyTokens(page).forEach(function(pc){
+        if(!round)partyTokens(page).forEach(function(pc){
             var v=fovVerdict(t,pc),color=FOV_LINE[v.kind]||'#ffffff',px=Number(pc.get('left')),py=Number(pc.get('top'));
             keep(drawPolygon(page,[{x:cx,y:cy},{x:px,y:py}],color,{fill:'transparent',width:v.kind==='none'?1:3,open:true}));
             keep(drawText(page,(cx+px)/2,(cy+py)/2-10,tokenName(pc)+(hiddenRec(pc)?' (Сл '+hiddenRec(pc).dc+')':'')+': '+v.text,color,12));
@@ -748,6 +756,7 @@ var AD5Visibility=AD5Visibility||(function(){
     // !ad5stealth autoface off (например, если установлен другой скрипт поворота).
     function autoFace(t,prev){
         if(root().autoface===false||!prev||!isToken(t)||t.get('layer')!=='objects'||!t.get('represents'))return false;
+        if(!autofaceEnabled(String(t.get('represents'))))return false;
         var x1=Number(t.get('left')),y1=Number(t.get('top')),x0=Number(prev.left),y0=Number(prev.top);
         if(!Number.isFinite(x0)||!Number.isFinite(y0)||(x0===x1&&y0===y1))return false;
         var lm=String(t.get('lastmove')||'').split(',').map(Number).filter(function(n){return Number.isFinite(n);});
@@ -758,6 +767,19 @@ var AD5Visibility=AD5Visibility||(function(){
         var cur=((Number(t.get('rotation'))||0)%360+360)%360;
         if(Math.abs(cur-deg)<0.5)return false;
         t.set('rotation',deg);return true;
+    }
+    // 1.10.0: автоповорот отдельного персонажа — атрибут листа ad5_autoface (off/0 —
+    // выключен); кнопка токена «Автоповорот» на листах игроков переключает его.
+    var FACE_ABILITY='Автоповорот',FACE_ACTION='!ad5stealth face @{selected|token_id}';
+    function autofaceEnabled(cid){var v=attrValue(cid,'ad5_autoface').toLowerCase();return !(v==='0'||v==='off'||v==='нет'||v==='false');}
+    function faceCommand(msg,args){
+        var t=getObj('graphic',String(args[2]||'')||(msg.selected&&msg.selected[0]&&msg.selected[0]._id)||'');
+        if(!combatToken(t))throw new Error('Выделите токен персонажа.');
+        var cid=String(t.get('represents')||'');if(!controls(msg.playerid,cid))throw new Error('Это не ваш персонаж.');
+        var mode=String(args[3]||'toggle').toLowerCase(),on=mode==='on'?true:mode==='off'?false:!autofaceEnabled(cid);
+        var a=findObjs({_type:'attribute',_characterid:cid,name:'ad5_autoface'})[0];
+        if(a)a.set('current',on?'on':'off');else createObj('attribute',{characterid:cid,name:'ad5_autoface',current:on?'on':'off'});
+        whisper(msg.playerid,'<b>'+esc(tokenName(t))+'</b>: автоповорот токена по движению '+(on?'<b>включён</b>':'<b>выключен</b>')+(root().autoface===false?' (у мастера автоповорот выключен для всех)':'')+'.');
     }
     function isLightSource(t){return t.get('emits_bright_light')===true||t.get('emits_low_light')===true||Number(t.get('light_radius'))>0;}
     var FOV_MACRO='Поле-зрения';
@@ -775,6 +797,7 @@ var AD5Visibility=AD5Visibility||(function(){
         if(/^!снять-скрытность(?:\s|$)/i.test(content)){revealCommand(msg,/\sall\b|\sвсе\b/i.test(content));return;}
         var args=content.split(/\s+/),sub=String(args[1]||'status').toLowerCase();
         if(sub==='roll'){rollCommand(msg,args);return;}
+        if(sub==='face'){faceCommand(msg,args);return;}
         if(!playerIsGM(msg.playerid))throw new Error('Команда доступна мастеру.');
         if(sub==='reveal'||sub==='off')revealCommand(msg,String(args[2]||'').toLowerCase()==='all');
         else if(sub==='check'){var obs=currentObservers();if(!obs.length)gm('Сейчас не ход NPC.');else if(!turnCheck(obs,'проверка мастера, ход '+tokenName(obs[0])))gm('В поле зрения NPC текущего хода скрытых нет.');}
