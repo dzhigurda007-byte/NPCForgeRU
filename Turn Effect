@@ -3,7 +3,8 @@ if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
     log('AD5EffectTurns: duplicate module skipped; keep one installed copy.');
 } else {
 /*
-AD5 Effect Turns 1.6.24
+AD5 Effect Turns 1.6.25
+1.6.25: модификаторы «видение невидимого» и «истинное зрение [N фт]»; изменения эффектов передаются AD5 Visibility (невидимость, «Видение невидимого», «Истинное зрение» — сразу пересчёт скрытности и поля зрения).
 1.6.24: изменения эффектов токена передаются AD5 Counters (счётчик снимается вместе со своим эффектом).
 1.6.23: бонус «инициатива +1д8» больше не передаёт ход при пересортировке трекера; изменения маркеров без заметок не читают лист; одна проверка условных связей на пачку перемещений.
 1.6.22: строки AD5 Counters («СЧЁТ…:») не применяются как прямой эффект и не попадают в ПРВ/УСП.
@@ -71,7 +72,7 @@ var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5
 // silently shadow every newer fix.
 var AD5EffectTurns = (function () {
     'use strict';
-    var VERSION='1.6.24', SCRIPT='AD5 Effect Turns';
+    var VERSION='1.6.25', SCRIPT='AD5 Effect Turns';
     var runtimeLastGroup=Object.create(null);
     var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
     var markerCacheRaw=null, markerCacheByName=Object.create(null);
@@ -379,6 +380,10 @@ var AD5EffectTurns = (function () {
     function extraModifierCore(text){
         var m;
         if(/^(?:магическое оружие|magic weapon)$/i.test(text))return {type:'magicWeapon',positive:true,label:'Магическое оружие'};
+        // 1.6.25: «видение невидимого» (See Invisibility) и «истинное зрение [N фт]» (True Seeing,
+        // по умолчанию 120 фт) — носитель видит невидимых (AD5 Visibility, Condition Engine).
+        if(/^(?:видение невидимого|видит невидимое|see invisibility)$/i.test(text))return {type:'seeInvisible',positive:true,label:'Видение невидимого'};
+        if((m=/^(?:истинное зрение|true seeing|truesight)(?:\s+(\d{1,3})\s*(?:фт\.?|футов|фута|ft\.?))?$/i.exec(text))){var tsf=m[1]?Number(m[1]):120;return {type:'truesight',feet:tsf,positive:true,label:'Истинное зрение '+tsf+' фт'};}
         // 1.6.16: «теряет сопр огонь» — the bearer's resistance to that type does not apply (Elemental Bane).
         if((m=/^(?:теряет|снято|без)\s+(?:сопр|сопротивлени\S*)\s+(?:к\s+)?(.+)$/i.exec(text))){
             if(/\s\d{1,3}$/.test(' '+m[1])&&/\d$/.test(m[1]))return null;
@@ -1813,6 +1818,8 @@ var AD5EffectTurns = (function () {
         if(maxHpDiff&&typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.maxHpChanged==='function'){try{AD5ConditionEngine.maxHpChanged(token,maxHpDiff);}catch(maxHpError){sendChat(SCRIPT,'/w gm Максимум хитов: '+esc(maxHpError.message||maxHpError),null,{noarchive:true});}}
         // 1.6.24: AD5 Counters снимает счётчик, если снят эффект, вместе с которым он был наложен.
         try{if(typeof AD5Counters!=='undefined'&&AD5Counters&&typeof AD5Counters.effectsChanged==='function')AD5Counters.effectsChanged(token,old,newRec);}catch(ignoreCounters){}
+        // 1.6.25: невидимость и «видение невидимого» — AD5 Visibility пересчитывает скрытность.
+        try{if(typeof AD5Visibility!=='undefined'&&AD5Visibility&&typeof AD5Visibility.effectsChanged==='function')AD5Visibility.effectsChanged(token,old,newRec);}catch(ignoreVisibility){}
         try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.effectsChanged==='function')AD5Height.effectsChanged(token,old,newRec);}catch(heightEffectError){sendChat(SCRIPT,'/w gm Высота/падение: '+esc(heightEffectError.message||heightEffectError),null,{noarchive:true});}
         refreshTooltip(token);
         function hasRestraint(rec){return !!(rec&&Object.keys(rec.effects||{}).some(function(k){return rec.effects[k].condition==='restrained';}));}

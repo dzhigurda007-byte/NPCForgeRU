@@ -49,7 +49,7 @@ if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine) {
  */
 var AD5ConditionEngine=(function(){
     'use strict';
-    var VERSION='1.2.19',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
+    var VERSION='1.2.20',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
     var MARKERS={
         blinded:'bleeding-eye',charmed:'chained-heart',deafened:'half-haze',frightened:'screaming',
         grappled:'grab',incapacitated:'broken-shield',no_reactions:'interdiction',invisible:'ninja-mask',paralyzed:'padlock',
@@ -145,6 +145,11 @@ var AD5ConditionEngine=(function(){
         if(blockedBy(token,ACTION_BLOCKERS).length)return false;
         return !movementRule(token,30).zero;
     }
+    function seesInvisible(observer,target){
+        if(!observer||!target)return false;
+        try{if(typeof AD5Visibility!=='undefined'&&AD5Visibility&&typeof AD5Visibility.seesInvisible==='function')return !!AD5Visibility.seesInvisible(observer,target);}catch(ignore){}
+        return false;
+    }
     function attackRule(source,target){
         var adv=[],dis=[],forceCritical=false,autoHitClose=false,blocked=source?canAct(source):{allowed:true,reasons:[]},dist=(source&&target)?rangeFeet(source,target):Infinity;
         if(target){
@@ -155,7 +160,9 @@ var AD5ConditionEngine=(function(){
             if(has(target,'stunned'))adv.push('Оглушён');
             if(has(target,'unconscious')){adv.push('Без сознания');if(dist<=5.0001)forceCritical=true;}
             if(has(target,'prone')){if(dist<=5.0001)adv.push('Сбит с ног ≤5 фт');else dis.push('Сбит с ног >5 фт');}
-            if(has(target,'invisible'))dis.push('Невидимая цель');
+            // 1.2.20: истинное зрение, слепое зрение, чувство вибрации, «Видение невидимого»
+            // (AD5 Visibility.seesInvisible) снимают помеху от невидимости цели.
+            if(has(target,'invisible')&&!seesInvisible(source,target))dis.push('Невидимая цель');
             if(dodgeActive(target))dis.push('Уклонение');
         }
         if(source){
@@ -163,7 +170,7 @@ var AD5ConditionEngine=(function(){
             if(has(source,'poisoned'))dis.push('Отравлен');
             if(has(source,'restrained'))dis.push('Опутан');
             if(has(source,'prone'))dis.push('Сбит с ног');
-            if(has(source,'invisible'))adv.push('Невидим');
+            if(has(source,'invisible')&&!(target&&seesInvisible(target,source)))adv.push('Невидим');
             if(has(source,'frightened')){var fear=sourceToken(source,'frightened');if(fear&&rangeFeet(source,fear)<=50.0001)dis.push('Испуган ≤50 фт');}
             if(exhaustionLevel(source)>=3)dis.push('Истощение 3+');
         }

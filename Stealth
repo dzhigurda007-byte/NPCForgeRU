@@ -3,7 +3,26 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
     log('AD5Visibility: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Visibility 1.14.0 — скрытность игроков и зрение NPC.
+ * AD5 Visibility 1.15.0 — скрытность игроков и зрение NPC.
+ *
+ * Невидимость (1.15.0) — состояние «Невидим» (AD5 Effect Turns, Condition Engine; маркер
+ * ninja-mask). Невидимого не видит никто, кроме существ с истинным зрением, слепым
+ * зрением, чувством вибрации (цель на земле) в пределах их дальности и под эффектом
+ * «Видение невидимого» / «Истинное зрение» (или атрибут листа ad5_seeinvisible = on).
+ * - Невидимый может спрятаться где угодно: «на виду» его видят только те, кто видит
+ *   невидимое.
+ * - Скрытого невидимого NPC ищут на слух, при любом свете и во все стороны (стены и
+ *   двери глушат; оглохший не слышит):
+ *     • до 10 фт — спокойный замечает, если Скрытность ≤ пассивная +5; настороже — бросок
+ *       с помехой и −5, не ниже пассивной +5;
+ *     • 10–30 фт — пассивная −5; настороже — бросок с помехой;
+ *     • 30–60 фт — пассивная −10; настороже — бросок с помехой и −5;
+ *     • дальше 60 фт — не слышит.
+ *   Услышал — скрытность снимается («Имя, тебя услышали!»), невидимость остаётся: место
+ *   известно, атаки по нему с помехой, его атаки с преимуществом.
+ * - Кто видит невидимое — проверяет по обычным правилам зрения и света; у него нет помехи
+ *   от невидимости цели и нет преимущества у невидимого против него (Condition Engine).
+ * - Реакции «видит источник» (AD5 Reactions) не срабатывают против невидимого.
  *
  * Маркер: «603-Stealthy» из набора Earthdawn Fourth Edition Token Marker Set.
  *
@@ -96,7 +115,7 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
  */
 var AD5Visibility=AD5Visibility||(function(){
     'use strict';
-    var VERSION='1.14.0',SCRIPT='AD5 Скрытность';
+    var VERSION='1.15.0',SCRIPT='AD5 Скрытность';
     var ABILITY_NAME='Скрытность',ABILITY_ACTION='!ad5stealth roll @{selected|token_id} ?{Бросок Скрытности|Обычный,normal|С преимуществом,adv|С помехой,dis}';
     // 1.0.1: после перезапуска песочницы Roll20 может отдавать объекты с задержкой.
     // Запись удаляется, только если токена нет и после повторных проверок
@@ -143,20 +162,21 @@ var AD5Visibility=AD5Visibility||(function(){
     // ---- Маркер. В кампании установлен набор Earthdawn Fourth Edition Token Marker
     // Set (Roll20 Marketplace 21468); его маркер скрытности — «603-Stealthy», другими
     // модулями AD5 он не используется. Если набора нет — ищем маркер по смыслу
-    // «скрытность» (кроме занятых модулями AD5), затем стандартный ninja-mask.
+    // «скрытность» (кроме занятых модулями AD5), затем стандартный cowled (капюшон).
+    // 1.15.0: ninja-mask — маркер состояния «Невидим», для скрытности не используется.
     // Мастер может выбрать другой маркер командой.
-    var PREFERRED_MARKER='603-Stealthy';
+    var PREFERRED_MARKER='603-Stealthy',INVISIBLE_MARKER='ninja-mask',FALLBACK_MARKER='cowled';
     var MARKER_PRIORITY=[new RegExp('^'+PREFERRED_MARKER+'$','i'),/stealth/i,/hid(?:e|den|ing)/i,/sneak/i,/conceal/i,/shadow/i,/скрыт/i];
     var MARKERS_IN_USE=/blindsiding|ambushing|move-impaired|effect-debuff|effect-buff/i;
     function campaignMarkers(){try{return (JSON.parse(Campaign().get('_token_markers')||'[]')||[]).filter(function(m){return m&&m.tag;});}catch(e){return [];}}
     function markerTag(){
-        var r=root();if(r.marker)return r.marker;
-        var list=campaignMarkers().filter(function(m){return !MARKERS_IN_USE.test(String(m.name||''));});
+        var r=root();if(r.marker&&r.marker!==INVISIBLE_MARKER)return r.marker;
+        var list=campaignMarkers().filter(function(m){return !MARKERS_IN_USE.test(String(m.name||''))&&String(m.tag)!==INVISIBLE_MARKER;});
         for(var i=0;i<MARKER_PRIORITY.length;i++){
             var hit=list.filter(function(m){return MARKER_PRIORITY[i].test(String(m.name||''));})[0];
             if(hit)return String(hit.tag);
         }
-        return 'ninja-mask';
+        return FALLBACK_MARKER;
     }
     // Выбор по имени или номеру из набора («!ad5stealth marker 123» / «… Stealthy»).
     function resolveMarker(text){
@@ -215,13 +235,11 @@ var AD5Visibility=AD5Visibility||(function(){
         if(!isToken(observer)||!isToken(target)||observer.id===target.id)return none;
         var page=observer.get('_pageid');if(page!==target.get('_pageid'))return none;
         if(NO_SIGHT_MARKERS.some(function(m){return hasMarker(observer,m);}))return none;
-        var ox=Number(observer.get('left')),oy=Number(observer.get('top')),dx=Number(target.get('left'))-ox,dy=Number(target.get('top'))-oy;
-        var ro=radius(observer),rt=radius(target),dist=Math.sqrt(dx*dx+dy*dy);
-        var gap=Math.max(0,dist-ro-rt)/pxPerFoot(page);
+        var ox=Number(observer.get('left')),oy=Number(observer.get('top')),dx=Number(target.get('left'))-ox,dy=Number(target.get('top'))-oy,rt=radius(target);
         // 1.11.0: высоты (AD5 Height) — дистанция трёхмерная: разница мировых высот (полёт +
         // местность) добавляется к расстоянию по карте; другой этаж (AD5 Floors) — не видит.
         if(!sameFloorAs(observer,target))return none;
-        var dz=heightDiff(observer,target);if(dz>0)gap=Math.sqrt(gap*gap+dz*dz);
+        var gap=gapFeet(observer,target);
         var f=facing(observer),fx=f.x,fy=f.y;
         // 1.10.0: персонажи игроков видят на 360° — у них нет «спины».
         var front=allRound(observer)||(dx*fx+dy*fy)>=-rt; // хотя бы часть цели перед линией плеч
@@ -229,6 +247,13 @@ var AD5Visibility=AD5Visibility||(function(){
         // 1.3.0: стены динамического освещения — цель за стеной/закрытой дверью не видна.
         if(pct&&wallsHide(observer,target))pct=0;
         return {pct:pct,gap:gap,front:front};
+    }
+    // Дистанция от края до края (фт) с учётом разницы высот.
+    function gapFeet(a,b){
+        var page=a.get('_pageid');if(page!==b.get('_pageid'))return Infinity;
+        var dx=Number(b.get('left'))-Number(a.get('left')),dy=Number(b.get('top'))-Number(a.get('top'));
+        var gap=Math.max(0,Math.sqrt(dx*dx+dy*dy)-radius(a)-radius(b))/pxPerFoot(page),dz=heightDiff(a,b);
+        return dz>0?Math.sqrt(gap*gap+dz*dz):gap;
     }
     function heightOf(t){try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.heightFeet==='function'){var h=Number(AD5Height.heightFeet(t));return Number.isFinite(h)?h:0;}}catch(ignore){}return 0;}
     function heightDiff(a,b){return Math.abs(heightOf(a)-heightOf(b));}
@@ -279,6 +304,55 @@ var AD5Visibility=AD5Visibility||(function(){
         return {pct:pct,light:light,passive:passive,raw:raw,total:total,text:text};
     }
 
+    // ---- 1.15.0: невидимость
+    var INVIS_NEAR=10,INVIS_MID=30,INVIS_FAR=60;
+    var HEAR_BLOCK=NO_SIGHT_MARKERS.filter(function(m){return m!=='bleeding-eye';});
+    var SEE_INVIS_RE=/видение невидимого|see invisibility|видит невидим|видеть невидим/,TRUE_SEEING_RE=/истинное зрение|true seeing|truesight/;
+    function condHas(t,key,marker){
+        try{if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.has==='function')return !!AD5ConditionEngine.has(t,key);}catch(ignore){}
+        return hasMarker(t,marker);
+    }
+    function isInvisible(t){return isToken(t)&&condHas(t,'invisible',INVISIBLE_MARKER);}
+    // Эффекты AD5 Effect Turns: модификаторы «видение невидимого», «истинное зрение N фт».
+    function effectList(t){
+        try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.snapshot==='function'){var rec=AD5EffectTurns.snapshot(t.id),e=rec&&rec.effects||{};return Object.keys(e).map(function(k){return e[k]||{};});}}catch(ignore){}
+        return [];
+    }
+    function effectSeesAll(e){return !!(e.modifier&&e.modifier.type==='seeInvisible')||SEE_INVIS_RE.test(norm(e.label));}
+    function effectTruesight(e){if(e.modifier&&e.modifier.type==='truesight')return Number(e.modifier.feet)||120;return TRUE_SEEING_RE.test(norm(e.label))?120:0;}
+    function sensesOf(t){try{if(typeof AD5Sight!=='undefined'&&AD5Sight&&typeof AD5Sight.senses==='function')return AD5Sight.senses(t)||{};}catch(ignore){}return {};}
+    // Особые чувства наблюдателя против невидимого: {all: видит невидимое везде, truesight,
+    // blindsight, tremorsense — дальности в фт}.
+    function invisibleSenses(o){
+        var cid=String(o.get('represents')||''),fx=effectList(o),s=sensesOf(o),txt=cid?norm(attrValue(cid,'npc_senses')):'',flag=cid?attrValue(cid,'ad5_seeinvisible').toLowerCase():'';
+        return {all:fx.some(effectSeesAll)||SEE_INVIS_RE.test(txt)||/^(?:on|1|да|true)$/.test(flag),
+            truesight:Math.max.apply(null,[Number(s.truesight)||0].concat(fx.map(effectTruesight))),blindsight:Number(s.blindsight)||0,tremorsense:Number(s.tremorsense)||0};
+    }
+    // Чем observer воспринимает невидимого target ('' — ничем).
+    function invisibleSense(o,t,gap){
+        if(!isToken(o)||!isToken(t))return '';if(o.id===t.id)return 'сам';
+        var s=invisibleSenses(o),e=1e-6;if(s.all)return 'видит невидимое';
+        if(gap===undefined)gap=gapFeet(o,t);
+        if(s.truesight>0&&gap<=s.truesight+e)return 'истинное зрение';
+        if(s.blindsight>0&&gap<=s.blindsight+e)return 'слепое зрение';
+        if(s.tremorsense>0&&gap<=s.tremorsense+e&&flightOf(t)<=0&&flightOf(o)<=0)return 'чувство вибрации';
+        return '';
+    }
+    function seesInvisible(o,t){
+        o=typeof o==='string'?getObj('graphic',o):o;t=typeof t==='string'?getObj('graphic',t):t;
+        return !!invisibleSense(o,t);
+    }
+    // Невидимый, которого observer не видит.
+    function unseenInvisible(o,t){return isInvisible(t)&&!invisibleSense(o,t);}
+    // Слух: скрытого невидимого ищут во все стороны при любом свете; стены глушат.
+    function hearingProfile(o,t){
+        if(!isToken(o)||!isToken(t)||o.id===t.id||o.get('_pageid')!==t.get('_pageid')||!sameFloorAs(o,t))return null;
+        if(HEAR_BLOCK.some(function(m){return hasMarker(o,m);})||condHas(o,'deafened','half-haze'))return null;
+        var gap=gapFeet(o,t),e=1e-6;if(gap>INVIS_FAR+e||wallsHide(o,t))return null;
+        var near=gap<=INVIS_NEAR+e,mid=gap<=INVIS_MID+e;
+        return {pct:100,gap:gap,light:'invisible',invisible:true,back:false,cover:{tier:'none',bonus:0,full:false,label:''},penalty:near?-5:mid?5:10,rollDis:true,rollPenalty:near?5:mid?0:5,inPlain:false};
+    }
+
     // ---- 1.5.0: сбалансированный режим (по умолчанию; !ad5stealth mode strict — прежний).
     // Спрятаться нельзя на виду: NPC видит персонажа в зоне 100%, на ярком свету и без
     // укрытия. В ход NPC без тревоги сравнивается пассивная Внимательность с поправками
@@ -312,6 +386,7 @@ var AD5Visibility=AD5Visibility||(function(){
         return {auto:false,pen:10,dis:true,rollPen:5};
     }
     function sightProfile(observer,target){
+        if(unseenInvisible(observer,target))return hearingProfile(observer,target);
         var info=visionInfo(observer,target),pct=info.pct;if(!pct)return null;
         if(!info.front){var bc=coverFor(observer,target);return bc.full?null:backProfile(info,bc);}
         var light=lightFor(observer,target);if(light==='dark')return null;
@@ -325,7 +400,7 @@ var AD5Visibility=AD5Visibility||(function(){
     function backProfile(info,cover){
         return {pct:100,gap:info.gap,light:'back',back:true,cover:cover,penalty:-5+cover.bonus,rollDis:true,rollPenalty:5+cover.bonus,inPlain:false};
     }
-    function profileText(sp){return Math.round(sp.gap)+' фт, '+(sp.back?'за спиной':sp.light==='dim'?'полутень':'яркий свет')+(sp.cover.tier!=='none'?', '+sp.cover.label:'');}
+    function profileText(sp){return Math.round(sp.gap)+' фт, '+(sp.invisible?'невидим — на слух':sp.back?'за спиной':sp.light==='dim'?'полутень':'яркий свет')+(sp.cover.tier!=='none'?', '+sp.cover.label:'');}
     function modText(n){return n>0?' − '+n:n<0?' + '+(-n):'';}
     // 1.13.0: бросок ищущего (NPC настороже) по паре «NPC → скрытый» до начала следующего
     // хода этого NPC повторяется, только если шанс обнаружения стал выше, чем при последнем
@@ -343,6 +418,9 @@ var AD5Visibility=AD5Visibility||(function(){
     function resetRolledTarget(id){var st=rolledStore();Object.keys(st).forEach(function(o){if(st[o])delete st[o][id];});}
     function balancedCheck(observer,target,dc){
         var sp=sightProfile(observer,target);if(!sp)return null;
+        var r=balancedRoll(observer,target,dc,sp);r.heard=!!sp.invisible;return r;
+    }
+    function balancedRoll(observer,target,dc,sp){
         var passive=passivePerception(observer),eff=passive-sp.penalty;
         if(sp.inPlain)return {seen:true,total:null,text:profileText(sp)+' — <b>замечает без броска</b>'};
         if(!isAlert(observer))return {seen:eff>=dc,total:eff,text:profileText(sp)+', пассивная '+passive+modText(sp.penalty)+' = <b>'+eff+'</b>'};
@@ -378,7 +456,7 @@ var AD5Visibility=AD5Visibility||(function(){
         npcObservers(page).forEach(function(o){
             if(o.id===token.id||isAlert(o))return;
             var sees=false;try{sees=typeof AD5Sight!=='undefined'&&AD5Sight&&typeof AD5Sight.canSee==='function'?AD5Sight.canSee(o,token):visionPercent(o,token)>0;}catch(ignore){}
-            if(sees&&lightFor(o,token)!=='dark'&&setAlert(o,true,why))n.push(tokenName(o));
+            if(sees&&lightFor(o,token)!=='dark'&&!unseenInvisible(o,token)&&setAlert(o,true,why))n.push(tokenName(o));
         });
         return n;
     }
@@ -442,7 +520,7 @@ var AD5Visibility=AD5Visibility||(function(){
         setMarker(token,tag,true);
         try{dropGhost(token);}catch(ignoreGhost){}
         scheduleFovRefresh();
-        whisper(pid,'<b>'+esc(tokenName(token))+'</b> скрывается: Скрытность <b>'+total+'</b>'+(detail?' ('+esc(detail)+')':'')+'. NPC проверяют Внимательность в свой ход, если персонаж у них в поле зрения.');
+        whisper(pid,'<b>'+esc(tokenName(token))+'</b> скрывается: Скрытность <b>'+total+'</b>'+(detail?' ('+esc(detail)+')':'')+'. '+(isInvisible(token)?'Персонаж невидим: NPC ищут его на слух (до '+INVIS_FAR+' фт, во все стороны), кроме тех, кто видит невидимое.':'NPC проверяют Внимательность в свой ход, если персонаж у них в поле зрения.'));
     }
     // Имя персонажа: лист, который представляет токен, иначе имя токена.
     function characterNameFor(token){
@@ -453,9 +531,11 @@ var AD5Visibility=AD5Visibility||(function(){
         var r=root(),rec=r.hidden[token.id];if(!rec)return false;
         delete r.hidden[token.id];clearGhost(token.id);scheduleFovRefresh();
         if(!rec.markerWasPresent)setMarker(token,rec.marker||markerTag(),false);
-        var text='<b>'+esc(tokenName(token))+'</b> больше не скрыт — '+esc(reason)+'.';
+        var inv=isInvisible(token),text='<b>'+esc(tokenName(token))+'</b> больше не скрыт — '+esc(reason)+'.'+(inv?' Персонаж по-прежнему невидим: NPC знают, где он, атаки по нему — с помехой, его атаки — с преимуществом.':'');
         // 1.8.2: обнаружение — сообщение всем в чат с именем персонажа: «Зувара, тебя заметили!»
+        // 1.15.0: невидимого находят на слух — «Зувара, тебя услышали!».
         if(/^замечен/.test(String(reason||'')))sendChat(SCRIPT,'<b>'+esc(characterNameFor(token))+', тебя заметили!</b>');
+        else if(/^услышан/.test(String(reason||'')))sendChat(SCRIPT,'<b>'+esc(characterNameFor(token))+', тебя услышали!</b>');
         pid=pid||rec.pid;
         if(pid&&pid!=='API'&&!playerIsGM(pid)){var p=getObj('player',pid),name=p?String(p.get('_displayname')||'').replace(/["\r\n]/g,''):'';if(name)sendChat(SCRIPT,'/w "'+name+'" '+text,null,{noarchive:true});}
         gm(text+(gmDetail?' '+esc(gmDetail):''));
@@ -471,11 +551,11 @@ var AD5Visibility=AD5Visibility||(function(){
             var rec=hiddenRec(token),page=token.get('_pageid');
             observers.forEach(function(o){
                 if(!hiddenRec(token)||o.id===token.id||o.get('_pageid')!==page)return;
-                if(root().mode==='balanced'){
+                if(root().mode==='balanced'||unseenInvisible(o,token)){
                     var b=balancedCheck(o,token,rec.dc);if(!b)return;
-                    lines.push(esc(tokenName(o))+' → '+esc(tokenName(token))+': '+b.text+' против Сл '+rec.dc+' — '+(b.seen?'<b>заметил</b>':'не заметил'));
+                    lines.push(esc(tokenName(o))+' → '+esc(tokenName(token))+': '+b.text+' против Сл '+rec.dc+' — '+(b.seen?'<b>'+(b.heard?'услышал':'заметил')+'</b>':'не '+(b.heard?'услышал':'заметил')));
                     if(b.seen){
-                        reveal(token,'замечен: '+tokenName(o),rec.pid,b.total===null?'(на виду)':'(Внимательность '+b.total+' ≥ Сл '+rec.dc+')');
+                        reveal(token,(b.heard?'услышан: ':'замечен: ')+tokenName(o),rec.pid,b.total===null?'(на виду)':'(Внимательность '+b.total+' ≥ Сл '+rec.dc+')');
                         var al=alertWitnesses(o,'союзник заметил '+tokenName(token)).concat(alertWitnesses(token,'видит '+tokenName(token)));
                         setAlert(o,true,'заметил '+tokenName(token));
                         if(al.length)lines.push('Настороже: '+esc(al.filter(function(x,i){return al.indexOf(x)===i;}).join(', ')));
@@ -503,9 +583,11 @@ var AD5Visibility=AD5Visibility||(function(){
     // NPC «видит» цель, если она не скрыта. Механика зрения действует только при скрытности.
     function canSee(observer,target){
         if(!target)return true;
-        var t=typeof target==='string'?getObj('graphic',target):target;
-        if(!t||!hiddenRec(t))return true;
+        var t=typeof target==='string'?getObj('graphic',target):target;if(!t)return true;
         var o=typeof observer==='string'?getObj('graphic',observer):observer;
+        // 1.15.0: невидимого видят только истинное/слепое зрение, чувство вибрации, «Видение невидимого».
+        if(isToken(o)&&o.id!==t.id&&unseenInvisible(o,t))return false;
+        if(!hiddenRec(t))return true;
         return !(o&&isObserver(o));
     }
 
@@ -662,13 +744,15 @@ var AD5Visibility=AD5Visibility||(function(){
         var alertNames=Object.keys(r.alert).map(function(id){return getObj('graphic',id);}).filter(Boolean).map(tokenName);
         lines.push('Настороже: '+(alertNames.length?esc(alertNames.join(', ')):'никто'));
         if(!ids.length)lines.push('Скрытых персонажей нет.');
+        var invis=partyTokens(partyPageId()).filter(isInvisible).map(tokenName);
+        if(invis.length)lines.push('Невидимы: '+esc(invis.join(', '))+' — их видят только истинное/слепое зрение, чувство вибрации, «Видение невидимого»; скрытых ищут на слух.');
         ids.forEach(function(id){
             var t=getObj('graphic',id),rec=r.hidden[id];if(!t)return;
             var watch=npcObservers(t.get('_pageid')).map(function(o){
-                if(balanced){var sp=sightProfile(o,t);if(!sp)return esc(tokenName(o))+' — '+(wallsHide(o,t)?'за стеной':'не видит');
+                if(balanced||unseenInvisible(o,t)){var sp=sightProfile(o,t);if(!sp)return esc(tokenName(o))+' — '+(wallsHide(o,t)?'за стеной':unseenInvisible(o,t)?'не слышит':'не видит');
                     return esc(tokenName(o))+' '+(sp.inPlain?'<b>на виду</b>':profileText(sp)+', '+(isAlert(o)?'настороже, бросок':'пассивная '+(passivePerception(o)-sp.penalty)));}
                 var pct=visionPercent(o,t),light=pct?lightFor(o,t):'';return esc(tokenName(o))+' '+(pct?pct+'%, '+LIGHT_LABEL[light]+' (пассивная '+passivePerception(o)+')':(wallsHide(o,t)?'за стеной':'—'));});
-            lines.push(esc(tokenName(t))+': Сл '+rec.dc+(watch.length?' · '+watch.join(', '):''));
+            lines.push(esc(tokenName(t))+(isInvisible(t)?' (невидим)':'')+': Сл '+rec.dc+(watch.length?' · '+watch.join(', '):''));
         });
         gm(lines.join('<br>'));
     }
@@ -678,7 +762,7 @@ var AD5Visibility=AD5Visibility||(function(){
     // спины. Границы даны для центра цели среднего размера (дистанция в скрипте —
     // от края до края). Лучи обрезаются стенами динамического освещения (AD5 Sight).
     // Рисунок обновляется при перемещении и повороте токена.
-    var FOV_RAYS=48,FOV_TARGET_RADIUS=35,FOV_BACK_COLOR='#2f6fdf';
+    var FOV_RAYS=48,FOV_TARGET_RADIUS=35,FOV_BACK_COLOR='#2f6fdf',FOV_TRUE_COLOR='#facc15',FOV_FEEL_COLOR='#22d3ee';
     function fovStore(){var r=root();r.fov=r.fov&&typeof r.fov==='object'?r.fov:{};return r.fov;}
     function isJumpgate(){var c=Campaign(),v='';try{v=String(c.get('release')||c.get('_release')||'').toLowerCase();}catch(ignore){}return v==='jumpgate';}
     function clearFov(id){
@@ -720,25 +804,38 @@ var AD5Visibility=AD5Visibility||(function(){
     function partyTokens(page){return (findObjs({_type:'graphic',_subtype:'token',_pageid:page,layer:'objects'})||[]).filter(function(t){return combatToken(t,page)&&side(t)==='players';});}
     function darkvisionFor(t){try{if(typeof AD5Sight!=='undefined'&&AD5Sight&&typeof AD5Sight.darkvisionFeet==='function')return Number(AD5Sight.darkvisionFeet(t))||0;}catch(ignore){}return 0;}
     function fovVerdict(o,pc){
+        var v=fovVerdictRaw(o,pc);
+        if(isInvisible(pc)){var sense=invisibleSense(o,pc);v.text=(sense?'невидим, но '+sense+': ':'невидим: ')+v.text;}
+        return v;
+    }
+    function fovVerdictRaw(o,pc){
         var rec=hiddenRec(pc),balanced=root().mode==='balanced';
+        if(unseenInvisible(o,pc)){
+            var hp=hearingProfile(o,pc);if(!hp)return {kind:'none',text:'не слышит'};
+            var hv=profileVerdict(o,pc,hp,rec);if(!rec&&hv.kind==='open')hv.text='место известно · '+hv.text;return hv;
+        }
         var vi=visionInfo(o,pc);if(!vi.pct)return {kind:'none',text:wallsHide(o,pc)?'стена':'вне поля зрения'};
         var light=vi.front?lightFor(o,pc):'bright';if(light==='dark')return {kind:'none',text:'темнота'};
         var passive=passivePerception(o),bonus=perceptionBonus(o),alert=isAlert(o);
         if(balanced){
             var sp=sightProfile(o,pc);if(!sp)return {kind:'none',text:'полное укрытие'};
-            var eff=passive-sp.penalty,info=profileText(sp)+', пасс '+eff;
-            if(!rec)return sp.inPlain?{kind:'seen',text:'на виду — спрятаться нельзя'}:{kind:'open',text:info+' · спрятаться: Скрытность ≥ '+(eff+1)+(alert?' (настороже — бросок)':'')};
-            if(sp.inPlain)return {kind:'seen',text:'на виду — заметит'};
-            if(eff>=rec.dc)return {kind:'seen',text:info+' ≥ Сл '+rec.dc+' — заметит'};
-            if(!alert)return {kind:'safe',text:info+' < Сл '+rec.dc+' — не заметит'};
-            var need=Math.max(1,rec.dc-bonus+sp.rollPenalty),p1=Math.max(0,(21-need)/20),pr=Math.round((sp.rollDis?p1*p1:p1)*100);
-            return need>20?{kind:'safe',text:info+', настороже: нужно '+need+' на к20 — не заметит'}:{kind:'chance',text:info+', настороже: к20'+(sp.rollDis?' с помехой':'')+' ≥ '+need+' ('+pr+'%)'};
+            return profileVerdict(o,pc,sp,rec);
         }
         var pct=visionPercent(o,pc),dis=pct<100||light==='dim',pen=pct<50?5:0;
         if(!rec)return {kind:'open',text:'зрение '+pct+'%'+(light==='dim'?', тусклый':'')+', пасс '+passive};
         if(passive>=rec.dc)return {kind:'seen',text:'пасс '+passive+' ≥ Сл '+rec.dc+' — заметит'};
         var n2=rec.dc-bonus+pen;
         return n2>20?{kind:'safe',text:'нужно '+n2+' на к20 — не заметит'}:{kind:'chance',text:'бросок'+(dis?' с помехой':'')+': к20 ≥ '+n2};
+    }
+    function profileVerdict(o,pc,sp,rec){
+        var passive=passivePerception(o),bonus=perceptionBonus(o),alert=isAlert(o);
+        var eff=passive-sp.penalty,info=profileText(sp)+', пасс '+eff;
+        if(!rec)return sp.inPlain?{kind:'seen',text:'на виду — спрятаться нельзя'}:{kind:'open',text:info+' · спрятаться: Скрытность ≥ '+(eff+1)+(alert?' (настороже — бросок)':'')};
+        if(sp.inPlain)return {kind:'seen',text:'на виду — заметит'};
+        if(eff>=rec.dc)return {kind:'seen',text:info+' ≥ Сл '+rec.dc+' — заметит'};
+        if(!alert)return {kind:'safe',text:info+' < Сл '+rec.dc+' — не заметит'};
+        var need=Math.max(1,rec.dc-bonus+sp.rollPenalty),p1=Math.max(0,(21-need)/20),pr=Math.round((sp.rollDis?p1*p1:p1)*100);
+        return need>20?{kind:'safe',text:info+', настороже: нужно '+need+' на к20 — не заметит'}:{kind:'chance',text:info+', настороже: к20'+(sp.rollDis?' с помехой':'')+' ≥ '+need+' ('+pr+'%)'};
     }
     // 1.7.0: зоны по реальному свету. Поле перед NPC разбито на клетки по 10 фт: для
     // каждой — свет в ней для этого NPC (общий свет, источники света, тёмное зрение,
@@ -777,12 +874,18 @@ var AD5Visibility=AD5Visibility||(function(){
         [FRONT_FULL,FRONT_HALF].forEach(function(ft){keep(drawPolygon(page,fovPolygon(page,cx,cy,dir,spread,ro+ft*ppf+FOV_TARGET_RADIUS),'#ffffff',{fill:'transparent',width:1}));});
         if(!round)keep(drawPolygon(page,fovPolygon(page,cx,cy,dir+Math.PI,Math.PI,ro+BACK_FEET*ppf+FOV_TARGET_RADIUS),FOV_BACK_COLOR));
         var dv=darkvisionFor(t);
-        if(dv>0){var ring=[],rr=ro+dv*ppf;for(var i=0;i<=48;i++){var a=Math.PI*2*i/48;ring.push({x:cx+Math.cos(a)*rr,y:cy+Math.sin(a)*rr});}keep(drawPolygon(page,ring,'#a855f7',{fill:'transparent',width:2}));}
-        keep(drawText(page,cx,cy-ro-14,tokenName(t)+' · пасс '+passivePerception(t)+(isAlert(t)?' · НАСТОРОЖЕ':'')+(dv>0?' · тёмн. '+Math.round(dv)+' фт':''),isAlert(t)?'#ff6b6b':'#ffffff',14));
+        function ringAt(feet,color){if(!(feet>0))return;var ring=[],rr=ro+feet*ppf;for(var i=0;i<=48;i++){var a=Math.PI*2*i/48;ring.push({x:cx+Math.cos(a)*rr,y:cy+Math.sin(a)*rr});}keep(drawPolygon(page,ring,color,{fill:'transparent',width:2}));}
+        ringAt(dv,'#a855f7');
+        // 1.15.0: кто видит невидимое — золотой круг истинного зрения, голубой — слепое зрение
+        // и чувство вибрации; «Видение невидимого» — в подписи.
+        var si=invisibleSenses(t),feel=Math.max(si.blindsight,si.tremorsense);
+        if(si.truesight>0)ringAt(si.truesight,FOV_TRUE_COLOR);
+        if(feel>0&&feel!==si.truesight)ringAt(feel,FOV_FEEL_COLOR);
+        keep(drawText(page,cx,cy-ro-14,tokenName(t)+' · пасс '+passivePerception(t)+(isAlert(t)?' · НАСТОРОЖЕ':'')+(dv>0?' · тёмн. '+Math.round(dv)+' фт':'')+(si.all?' · видит невидимое':si.truesight>0?' · истин. '+Math.round(si.truesight)+' фт':'')+(feel>0?' · слеп. '+Math.round(feel)+' фт':''),isAlert(t)?'#ff6b6b':'#ffffff',14));
         if(!round)partyTokens(page).forEach(function(pc){
             var v=fovVerdict(t,pc),color=FOV_LINE[v.kind]||'#ffffff',px=Number(pc.get('left')),py=Number(pc.get('top'));
             keep(drawPolygon(page,[{x:cx,y:cy},{x:px,y:py}],color,{fill:'transparent',width:v.kind==='none'?1:3,open:true}));
-            keep(drawText(page,(cx+px)/2,(cy+py)/2-10,tokenName(pc)+(hiddenRec(pc)?' (Сл '+hiddenRec(pc).dc+')':'')+': '+v.text,color,12));
+            keep(drawText(page,(cx+px)/2,(cy+py)/2-10,tokenName(pc)+(isInvisible(pc)?' [невидим]':'')+(hiddenRec(pc)?' (Сл '+hiddenRec(pc).dc+')':'')+': '+v.text,color,12));
         });
         fovStore()[t.id]=refs;
     }
@@ -801,13 +904,14 @@ var AD5Visibility=AD5Visibility||(function(){
         var list=sel;
         if(mode==='all'||!list.length){var page=Campaign().get('playerpageid');list=(findObjs({_type:'graphic',_subtype:'token',_pageid:page,layer:'objects'})||[]).filter(function(t){return isToken(t)&&side(t)==='npcs';});}
         list.forEach(drawFov);
-        gm('Поле зрения на слое мастера: '+list.length+' ('+list.map(function(t){return esc(tokenName(t));}).join(', ')+'). Клетки по реальному свету (общий свет, факелы, тёмное зрение NPC, стены): зелёная — на виду, замечен сразу; жёлтая — пассивная; оранжевая — −5; красная — −10; пусто — не видит (темнота, стена). Белые контуры — 20 и 60 фт, синяя — со спины 10 фт, фиолетовый круг — тёмное зрение. Линии к персонажам: красная — заметит / на виду, жёлтая — решит бросок, зелёная — не заметит, синяя — видит открытого (подпись: нужная Скрытность), серая — не видит. Обновляется само; убрать: <code>!ad5stealth fov off</code>.');
+        gm('Поле зрения на слое мастера: '+list.length+' ('+list.map(function(t){return esc(tokenName(t));}).join(', ')+'). Клетки по реальному свету (общий свет, факелы, тёмное зрение NPC, стены): зелёная — на виду, замечен сразу; жёлтая — пассивная; оранжевая — −5; красная — −10; пусто — не видит (темнота, стена). Белые контуры — 20 и 60 фт, синяя — со спины 10 фт, фиолетовый круг — тёмное зрение, золотой — истинное зрение, голубой — слепое зрение / чувство вибрации (видят невидимое). Линии к персонажам: красная — заметит / на виду, жёлтая — решит бросок, зелёная — не заметит, синяя — видит открытого (подпись: нужная Скрытность), серая — не видит. Обновляется само; убрать: <code>!ad5stealth fov off</code>.');
     }
     function fovChanged(t,prev){
         if(!prev||!Object.keys(fovStore()).length)return;
         var moved=['left','top','rotation','fliph','flipv','width','height','_pageid','layer'].some(function(k){return String(prev[k])!==String(t.get(k));});
         var lit=['emits_bright_light','bright_light_distance','emits_low_light','low_light_distance','light_radius','light_dimradius'].some(function(k){return String(prev[k])!==String(t.get(k));});
-        if(!moved&&!lit)return;
+        // 1.15.0: маркер невидимости или настороженности сменили вручную — пересчёт рисунка.
+        if(!moved&&!lit){if(String(prev.statusmarkers||'')!==String(t.get('statusmarkers')||''))scheduleFovRefresh();return;}
         // Источник света сдвинулся или изменился — свет поменялся у всех показанных NPC.
         if(lit||(moved&&isLightSource(t))){scheduleFovRefresh();return;}
         if(fovStore()[t.id])drawFov(t);
@@ -866,6 +970,28 @@ var AD5Visibility=AD5Visibility||(function(){
         return ['left','top','bar3_value','bar4_value','_pageid'].some(function(k){return String(prev[k])!==String(t.get(k));});
     }
     function isLightSource(t){return t.get('emits_bright_light')===true||t.get('emits_low_light')===true||Number(t.get('light_radius'))>0;}
+    // 1.15.0: AD5 Effect Turns сообщает об изменении эффектов. Невидимость наложена или
+    // снята, появилось «Видение невидимого» / «Истинное зрение» — пересчёт: скрытый
+    // персонаж проверяется наблюдателями (как после перемещения), поле зрения обновляется.
+    function effectSig(rec){
+        var e=rec&&rec.effects||{};
+        return Object.keys(e).filter(function(k){var x=e[k]||{};return x.condition==='invisible'||effectSeesAll(x)||effectTruesight(x)>0;}).sort().join('|');
+    }
+    function effectsChanged(token,before,after){
+        if(!isToken(token)||effectSig(before)===effectSig(after))return;
+        scheduleFovRefresh();
+        if(Object.keys(root().hidden).length)queueMoveCheck(token);
+    }
+    // Старые записи скрытности с маркером ninja-mask (маркер невидимости) — на маркер скрытности.
+    function migrateHiddenMarkers(){
+        var r=root(),tag=markerTag();
+        Object.keys(r.hidden).forEach(function(id){
+            var rec=r.hidden[id],t=getObj('graphic',id);if(!rec||rec.marker!==INVISIBLE_MARKER||!t)return;
+            if(!rec.markerWasPresent)setMarker(t,INVISIBLE_MARKER,false);
+            rec.marker=tag;rec.markerWasPresent=hasMarker(t,tag);setMarker(t,tag,true);
+        });
+        if(r.marker===INVISIBLE_MARKER)delete r.marker;
+    }
     var FOV_MACRO='Поле-зрения';
     function ensureFovMacro(){
         (findObjs({_type:'player'})||[]).filter(function(p){return playerIsGM(p.id);}).forEach(function(p){
@@ -885,7 +1011,7 @@ var AD5Visibility=AD5Visibility||(function(){
         if(!playerIsGM(msg.playerid))throw new Error('Команда доступна мастеру.');
         if(sub==='reveal'||sub==='off')revealCommand(msg,String(args[2]||'').toLowerCase()==='all');
         else if(sub==='check'){var obs=currentObservers();if(!obs.length)gm('Сейчас не ход NPC.');else if(!turnCheck(obs,'проверка мастера, ход '+tokenName(obs[0])))gm('В поле зрения NPC текущего хода скрытых нет.');}
-        else if(sub==='marker'){var name=args.slice(2).join(' ').trim();root().marker=resolveMarker(name);gm('Маркер скрытности: <b>'+esc(markerTag())+'</b>.');}
+        else if(sub==='marker'){var name=args.slice(2).join(' ').trim(),mk=resolveMarker(name);if(mk===INVISIBLE_MARKER)throw new Error('ninja-mask — маркер состояния «Невидим», выберите другой маркер скрытности.');root().marker=mk;gm('Маркер скрытности: <b>'+esc(markerTag())+'</b>.');}
         else if(sub==='markers')gm(markerList(args.slice(2).join(' ')));
         else if(sub==='fov')fovCommand(msg,String(args[2]||'on').toLowerCase());
         else if(sub==='alert')alertCommand(msg,args);
@@ -905,6 +1031,7 @@ var AD5Visibility=AD5Visibility||(function(){
 
     on('ready',function(){
         root();
+        try{migrateHiddenMarkers();setTimeout(function(){try{migrateHiddenMarkers();}catch(ignoreLate){}},READY_RETRY_DELAYS[1]);}catch(e){log(SCRIPT+': маркер скрытности — '+e.message);}
         try{var o=JSON.parse(Campaign().get('turnorder')||'[]')||[];lastTop=o.length?String(o[0].id||'')+'|'+String(o[0].custom||''):'';}catch(ignore){}
         (function reconcile(attempt){
             var missing=Object.keys(root().hidden).filter(function(id){return !getObj('graphic',id);});
@@ -938,7 +1065,7 @@ var AD5Visibility=AD5Visibility||(function(){
         ensureButtonsBatched(function(n){log(SCRIPT+' '+VERSION+' ready. Новых кнопок «'+ABILITY_NAME+'»: '+n+'.');});
         gm('<b>'+SCRIPT+' '+VERSION+'</b> запущен. Маркер скрытности: <b>'+esc(markerTag())+'</b> (список: <code>!ad5stealth markers</code>). Снять скрытность: <code>!снять-скрытность</code>.');
     });
-    return {version:VERSION,refreshFov:function(){scheduleFovRefresh();},canSee:canSee,visionPercent:visionPercent,passivePerception:passivePerception,isHidden:function(t){return !!hiddenRec(typeof t==='string'?getObj('graphic',t):t);},reveal:function(t,reason){return reveal(typeof t==='string'?getObj('graphic',t):t,reason||'снято модулем');},check:function(){var o=currentObservers();return o.length?turnCheck(o,'проверка модуля'):0;}};
+    return {version:VERSION,refreshFov:function(){scheduleFovRefresh();},canSee:canSee,seesInvisible:seesInvisible,isInvisible:function(t){return isInvisible(typeof t==='string'?getObj('graphic',t):t);},effectsChanged:effectsChanged,visionPercent:visionPercent,passivePerception:passivePerception,isHidden:function(t){return !!hiddenRec(typeof t==='string'?getObj('graphic',t):t);},reveal:function(t,reason){return reveal(typeof t==='string'?getObj('graphic',t):t,reason||'снято модулем');},check:function(){var o=currentObservers();return o.length?turnCheck(o,'проверка модуля'):0;}};
 }());
 
 }

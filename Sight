@@ -3,7 +3,7 @@ if(typeof AD5Sight!=='undefined'&&AD5Sight) {
     log('AD5Sight: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Sight 1.4.0 — линия видимости по стенам динамического освещения и освещённость.
+ * AD5 Sight 1.5.0 — линия видимости по стенам динамического освещения и освещённость.
  *
  * Стены: пути (path/pathv2) на слое walls, закрытые двери (door) и окна со ставнями
  * (window, isShuttered). Тип преграды: wall — блокирует, transparent — нет,
@@ -23,6 +23,9 @@ if(typeof AD5Sight!=='undefined'&&AD5Sight) {
  * «тёмное зрение N» в листе: тьма → тусклый, тусклый → яркий), слепое зрение и
  * чувство вибрации («слепое зрение N», «blindsight N») игнорируют темноту.
  *   illumination(target, observer) → 'bright' | 'dim' | 'dark'
+ * 1.5.0: истинное зрение («истинное зрение N», «truesight N») видит в темноте в пределах
+ *   дальности; senses(observer) → {darkvision, blindsight, tremorsense, truesight} (фт) —
+ *   для невидимости (AD5 Visibility).
  *
  * Команды (GM): !ad5sight — выделите два токена: видимость, освещение, укрытие;
  *               !ad5sight walls — число стен на странице; !ad5sight rebuild — сброс кэша;
@@ -34,7 +37,7 @@ if(typeof AD5Sight!=='undefined'&&AD5Sight) {
  */
 var AD5Sight=AD5Sight||(function(){
     'use strict';
-    var VERSION='1.4.0',SCRIPT='AD5 Sight',CELL=280,EPS=1e-9;
+    var VERSION='1.5.0',SCRIPT='AD5 Sight',CELL=280,EPS=1e-9;
     var cache=Object.create(null),stamp=0;
     // Дневной свет: доля ≥ BRIGHT — яркий, ≥ DIM — тусклый.
     var DAYLIGHT_BRIGHT=0.75,DAYLIGHT_DIM=0.25;
@@ -185,6 +188,16 @@ var AD5Sight=AD5Sight||(function(){
     }
     var DARKVISION=/(?:darkvision|т[её]мное\s+зрение)\s*[:—-]?\s*(\d+(?:[.,]\d+)?)\s*(фт|фут\w*|ft|feet|метр[а-яё]*|м(?![а-яёa-z]))?/i;
     var BLINDSENSE=/(?:blindsight|tremorsense|слепое\s+зрение|чувство\s+вибрации|чувство\s+колебаний)\s*[:—-]?\s*(\d+(?:[.,]\d+)?)\s*(фт|фут\w*|ft|feet|метр[а-яё]*|м(?![а-яёa-z]))?/i;
+    var BLINDSIGHT=/(?:blindsight|слепое\s+зрение)\s*[:—-]?\s*(\d+(?:[.,]\d+)?)\s*(фт|фут\w*|ft|feet|метр[а-яё]*|м(?![а-яёa-z]))?/i;
+    var TREMORSENSE=/(?:tremorsense|чувство\s+вибрации|чувство\s+колебаний)\s*[:—-]?\s*(\d+(?:[.,]\d+)?)\s*(фт|фут\w*|ft|feet|метр[а-яё]*|м(?![а-яёa-z]))?/i;
+    var TRUESIGHT=/(?:truesight|true\s+sight|истинное\s+зрение)\s*[:—-]?\s*(\d+(?:[.,]\d+)?)\s*(фт|фут\w*|ft|feet|метр[а-яё]*|м(?![а-яёa-z]))?/i;
+    // 1.5.0: особые чувства листа (фт) — для невидимости в AD5 Visibility.
+    function senses(observer){
+        if(!observer)return {darkvision:0,blindsight:0,tremorsense:0,truesight:0};
+        return {darkvision:darkvisionFeet(observer),blindsight:senseFeet(observer,BLINDSIGHT),tremorsense:senseFeet(observer,TREMORSENSE),truesight:senseFeet(observer,TRUESIGHT)};
+    }
+    // Чувство, при котором свет не важен: слепое зрение, чувство вибрации, истинное зрение.
+    function lightlessFeet(observer){return Math.max(senseFeet(observer,BLINDSENSE),senseFeet(observer,TRUESIGHT));}
     function darkvisionFeet(observer){
         if(!observer)return 0;
         if(bool(observer.get('has_night_vision')))return Math.max(num(observer.get('night_vision_distance'),0),senseFeet(observer,DARKVISION));
@@ -254,7 +267,7 @@ var AD5Sight=AD5Sight||(function(){
         var base=lightAtPoint(page,x,y,rt,null);if(!observer||base==='bright')return base;
         var oc=center(observer),dist=Math.max(0,Math.sqrt(Math.pow(oc.x-x,2)+Math.pow(oc.y-y,2))-radius(observer)-(rt||0))/pxPerFoot(page);
         // 1.2.0: дальность 0 — чувства нет (раньше соседняя цель всегда считалась освещённой).
-        var bs=senseFeet(observer,BLINDSENSE),dv=darkvisionFeet(observer);
+        var bs=lightlessFeet(observer),dv=darkvisionFeet(observer);
         if(bs>0&&bs>=dist-1e-6)return 'bright';
         if(dv>0&&dv>=dist-1e-6)return base==='dark'?'dim':'bright';
         return base;
@@ -264,7 +277,7 @@ var AD5Sight=AD5Sight||(function(){
         var base=tickMemo('light:'+target.id,function(){return lightAt(target);});if(!observer||base==='bright')return base;
         var dist=edgeFeet(observer,target),dzv=Math.abs(heightOf(observer)-heightOf(target));if(dzv>0)dist=Math.sqrt(dist*dist+dzv*dzv);
         // 1.2.0: дальность 0 — чувства нет (раньше соседняя цель всегда считалась освещённой).
-        var bs=senseFeet(observer,BLINDSENSE),dv=darkvisionFeet(observer);
+        var bs=lightlessFeet(observer),dv=darkvisionFeet(observer);
         if(bs>0&&bs>=dist-1e-6)return 'bright';
         if(dv>0&&dv>=dist-1e-6)return base==='dark'?'dim':'bright';
         return base;
@@ -308,7 +321,7 @@ var AD5Sight=AD5Sight||(function(){
         });
         log(SCRIPT+' '+VERSION+' ready.');
     });
-    return {version:VERSION,firstHit:firstHit,blocked:blocked,visibility:visibility,canSee:canSee,lightAt:lightAt,lightAtPoint:lightAtPoint,illuminationAt:illuminationAt,ambient:ambient,illumination:illumination,darkvisionFeet:darkvisionFeet,invalidate:invalidate,
+    return {version:VERSION,firstHit:firstHit,blocked:blocked,visibility:visibility,canSee:canSee,lightAt:lightAt,lightAtPoint:lightAtPoint,illuminationAt:illuminationAt,ambient:ambient,illumination:illumination,darkvisionFeet:darkvisionFeet,senses:senses,invalidate:invalidate,
         _test:{pathSegments:pathSegments,pathV2Segments:pathV2Segments,portalSegment:portalSegment,cache:function(p){return pageCache(p);}}};
 }());
 
