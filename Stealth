@@ -3,7 +3,7 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
     log('AD5Visibility: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Visibility 1.15.2 — скрытность игроков и зрение NPC.
+ * AD5 Visibility 1.15.3 — скрытность игроков и зрение NPC.
  *
  * Невидимость (1.15.0) — состояние «Невидим» (AD5 Effect Turns, Condition Engine; маркер
  * ninja-mask). Невидимого не видит никто, кроме существ с истинным зрением, слепым
@@ -98,6 +98,8 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
  *   !снять-скрытность [all]                      — то же
  *   !ad5stealth status                           — (GM) кто скрыт и от кого
  *   !ad5stealth check                            — (GM) проверка NPC текущего хода
+ *   !ad5stealth why                              — (GM) выделите персонажа и NPC: почему NPC
+ *       видит или не видит персонажа (этаж, высоты, стены, свет, укрытие, невидимость)
  *   !ad5stealth markers [ФИЛЬТР]                 — (GM) маркеры кампании (Earthdawn 4E)
  *   !ad5stealth marker ИМЯ                       — (GM) маркер скрытности (пусто — автоподбор)
  *   !ad5stealth buttons                          — (GM) кнопки «Скрытность» листам игроков
@@ -115,7 +117,7 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
  */
 var AD5Visibility=AD5Visibility||(function(){
     'use strict';
-    var VERSION='1.15.2',SCRIPT='AD5 Скрытность';
+    var VERSION='1.15.3',SCRIPT='AD5 Скрытность';
     var ABILITY_NAME='Скрытность',ABILITY_ACTION='!ad5stealth roll @{selected|token_id} ?{Бросок Скрытности|Обычный,normal|С преимуществом,adv|С помехой,dis}';
     // 1.0.1: после перезапуска песочницы Roll20 может отдавать объекты с задержкой.
     // Запись удаляется, только если токена нет и после повторных проверок
@@ -746,6 +748,40 @@ var AD5Visibility=AD5Visibility||(function(){
         var n=0;tokens.forEach(function(t){if(reveal(t,'снято мастером',null))n++;});
         if(!n)gm('Скрытых токенов '+(all||!selectedTokens(msg).length?'нет':'среди выделенных нет')+'.');
     }
+    // 1.15.3: !ad5stealth why — по шагам, почему NPC видит или не видит персонажа.
+    function whyLines(o,t){
+        var L=[],page=o.get('_pageid'),ok=function(b){return b?'да':'<b>нет</b>';};
+        L.push('<b>'+esc(tokenName(o))+' → '+esc(tokenName(t))+'</b>');
+        L.push('NPC-наблюдатель: '+ok(isObserver(o))+' (сторона '+side(o)+', лист '+(getObj('character',String(o.get('represents')||''))?'есть':'<b>нет</b>')+', слой '+esc(o.get('layer'))+')');
+        L.push('Персонаж: сторона '+side(t)+(hiddenRec(t)?', скрыт, Сл '+hiddenRec(t).dc:', не скрыт')+(isInvisible(t)?', <b>невидим</b>':''));
+        if(page!==t.get('_pageid')){L.push('<b>Разные страницы.</b>');return L;}
+        var ns=NO_SIGHT_MARKERS.filter(function(m){return hasMarker(o,m);});
+        L.push('Состояния, при которых NPC не видит: '+(ns.length?'<b>'+esc(ns.join(', '))+'</b>':'нет'));
+        L.push('Один этаж (AD5 Floors): '+ok(sameFloorAs(o,t)));
+        var dx=Number(t.get('left'))-Number(o.get('left')),dy=Number(t.get('top'))-Number(o.get('top')),flat=Math.max(0,Math.sqrt(dx*dx+dy*dy)-radius(o)-radius(t))/pxPerFoot(page);
+        L.push('Дистанция по карте '+Math.round(flat)+' фт; высоты: NPC '+Math.round(heightOf(o))+' фт, персонаж '+Math.round(heightOf(t))+' фт; итог '+Math.round(gapFeet(o,t))+' фт');
+        var vi=visionInfo(o,t);
+        L.push('Перед NPC: '+ok(vi.front)+(allRound(o)?' (360°)':'')+'; зона зрения '+vi.pct+'%');
+        try{if(typeof AD5Sight!=='undefined'&&AD5Sight&&AD5Sight.visibility){var v=AD5Sight.visibility(o,t);L.push('Стены: свободных лучей '+v.visible+'/'+v.total+(v.visible?'':' — <b>за стеной</b>'));}}catch(ignore){}
+        var base='?';try{base=AD5Sight.lightAt(t);}catch(ignore2){}
+        var amb=null;try{amb=AD5Sight.ambient(page);}catch(ignore3){}
+        L.push('Свет у персонажа: '+base+(amb?' (общий свет карты: '+amb+')':' (общий свет не задан)')+'; для NPC: <b>'+lightFor(o,t)+'</b>; тёмное зрение NPC '+Math.round(darkvisionFor(o))+' фт');
+        var cv=coverFor(o,t);L.push('Укрытие (AD5 Environment): '+(cv.tier==='none'?'нет':'<b>'+esc(cv.label||cv.tier)+'</b>'+(cv.full?' — полное':'')));
+        if(isInvisible(t)){var sn=invisibleSense(o,t);L.push('Видит невидимое: '+(sn?esc(sn):'нет — ищет на слух'));}
+        var sp=sightProfile(o,t);
+        if(!sp)L.push('Итог: <b>не видит</b>');
+        else{var pass=passivePerception(o),eff=pass-sp.penalty;L.push('Итог: '+profileText(sp)+(sp.inPlain?' — <b>на виду</b> (спрятаться нельзя, заметит сразу)':', пассивная '+pass+modText(sp.penalty)+' = <b>'+eff+'</b>'+(isAlert(o)?', настороже — бросок'+(sp.rollDis?' с помехой':'')+modText(sp.rollPenalty):''))+(hiddenRec(t)?' против Сл '+hiddenRec(t).dc:''));}
+        return L;
+    }
+    function whyCommand(msg){
+        var sel=selectedTokens(msg).filter(isToken);
+        var pcs=sel.filter(function(x){return side(x)==='players';}),npcs=sel.filter(function(x){return side(x)!=='players';});
+        if(!pcs.length)throw new Error('Выделите персонажа (и NPC — без NPC проверяются все NPC карты).');
+        if(!npcs.length)npcs=npcObservers(pcs[0].get('_pageid'));
+        if(!npcs.length)throw new Error('На карте нет NPC-наблюдателей (токены NPC со ссылкой на лист на слое объектов).');
+        var out=[];npcs.slice(0,8).forEach(function(o){pcs.forEach(function(t){out.push(whyLines(o,t).join('<br>'));});});
+        gm(out.join('<br>—<br>'));
+    }
     function status(){
         var r=root(),ids=Object.keys(r.hidden),balanced=r.mode==='balanced',lines=['<b>'+SCRIPT+' '+VERSION+'</b> · режим: '+(balanced?'сбалансированный':'строгий')+' · маркер: '+esc(markerTag())+' · настороже: '+esc(alertMarker())];
         var alertNames=Object.keys(r.alert).map(function(id){return getObj('graphic',id);}).filter(Boolean).map(tokenName);
@@ -1038,6 +1074,7 @@ var AD5Visibility=AD5Visibility||(function(){
         if(sub==='face'){faceCommand(msg,args);return;}
         if(!playerIsGM(msg.playerid))throw new Error('Команда доступна мастеру.');
         if(sub==='reveal'||sub==='off')revealCommand(msg,String(args[2]||'').toLowerCase()==='all');
+        else if(sub==='why'||sub==='почему')whyCommand(msg);
         else if(sub==='check'){var obs=currentObservers();if(!obs.length)gm('Сейчас не ход NPC.');else if(!turnCheck(obs,'проверка мастера, ход '+tokenName(obs[0])))gm('В поле зрения NPC текущего хода скрытых нет.');}
         else if(sub==='marker'){var name=args.slice(2).join(' ').trim(),mk=resolveMarker(name);if(mk===INVISIBLE_MARKER)throw new Error('ninja-mask — маркер состояния «Невидим», выберите другой маркер скрытности.');root().marker=mk;gm('Маркер скрытности: <b>'+esc(markerTag())+'</b>.');}
         else if(sub==='markers')gm(markerList(args.slice(2).join(' ')));
