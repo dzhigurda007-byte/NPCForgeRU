@@ -3,7 +3,7 @@ if(typeof AD5Sight!=='undefined'&&AD5Sight) {
     log('AD5Sight: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Sight 1.3.0 — линия видимости по стенам динамического освещения и освещённость.
+ * AD5 Sight 1.4.0 — линия видимости по стенам динамического освещения и освещённость.
  *
  * Стены: пути (path/pathv2) на слое walls, закрытые двери (door) и окна со ставнями
  * (window, isShuttered). Тип преграды: wall — блокирует, transparent — нет,
@@ -34,7 +34,7 @@ if(typeof AD5Sight!=='undefined'&&AD5Sight) {
  */
 var AD5Sight=AD5Sight||(function(){
     'use strict';
-    var VERSION='1.3.0',SCRIPT='AD5 Sight',CELL=280,EPS=1e-9;
+    var VERSION='1.4.0',SCRIPT='AD5 Sight',CELL=280,EPS=1e-9;
     var cache=Object.create(null),stamp=0;
     // Дневной свет: доля ≥ BRIGHT — яркий, ≥ DIM — тусклый.
     var DAYLIGHT_BRIGHT=0.75,DAYLIGHT_DIM=0.25;
@@ -227,24 +227,28 @@ var AD5Sight=AD5Sight||(function(){
                 // (с какого расстояния свет тусклый); факелы старых токенов тоже считаются.
                 if(br<=0&&dm<=0){var lr=num(l.get('light_radius'),0),ld=num(l.get('light_dimradius'),0);if(lr>0){dm=lr;br=ld>0&&ld<lr?ld:lr;}}
                 if(br<=0&&dm<=0)return;
-                var c=center(l);out.push({x:c.x,y:c.y,br:br,dm:Math.max(br,dm),id:l.id});
+                var c=center(l);out.push({x:c.x,y:c.y,z:heightOf(l),br:br,dm:Math.max(br,dm),id:l.id});
             });
             return out;
         });
     }
     // Освещённость точки (x,y) для цели радиуса rt пикселей; selfId — свет самой цели.
-    function lightAtPoint(page,x,y,rt,selfId){
+    // 1.4.0: высоты (AD5 Height): мировая высота токена (полёт + местность); свет источника
+    // и дальность тёмного зрения считаются по трёхмерной дистанции.
+    function heightOf(t){try{if(typeof AD5Height!=='undefined'&&AD5Height&&typeof AD5Height.heightFeet==='function'){var h=Number(AD5Height.heightFeet(t));return Number.isFinite(h)?h:0;}}catch(ignore){}return 0;}
+    function lightAtPoint(page,x,y,rt,selfId,z){
         var level=baseLevel(page);if(level===2)return 'bright';
         var ppf=pxPerFoot(page);
         lightSources(page).some(function(l){
             var d=Math.max(0,Math.sqrt(Math.pow(l.x-x,2)+Math.pow(l.y-y,2))-(rt||0))/ppf;
+            if(z!==null&&z!==undefined&&l.id!==selfId){var dz=Math.abs(l.z-z);if(dz>0)d=Math.sqrt(d*d+dz*dz);}
             var lvl=d<=l.br?2:d<=l.dm?1:0;if(lvl<=level)return false;
             if(l.id!==selfId&&blocked(page,l.x,l.y,x,y))return false;
             level=lvl;return level===2;
         });
         return level===2?'bright':level===1?'dim':'dark';
     }
-    function lightAt(target){var page=pageOf(target),c=center(target);return lightAtPoint(page,c.x,c.y,radius(target),target.id);}
+    function lightAt(target){var page=pageOf(target),c=center(target);return lightAtPoint(page,c.x,c.y,radius(target),target.id,heightOf(target));}
     // Освещённость точки для наблюдателя (тёмное и слепое зрение) — для показа поля зрения.
     function illuminationAt(page,x,y,rt,observer){
         var base=lightAtPoint(page,x,y,rt,null);if(!observer||base==='bright')return base;
@@ -258,7 +262,7 @@ var AD5Sight=AD5Sight||(function(){
     // Освещённость цели для конкретного наблюдателя (тёмное и слепое зрение).
     function illumination(target,observer){
         var base=tickMemo('light:'+target.id,function(){return lightAt(target);});if(!observer||base==='bright')return base;
-        var dist=edgeFeet(observer,target);
+        var dist=edgeFeet(observer,target),dzv=Math.abs(heightOf(observer)-heightOf(target));if(dzv>0)dist=Math.sqrt(dist*dist+dzv*dzv);
         // 1.2.0: дальность 0 — чувства нет (раньше соседняя цель всегда считалась освещённой).
         var bs=senseFeet(observer,BLINDSENSE),dv=darkvisionFeet(observer);
         if(bs>0&&bs>=dist-1e-6)return 'bright';
