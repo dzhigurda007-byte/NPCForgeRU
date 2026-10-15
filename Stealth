@@ -3,7 +3,7 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
     log('AD5Visibility: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Visibility 1.6.0 — скрытность игроков и зрение NPC.
+ * AD5 Visibility 1.7.0 — скрытность игроков и зрение NPC.
  *
  * Маркер: «603-Stealthy» из набора Earthdawn Fourth Edition Token Marker Set.
  *
@@ -24,7 +24,7 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
  *     • свет, который несёт сам персонаж (факел, «Свет» — свет на токене), освещает его;
  *     • спокойный NPC — пассивная с поправками без броска; NPC «настороже» —
  *       к20 + Внимательность с теми же поправками, не ниже пассивной с поправками.
- *   Итог ≥ Сл — NPC замечает, скрытность снимается.
+ *   Итог ≥ Сл — NPC замечает, скрытность снимается; в чат всем: «Имя, тебя заметили!».
  * - Настороженность: кнопка токена «Настороже» у каждого листа NPC без контроля игрока
  *   (переключатель), макрос мастера «Тревога» — все NPC карты настороже / отбой.
  *   Заметивший NPC и NPC, которые видят его или раскрытого персонажа, настораживаются
@@ -77,7 +77,7 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
  */
 var AD5Visibility=AD5Visibility||(function(){
     'use strict';
-    var VERSION='1.6.0',SCRIPT='AD5 Скрытность';
+    var VERSION='1.7.0',SCRIPT='AD5 Скрытность';
     var ABILITY_NAME='Скрытность',ABILITY_ACTION='!ad5stealth roll @{selected|token_id} ?{Бросок Скрытности|Обычный,normal|С преимуществом,adv|С помехой,dis}';
     // 1.0.1: после перезапуска песочницы Roll20 может отдавать объекты с задержкой.
     // Запись удаляется, только если токена нет и после повторных проверок
@@ -370,6 +370,8 @@ var AD5Visibility=AD5Visibility||(function(){
         delete r.hidden[token.id];clearGhost(token.id);scheduleFovRefresh();
         if(!rec.markerWasPresent)setMarker(token,rec.marker||markerTag(),false);
         var text='<b>'+esc(tokenName(token))+'</b> больше не скрыт — '+esc(reason)+'.';
+        // 1.7.0: обнаружение — сообщение всем в чат: «Зувара, тебя заметили!»
+        if(/^замечен/.test(String(reason||'')))sendChat(SCRIPT,'<b>'+esc(tokenName(token))+', тебя заметили!</b>');
         pid=pid||rec.pid;
         if(pid&&pid!=='API'&&!playerIsGM(pid)){var p=getObj('player',pid),name=p?String(p.get('_displayname')||'').replace(/["\r\n]/g,''):'';if(name)sendChat(SCRIPT,'/w "'+name+'" '+text,null,{noarchive:true});}
         gm(text+(gmDetail?' '+esc(gmDetail):''));
@@ -571,9 +573,6 @@ var AD5Visibility=AD5Visibility||(function(){
     // от края до края). Лучи обрезаются стенами динамического освещения (AD5 Sight).
     // Рисунок обновляется при перемещении и повороте токена.
     var FOV_RAYS=48,FOV_TARGET_RADIUS=35,FOV_BACK_COLOR='#2f6fdf';
-    // 1.6.0: зоны рисуются по правилам яркого света (на виду / пассивная / −5) и границам
-    // полутени 20 и 60 фт — тонкие контуры внутри.
-    function fovZones(){var b=brightRules();return [{feet:b.far*1.5,color:'#d0312d'},{feet:b.far,color:'#e8c02f'},{feet:b.plain,color:'#2fa84f'}];}
     function fovStore(){var r=root();r.fov=r.fov&&typeof r.fov==='object'?r.fov:{};return r.fov;}
     function isJumpgate(){var c=Campaign(),v='';try{v=String(c.get('release')||c.get('_release')||'').toLowerCase();}catch(ignore){}return v==='jumpgate';}
     function clearFov(id){
@@ -632,11 +631,38 @@ var AD5Visibility=AD5Visibility||(function(){
         var n2=rec.dc-bonus+pen;
         return n2>20?{kind:'safe',text:'нужно '+n2+' на к20 — не заметит'}:{kind:'chance',text:'бросок'+(dis?' с помехой':'')+': к20 ≥ '+n2};
     }
+    // 1.7.0: зоны по реальному свету. Поле перед NPC разбито на клетки по 10 фт: для
+    // каждой — свет в ней для этого NPC (общий свет, источники света, тёмное зрение,
+    // стены) и итог проверки цели среднего размера; одинаковые клетки ряда слиты.
+    var FOV_CELL_FT=10,FOV_KIND_COLOR={plain:'#2fa84f',p0:'#e8c02f',p5:'#ef7d1a',p10:'#d0312d',p15:'#7a1f1f'};
+    function cellKind(t,page,ppf,cx,cy,ro,f,px,py){
+        var dx=px-cx,dy=py-cy,dist=Math.sqrt(dx*dx+dy*dy),gap=Math.max(0,dist-ro-FOV_TARGET_RADIUS)/ppf;
+        if((dx*f.x+dy*f.y)<-FOV_TARGET_RADIUS)return null;
+        try{if(typeof AD5Sight!=='undefined'&&AD5Sight&&AD5Sight.blocked&&AD5Sight.blocked(page,cx,cy,px,py))return null;}catch(ignore){}
+        var light='bright';try{if(typeof AD5Sight!=='undefined'&&AD5Sight&&AD5Sight.illuminationAt)light=AD5Sight.illuminationAt(page,px,py,FOV_TARGET_RADIUS,t);}catch(ignore2){}
+        if(light==='dark')return null;
+        if(light==='bright'){var b=brightRules();return gap<=b.plain+1e-6?'plain':gap<=b.far+1e-6?'p0':'p'+Math.min(15,b.penalty>=10?10:b.penalty>=5?5:0);}
+        var pen=(gap<=FRONT_FULL+1e-6?0:gap<=FRONT_HALF+1e-6?5:10)+5;return 'p'+pen;
+    }
+    function drawLightZones(t,page,ppf,cx,cy,ro,f){
+        var b=brightRules(),range=Math.max(b.far+30,FRONT_HALF+30),cell=FOV_CELL_FT*ppf,n=Math.ceil((ro+range*ppf)/cell),refs=[];
+        for(var gy=-n;gy<=n;gy++){
+            var run=null;
+            var flush=function(){if(run){refs.push(drawPolygon(page,[{x:run.x0,y:run.y0},{x:run.x1,y:run.y0},{x:run.x1,y:run.y1},{x:run.x0,y:run.y1}],FOV_KIND_COLOR[run.kind],{width:1}));run=null;}};
+            for(var gx=-n;gx<=n;gx++){
+                var px=cx+gx*cell,py=cy+gy*cell,d=Math.sqrt(Math.pow(px-cx,2)+Math.pow(py-cy,2)),kind=d>ro+range*ppf?null:cellKind(t,page,ppf,cx,cy,ro,f,px,py);
+                if(run&&run.kind===kind){run.x1=px+cell/2;continue;}
+                flush();if(kind)run={kind:kind,x0:px-cell/2,x1:px+cell/2,y0:py-cell/2,y1:py+cell/2};
+            }
+            flush();
+        }
+        return refs;
+    }
     function drawFov(t){
         clearFov(t.id);if(!isToken(t))return;
         var page=t.get('_pageid'),ppf=pxPerFoot(page),cx=Number(t.get('left')),cy=Number(t.get('top')),ro=radius(t),f=facing(t),dir=Math.atan2(f.y,f.x),refs=[];
         function keep(r){if(r)refs.push(r);}
-        fovZones().forEach(function(z){keep(drawPolygon(page,fovPolygon(page,cx,cy,dir,Math.PI,ro+z.feet*ppf+FOV_TARGET_RADIUS),z.color));});
+        drawLightZones(t,page,ppf,cx,cy,ro,f).forEach(keep);
         [FRONT_FULL,FRONT_HALF].forEach(function(ft){keep(drawPolygon(page,fovPolygon(page,cx,cy,dir,Math.PI,ro+ft*ppf+FOV_TARGET_RADIUS),'#ffffff',{fill:'transparent',width:1}));});
         keep(drawPolygon(page,fovPolygon(page,cx,cy,dir+Math.PI,Math.PI,ro+BACK_FEET*ppf+FOV_TARGET_RADIUS),FOV_BACK_COLOR));
         var dv=darkvisionFor(t);
@@ -664,15 +690,19 @@ var AD5Visibility=AD5Visibility||(function(){
         var list=sel;
         if(mode==='all'||!list.length){var page=Campaign().get('playerpageid');list=(findObjs({_type:'graphic',_subtype:'token',_pageid:page,layer:'objects'})||[]).filter(function(t){return isToken(t)&&side(t)==='npcs';});}
         list.forEach(drawFov);
-        gm('Поле зрения на слое мастера: '+list.length+' ('+list.map(function(t){return esc(tokenName(t));}).join(', ')+'). Зоны (яркий свет): зелёная — на виду (до '+brightRules().plain+' фт), жёлтая — пассивная (до '+brightRules().far+' фт), красная — пассивная −'+brightRules().penalty+'; белые контуры — 20 и 60 фт для полутени; синяя — со спины 5 фт; фиолетовый круг — тёмное зрение. Линии к персонажам: красная — заметит / на виду, жёлтая — решит бросок, зелёная — не заметит, синяя — видит открытого (подпись: нужная Скрытность), серая — не видит. Обновляется само; убрать: <code>!ad5stealth fov off</code>.');
+        gm('Поле зрения на слое мастера: '+list.length+' ('+list.map(function(t){return esc(tokenName(t));}).join(', ')+'). Клетки по реальному свету (общий свет, факелы, тёмное зрение NPC, стены): зелёная — на виду, замечен сразу; жёлтая — пассивная; оранжевая — −5; красная — −10; тёмно-красная — −15; пусто — не видит (темнота, стена). Белые контуры — 20 и 60 фт, синяя — со спины 5 фт, фиолетовый круг — тёмное зрение. Линии к персонажам: красная — заметит / на виду, жёлтая — решит бросок, зелёная — не заметит, синяя — видит открытого (подпись: нужная Скрытность), серая — не видит. Обновляется само; убрать: <code>!ad5stealth fov off</code>.');
     }
     function fovChanged(t,prev){
         if(!prev||!Object.keys(fovStore()).length)return;
         var moved=['left','top','rotation','fliph','flipv','width','height','_pageid','layer'].some(function(k){return String(prev[k])!==String(t.get(k));});
-        if(!moved)return;
+        var lit=['emits_bright_light','bright_light_distance','emits_low_light','low_light_distance','light_radius','light_dimradius'].some(function(k){return String(prev[k])!==String(t.get(k));});
+        if(!moved&&!lit)return;
+        // Источник света сдвинулся или изменился — свет поменялся у всех показанных NPC.
+        if(lit||(moved&&isLightSource(t))){scheduleFovRefresh();return;}
         if(fovStore()[t.id])drawFov(t);
         else if(isToken(t)&&side(t)==='players')scheduleFovRefresh();
     }
+    function isLightSource(t){return t.get('emits_bright_light')===true||t.get('emits_low_light')===true||Number(t.get('light_radius'))>0;}
     var FOV_MACRO='Поле-зрения';
     function ensureFovMacro(){
         (findObjs({_type:'player'})||[]).filter(function(p){return playerIsGM(p.id);}).forEach(function(p){
@@ -737,7 +767,7 @@ var AD5Visibility=AD5Visibility||(function(){
         ensureButtonsBatched(function(n){log(SCRIPT+' '+VERSION+' ready. Новых кнопок «'+ABILITY_NAME+'»: '+n+'.');});
         gm('<b>'+SCRIPT+' '+VERSION+'</b> запущен. Маркер скрытности: <b>'+esc(markerTag())+'</b> (список: <code>!ad5stealth markers</code>). Снять скрытность: <code>!снять-скрытность</code>.');
     });
-    return {version:VERSION,canSee:canSee,visionPercent:visionPercent,passivePerception:passivePerception,isHidden:function(t){return !!hiddenRec(typeof t==='string'?getObj('graphic',t):t);},reveal:function(t,reason){return reveal(typeof t==='string'?getObj('graphic',t):t,reason||'снято модулем');},check:function(){var o=currentObservers();return o.length?turnCheck(o,'проверка модуля'):0;}};
+    return {version:VERSION,refreshFov:function(){scheduleFovRefresh();},canSee:canSee,visionPercent:visionPercent,passivePerception:passivePerception,isHidden:function(t){return !!hiddenRec(typeof t==='string'?getObj('graphic',t):t);},reveal:function(t,reason){return reveal(typeof t==='string'?getObj('graphic',t):t,reason||'снято модулем');},check:function(){var o=currentObservers();return o.length?turnCheck(o,'проверка модуля'):0;}};
 }());
 
 }
