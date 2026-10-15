@@ -3,7 +3,7 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
     log('AD5Visibility: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Visibility 1.8.1 — скрытность игроков и зрение NPC.
+ * AD5 Visibility 1.8.2 — скрытность игроков и зрение NPC.
  *
  * Маркер: «603-Stealthy» из набора Earthdawn Fourth Edition Token Marker Set.
  *
@@ -25,7 +25,7 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
  *       к20 + Внимательность: яркий свет 60–120 фт — обычный, дальше — с помехой;
  *       полутень 20–60 фт — с помехой, дальше — с помехой и −5; итог не ниже пассивной
  *       с поправками.
- *   Итог ≥ Сл — NPC замечает, скрытность снимается; в чат всем: «Имя игрока, тебя заметили!».
+ *   Итог ≥ Сл — NPC замечает, скрытность снимается; в чат всем: «Имя персонажа, тебя заметили!».
  * - Настороженность: кнопка токена «Настороже» у каждого листа NPC без контроля игрока
  *   (переключатель), макрос мастера «Тревога» — все NPC карты настороже / отбой.
  *   Заметивший NPC и NPC, которые видят его или раскрытого персонажа, настораживаются
@@ -78,7 +78,7 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
  */
 var AD5Visibility=AD5Visibility||(function(){
     'use strict';
-    var VERSION='1.8.1',SCRIPT='AD5 Скрытность';
+    var VERSION='1.8.2',SCRIPT='AD5 Скрытность';
     var ABILITY_NAME='Скрытность',ABILITY_ACTION='!ad5stealth roll @{selected|token_id} ?{Бросок Скрытности|Обычный,normal|С преимуществом,adv|С помехой,dis}';
     // 1.0.1: после перезапуска песочницы Roll20 может отдавать объекты с задержкой.
     // Запись удаляется, только если токена нет и после повторных проверок
@@ -377,21 +377,18 @@ var AD5Visibility=AD5Visibility||(function(){
         scheduleFovRefresh();
         whisper(pid,'<b>'+esc(tokenName(token))+'</b> скрывается: Скрытность <b>'+total+'</b>'+(detail?' ('+esc(detail)+')':'')+'. NPC проверяют Внимательность в свой ход, если персонаж у них в поле зрения.');
     }
-    // Имя игрока: кто бросал Скрытность, иначе игрок, управляющий листом/токеном, иначе имя токена.
-    function playerNameFor(token,pid){
-        var ids=[];if(pid&&pid!=='API'&&!playerIsGM(pid))ids.push(pid);
-        var c=getObj('character',String(token.get('represents')||''));
-        [c&&c.get('controlledby'),token.get('controlledby')].forEach(function(raw){String(raw||'').split(',').forEach(function(x){x=x.trim();if(x&&x!=='all'&&!playerIsGM(x)&&ids.indexOf(x)<0)ids.push(x);});});
-        for(var i=0;i<ids.length;i++){var p=getObj('player',ids[i]),n=p&&String(p.get('_displayname')||'').trim();if(n)return n;}
-        return tokenName(token);
+    // Имя персонажа: лист, который представляет токен, иначе имя токена.
+    function characterNameFor(token){
+        var c=getObj('character',String(token.get('represents')||'')),n=c&&String(c.get('name')||'').trim();
+        return n||tokenName(token);
     }
     function reveal(token,reason,pid,gmDetail){
         var r=root(),rec=r.hidden[token.id];if(!rec)return false;
         delete r.hidden[token.id];clearGhost(token.id);scheduleFovRefresh();
         if(!rec.markerWasPresent)setMarker(token,rec.marker||markerTag(),false);
         var text='<b>'+esc(tokenName(token))+'</b> больше не скрыт — '+esc(reason)+'.';
-        // 1.8.1: обнаружение — сообщение всем в чат с именем игрока: «Даня, тебя заметили!»
-        if(/^замечен/.test(String(reason||'')))sendChat(SCRIPT,'<b>'+esc(playerNameFor(token,pid||rec.pid))+', тебя заметили!</b>');
+        // 1.8.2: обнаружение — сообщение всем в чат с именем персонажа: «Зувара, тебя заметили!»
+        if(/^замечен/.test(String(reason||'')))sendChat(SCRIPT,'<b>'+esc(characterNameFor(token))+', тебя заметили!</b>');
         pid=pid||rec.pid;
         if(pid&&pid!=='API'&&!playerIsGM(pid)){var p=getObj('player',pid),name=p?String(p.get('_displayname')||'').replace(/["\r\n]/g,''):'';if(name)sendChat(SCRIPT,'/w "'+name+'" '+text,null,{noarchive:true});}
         gm(text+(gmDetail?' '+esc(gmDetail):''));
