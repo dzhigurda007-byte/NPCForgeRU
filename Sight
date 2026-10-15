@@ -3,7 +3,7 @@ if(typeof AD5Sight!=='undefined'&&AD5Sight) {
     log('AD5Sight: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Sight 1.0.1 — линия видимости по стенам динамического освещения и освещённость.
+ * AD5 Sight 1.1.0 — линия видимости по стенам динамического освещения и освещённость.
  *
  * Стены: пути (path/pathv2) на слое walls, закрытые двери (door) и окна со ставнями
  * (window, isShuttered). Тип преграды: wall — блокирует, transparent — нет,
@@ -25,11 +25,16 @@ if(typeof AD5Sight!=='undefined'&&AD5Sight) {
  *   illumination(target, observer) → 'bright' | 'dim' | 'dark'
  *
  * Команды (GM): !ad5sight — выделите два токена: видимость, освещение, укрытие;
- *               !ad5sight walls — число стен на странице; !ad5sight rebuild — сброс кэша.
+ *               !ad5sight walls — число стен на странице; !ad5sight rebuild — сброс кэша;
+ *               !ad5sight ambient bright|dim|dark|off — общий свет страницы (выделенного
+ *               токена или страницы игроков) для карт БЕЗ динамического освещения:
+ *               скрипты считают свет сами — общий свет, источники света токенов (яркий и
+ *               тусклый радиус, в т.ч. старое освещение), стены перекрывают свет. Не задан —
+ *               без динамического освещения всё ярко.
  */
 var AD5Sight=AD5Sight||(function(){
     'use strict';
-    var VERSION='1.0.1',SCRIPT='AD5 Sight',CELL=280,EPS=1e-9;
+    var VERSION='1.1.0',SCRIPT='AD5 Sight',CELL=280,EPS=1e-9;
     var cache=Object.create(null),stamp=0;
     // Дневной свет: доля ≥ BRIGHT — яркий, ≥ DIM — тусклый.
     var DAYLIGHT_BRIGHT=0.75,DAYLIGHT_DIM=0.25;
@@ -192,14 +197,24 @@ var AD5Sight=AD5Sight||(function(){
         var v=num(p.get('daylightModeOpacity'),1);return v>1?v/100:v;
     }
     // Освещённость клетки цели без учёта наблюдателя: 'bright' | 'dim' | 'dark'.
+    // 1.1.0: общий свет страницы для карт без динамического освещения
+    // (!ad5sight ambient bright|dim|dark|off). Не задан — без освещения всё ярко.
+    var AMBIENT_LEVEL={bright:2,dim:1,dark:0},AMBIENT_LABEL={bright:'яркий (день)',dim:'полутень (сумерки)',dark:'темнота (ночь, подземелье)'};
+    function ambientStore(){if(!state.AD5Sight||typeof state.AD5Sight!=='object')state.AD5Sight={};var r=state.AD5Sight;r.ambient=r.ambient&&typeof r.ambient==='object'?r.ambient:{};return r.ambient;}
+    function ambientOf(page){var a=ambientStore()[String(page||'')];return AMBIENT_LEVEL[a]!==undefined?a:null;}
     function lightAt(target){
-        var page=pageOf(target),p=getObj('page',page);
-        if(p&&p.get('dynamic_lighting_enabled')===false)return 'bright';
-        var day=daylight(page),level=day>=DAYLIGHT_BRIGHT?2:day>=DAYLIGHT_DIM?1:0;if(level===2)return 'bright';
+        var page=pageOf(target),p=getObj('page',page),level;
+        if(p&&p.get('dynamic_lighting_enabled')===false){
+            var amb=ambientOf(page);if(amb===null)return 'bright';
+            level=AMBIENT_LEVEL[amb];if(level===2)return 'bright';
+        }else{var day=daylight(page);level=day>=DAYLIGHT_BRIGHT?2:day>=DAYLIGHT_DIM?1:0;if(level===2)return 'bright';}
         var tc=center(target),ppf=pxPerFoot(page),rt=radius(target);
         (findObjs({_type:'graphic',_pageid:page})||[]).some(function(l){
             if(l.get('layer')==='gmlayer')return false;
             var br=bool(l.get('emits_bright_light'))?num(l.get('bright_light_distance'),0):0,dm=bool(l.get('emits_low_light'))?num(l.get('low_light_distance'),0):0;
+            // 1.0.2: устаревшее освещение Roll20 — light_radius (весь радиус), light_dimradius
+            // (с какого расстояния свет тусклый); факелы старых токенов тоже считаются.
+            if(br<=0&&dm<=0){var lr=num(l.get('light_radius'),0),ld=num(l.get('light_dimradius'),0);if(lr>0){dm=lr;br=ld>0&&ld<lr?ld:lr;}}
             if(br<=0&&dm<=0)return false;
             var lc=center(l),d=Math.max(0,Math.sqrt(Math.pow(lc.x-tc.x,2)+Math.pow(lc.y-tc.y,2))-rt)/ppf;
             var lvl=d<=br?2:d<=Math.max(br,dm)?1:0;if(lvl<=level)return false;
@@ -234,7 +249,13 @@ var AD5Sight=AD5Sight||(function(){
             if(msg.type!=='api'||!/^!ad5sight(?:\s|$)/i.test(msg.content||'')||!playerIsGM(msg.playerid))return;
             var arg=String(msg.content).split(/\s+/)[1]||'',sel=(msg.selected||[]).map(function(s){return getObj('graphic',s._id);}).filter(Boolean),page=sel[0]?pageOf(sel[0]):String(Campaign().get('playerpageid')||'');
             var out;
-            if(/^rebuild$/i.test(arg)){invalidate();out='Кэш стен сброшен.';}
+            if(/^ambient$/i.test(arg)){
+                var lv=String(String(msg.content).split(/\s+/)[2]||'').toLowerCase(),pg=getObj('page',page),st=ambientStore();
+                if(lv==='off'||lv==='нет')delete st[page];else if(AMBIENT_LEVEL[lv]!==undefined)st[page]=lv;else if(lv){sendChat(SCRIPT,'/w gm Формат: <code>!ad5sight ambient bright|dim|dark|off</code>',null,{noarchive:true});return;}
+                var cur=ambientOf(page),dl=!(pg&&pg.get('dynamic_lighting_enabled')===false);
+                out='Общий свет страницы «'+esc(pg?pg.get('name'):page)+'»: <b>'+(cur?AMBIENT_LABEL[cur]:'не задан')+'</b>.'+(dl?' На странице включено динамическое освещение — свет берётся из него (дневной свет и источники), общий свет не используется.':cur?' Динамическое освещение выключено: скрипты считают свет сами — общий свет, источники света токенов (яркий/тусклый радиус), стены.':' Динамическое освещение выключено и общий свет не задан — для скриптов всё ярко освещено.');
+            }
+            else if(/^rebuild$/i.test(arg)){invalidate();out='Кэш стен сброшен.';}
             else if(/^walls$/i.test(arg)||sel.length<2){var c=pageCache(page);out='Стен (отрезков) на странице: <b>'+c.segs.length+'</b>, ячеек индекса: '+Object.keys(c.grid).length+'.'+(sel.length===1?'<br>Свет у '+esc(sel[0].get('name')||'токена')+': <b>'+lightAt(sel[0])+'</b>.':'')+' Выделите два токена (наблюдатель, цель) для проверки видимости.';}
             else{
                 var v=visibility(sel[0],sel[1]),cov=null;

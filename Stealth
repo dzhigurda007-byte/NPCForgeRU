@@ -3,22 +3,27 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
     log('AD5Visibility: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Visibility 1.5.1 — скрытность игроков и зрение NPC.
+ * AD5 Visibility 1.6.0 — скрытность игроков и зрение NPC.
  *
  * Маркер: «603-Stealthy» из набора Earthdawn Fourth Edition Token Marker Set.
  *
  * Скрытность — сбалансированный режим (по умолчанию, 1.5.0)
  * - Игрок бросает «Скрытность» из листа персонажа или кнопкой токена «Скрытность».
  *   Итог броска становится Сл проверки Внимательности NPC.
- * - Спрятаться нельзя на виду: если NPC видит персонажа в зоне 100%, на ярком свету
- *   и без укрытия, бросок отклоняется. Нужны укрытие, тень или выход из поля зрения.
+ * - Спрятаться нельзя на виду: если NPC видит персонажа на ярком свету ближе 60 фт
+ *   (спереди, со спины — 5 фт) и без укрытия, бросок отклоняется. Нужны укрытие,
+ *   тень или выход из поля зрения.
  * - Проверяет NPC, чей сейчас ход (при общей инициативе — вся группа), и только если
- *   персонаж в его поле зрения:
- *     • спокойный NPC — пассивная Внимательность без броска с поправками:
- *       зона 50% −5, зона 25% −10, тусклый свет −5, укрытие ½ −2, ¾ −5;
- *     • персонаж на виду (зона 100%, яркий свет, без укрытия) — замечен без броска;
- *     • NPC «настороже» — бросок к20 + Внимательность с теми же поправками, не ниже
- *       пассивной с поправками.
+ *   персонаж в его поле зрения (сектор 180° по повороту токена, со спины 5 фт):
+ *     • яркий свет: до 60 фт без укрытия — замечен без броска; 60–120 фт —
+ *       пассивная Внимательность; дальше 120 фт — пассивная −5 (настройка:
+ *       !ad5stealth bright 60 120 5);
+ *     • полутень (тусклый свет): до 20 фт 0, до 60 фт −5, дальше −10 и ещё −5;
+ *     • темнота: не видит (тёмное зрение NPC — по AD5 Sight);
+ *     • укрытие ½ −2, ¾ −5 (и снимает «на виду»), полное — не видит;
+ *     • свет, который несёт сам персонаж (факел, «Свет» — свет на токене), освещает его;
+ *     • спокойный NPC — пассивная с поправками без броска; NPC «настороже» —
+ *       к20 + Внимательность с теми же поправками, не ниже пассивной с поправками.
  *   Итог ≥ Сл — NPC замечает, скрытность снимается.
  * - Настороженность: кнопка токена «Настороже» у каждого листа NPC без контроля игрока
  *   (переключатель), макрос мастера «Тревога» — все NPC карты настороже / отбой.
@@ -60,6 +65,7 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
  *   !ad5stealth marker ИМЯ                       — (GM) маркер скрытности (пусто — автоподбор)
  *   !ad5stealth buttons                          — (GM) кнопки «Скрытность» листам игроков
  *   !ad5stealth mode balanced|strict             — (GM) режим скрытности
+ *   !ad5stealth bright [НА_ВИДУ ДАЛЬНЯЯ ШТРАФ]   — (GM) дистанции яркого света (60 120 5)
  *   !ad5stealth alert [TOKEN_ID] [on|off]        — (GM) настороже (кнопка токена «Настороже»)
  *   !ad5stealth alarm on|off                     — (GM) тревога для всех NPC карты (макрос «Тревога»)
  *   !ad5stealth alertmarker ИМЯ                  — (GM) маркер настороженности (пусто — автоподбор)
@@ -71,7 +77,7 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
  */
 var AD5Visibility=AD5Visibility||(function(){
     'use strict';
-    var VERSION='1.5.1',SCRIPT='AD5 Скрытность';
+    var VERSION='1.6.0',SCRIPT='AD5 Скрытность';
     var ABILITY_NAME='Скрытность',ABILITY_ACTION='!ad5stealth roll @{selected|token_id} ?{Бросок Скрытности|Обычный,normal|С преимуществом,adv|С помехой,dis}';
     // 1.0.1: после перезапуска песочницы Roll20 может отдавать объекты с задержкой.
     // Запись удаляется, только если токена нет и после повторных проверок
@@ -184,10 +190,12 @@ var AD5Visibility=AD5Visibility||(function(){
         var a=(Number(t.get('rotation'))||0)*Math.PI/180,c=Math.cos(a),s=Math.sin(a);
         return {x:x*c-y*s,y:x*s+y*c};
     }
-    function visionPercent(observer,target){
-        if(!isToken(observer)||!isToken(target)||observer.id===target.id)return 0;
-        var page=observer.get('_pageid');if(page!==target.get('_pageid'))return 0;
-        if(NO_SIGHT_MARKERS.some(function(m){return hasMarker(observer,m);}))return 0;
+    // Геометрия взгляда: дистанция от края до края (фт), перед NPC или за спиной, доля зрения.
+    function visionInfo(observer,target){
+        var none={pct:0,gap:Infinity,front:false};
+        if(!isToken(observer)||!isToken(target)||observer.id===target.id)return none;
+        var page=observer.get('_pageid');if(page!==target.get('_pageid'))return none;
+        if(NO_SIGHT_MARKERS.some(function(m){return hasMarker(observer,m);}))return none;
         var ox=Number(observer.get('left')),oy=Number(observer.get('top')),dx=Number(target.get('left'))-ox,dy=Number(target.get('top'))-oy;
         var ro=radius(observer),rt=radius(target),dist=Math.sqrt(dx*dx+dy*dy);
         var gap=Math.max(0,dist-ro-rt)/pxPerFoot(page);
@@ -195,9 +203,10 @@ var AD5Visibility=AD5Visibility||(function(){
         var front=(dx*fx+dy*fy)>=-rt; // хотя бы часть цели перед линией плеч
         var pct=!front?(gap<=BACK_FEET+1e-6?100:0):gap<=FRONT_FULL+1e-6?100:gap<=FRONT_HALF+1e-6?50:25;
         // 1.3.0: стены динамического освещения — цель за стеной/закрытой дверью не видна.
-        if(pct&&wallsHide(observer,target))return 0;
-        return pct;
+        if(pct&&wallsHide(observer,target))pct=0;
+        return {pct:pct,gap:gap,front:front};
     }
+    function visionPercent(observer,target){return visionInfo(observer,target).pct;}
     function wallsHide(observer,target){
         try{if(typeof AD5Sight!=='undefined'&&AD5Sight&&typeof AD5Sight.canSee==='function')return !AD5Sight.canSee(observer,target);}catch(ignore){}
         return false;
@@ -250,14 +259,21 @@ var AD5Visibility=AD5Visibility||(function(){
     }
     function isAlert(t){return !!(t&&root().alert[t.id]);}
     // Как observer воспринимает target: null — не видит; иначе поправки и признак «на виду».
+    // 1.6.0: яркий свет — до 60 фт (настройка) цель без укрытия на виду, 60–120 фт —
+    // пассивная без штрафа, дальше — −5. Тусклый свет — зоны 20/60 фт как раньше
+    // (0 / −5 / −10) и ещё −5. Темнота — не видит (тёмное зрение — в AD5 Sight).
+    // Свет, который несёт сам персонаж (факел, «Свет» на токене), освещает его.
+    function brightRules(){var b=root().bright||{};return {plain:Number(b.plain)>=0?Number(b.plain):60,far:Number(b.far)>0?Number(b.far):120,penalty:Number(b.penalty)>=0?Number(b.penalty):5};}
     function sightProfile(observer,target){
-        var pct=visionPercent(observer,target);if(!pct)return null;
+        var info=visionInfo(observer,target),pct=info.pct;if(!pct)return null;
         var light=lightFor(observer,target);if(light==='dark')return null;
         var cover=coverFor(observer,target);if(cover.full)return null;
-        var penalty=(pct===50?5:pct===25?10:0)+(light==='dim'?5:0)+cover.bonus;
-        return {pct:pct,light:light,cover:cover,penalty:penalty,inPlain:pct===100&&light==='bright'&&cover.tier==='none'};
+        var penalty,inPlain=false;
+        if(light==='bright'){var br=brightRules();penalty=(info.gap>br.far+1e-6?br.penalty:0)+cover.bonus;inPlain=info.gap<=br.plain+1e-6&&cover.tier==='none';}
+        else penalty=(pct===50?5:pct===25?10:0)+5+cover.bonus;
+        return {pct:pct,gap:info.gap,light:light,cover:cover,penalty:penalty,inPlain:inPlain};
     }
-    function profileText(sp){return 'зрение '+sp.pct+'%'+(sp.light==='dim'?', тусклый свет':'')+(sp.cover.tier!=='none'?', '+sp.cover.label:'');}
+    function profileText(sp){return Math.round(sp.gap)+' фт, '+(sp.light==='dim'?'полутень, зрение '+sp.pct+'%':'яркий свет')+(sp.cover.tier!=='none'?', '+sp.cover.label:'');}
     function balancedCheck(observer,target,dc){
         var sp=sightProfile(observer,target);if(!sp)return null;
         var passive=passivePerception(observer),eff=passive-sp.penalty;
@@ -340,7 +356,7 @@ var AD5Visibility=AD5Visibility||(function(){
     function hide(token,total,pid,detail){
         if(root().mode==='balanced'){
             var watchers=plainWatchers(token);
-            if(watchers.length){whisper(pid,'<b>'+esc(tokenName(token))+'</b> не может спрятаться: на виду у '+esc(watchers.map(tokenName).join(', '))+' (яркий свет, без укрытия, вблизи). Нужны укрытие, тень или выход из поля зрения.');return false;}
+            if(watchers.length){whisper(pid,'<b>'+esc(tokenName(token))+'</b> не может спрятаться: на виду у '+esc(watchers.map(tokenName).join(', '))+' (яркий свет, без укрытия, ближе '+brightRules().plain+' фт). Нужны укрытие, тень или выход из поля зрения.');return false;}
         }
         var r=root(),tag=markerTag(),prev=r.hidden[token.id];
         r.hidden[token.id]={dc:total,pid:pid||'',time:Date.now(),marker:tag,markerWasPresent:prev?!!prev.markerWasPresent:hasMarker(token,tag)};
@@ -554,7 +570,10 @@ var AD5Visibility=AD5Visibility||(function(){
     // спины. Границы даны для центра цели среднего размера (дистанция в скрипте —
     // от края до края). Лучи обрезаются стенами динамического освещения (AD5 Sight).
     // Рисунок обновляется при перемещении и повороте токена.
-    var FOV_RAYS=48,FOV_FAR=120,FOV_TARGET_RADIUS=35,FOV_ZONES=[{feet:FOV_FAR,color:'#d0312d'},{feet:FRONT_HALF,color:'#e8c02f'},{feet:FRONT_FULL,color:'#2fa84f'}],FOV_BACK_COLOR='#2f6fdf';
+    var FOV_RAYS=48,FOV_TARGET_RADIUS=35,FOV_BACK_COLOR='#2f6fdf';
+    // 1.6.0: зоны рисуются по правилам яркого света (на виду / пассивная / −5) и границам
+    // полутени 20 и 60 фт — тонкие контуры внутри.
+    function fovZones(){var b=brightRules();return [{feet:b.far*1.5,color:'#d0312d'},{feet:b.far,color:'#e8c02f'},{feet:b.plain,color:'#2fa84f'}];}
     function fovStore(){var r=root();r.fov=r.fov&&typeof r.fov==='object'?r.fov:{};return r.fov;}
     function isJumpgate(){var c=Campaign(),v='';try{v=String(c.get('release')||c.get('_release')||'').toLowerCase();}catch(ignore){}return v==='jumpgate';}
     function clearFov(id){
@@ -617,7 +636,8 @@ var AD5Visibility=AD5Visibility||(function(){
         clearFov(t.id);if(!isToken(t))return;
         var page=t.get('_pageid'),ppf=pxPerFoot(page),cx=Number(t.get('left')),cy=Number(t.get('top')),ro=radius(t),f=facing(t),dir=Math.atan2(f.y,f.x),refs=[];
         function keep(r){if(r)refs.push(r);}
-        FOV_ZONES.forEach(function(z){keep(drawPolygon(page,fovPolygon(page,cx,cy,dir,Math.PI,ro+z.feet*ppf+FOV_TARGET_RADIUS),z.color));});
+        fovZones().forEach(function(z){keep(drawPolygon(page,fovPolygon(page,cx,cy,dir,Math.PI,ro+z.feet*ppf+FOV_TARGET_RADIUS),z.color));});
+        [FRONT_FULL,FRONT_HALF].forEach(function(ft){keep(drawPolygon(page,fovPolygon(page,cx,cy,dir,Math.PI,ro+ft*ppf+FOV_TARGET_RADIUS),'#ffffff',{fill:'transparent',width:1}));});
         keep(drawPolygon(page,fovPolygon(page,cx,cy,dir+Math.PI,Math.PI,ro+BACK_FEET*ppf+FOV_TARGET_RADIUS),FOV_BACK_COLOR));
         var dv=darkvisionFor(t);
         if(dv>0){var ring=[],rr=ro+dv*ppf;for(var i=0;i<=48;i++){var a=Math.PI*2*i/48;ring.push({x:cx+Math.cos(a)*rr,y:cy+Math.sin(a)*rr});}keep(drawPolygon(page,ring,'#a855f7',{fill:'transparent',width:2}));}
@@ -644,7 +664,7 @@ var AD5Visibility=AD5Visibility||(function(){
         var list=sel;
         if(mode==='all'||!list.length){var page=Campaign().get('playerpageid');list=(findObjs({_type:'graphic',_subtype:'token',_pageid:page,layer:'objects'})||[]).filter(function(t){return isToken(t)&&side(t)==='npcs';});}
         list.forEach(drawFov);
-        gm('Поле зрения на слое мастера: '+list.length+' ('+list.map(function(t){return esc(tokenName(t));}).join(', ')+'). Зоны: зелёная — 100% (20 фт), жёлтая — 50% (60 фт), красная — 25%, синяя — со спины 5 фт, фиолетовый круг — тёмное зрение. Линии к персонажам: красная — заметит / на виду, жёлтая — решит бросок, зелёная — не заметит, синяя — видит открытого (подпись: нужная Скрытность), серая — не видит. Обновляется само; убрать: <code>!ad5stealth fov off</code>.');
+        gm('Поле зрения на слое мастера: '+list.length+' ('+list.map(function(t){return esc(tokenName(t));}).join(', ')+'). Зоны (яркий свет): зелёная — на виду (до '+brightRules().plain+' фт), жёлтая — пассивная (до '+brightRules().far+' фт), красная — пассивная −'+brightRules().penalty+'; белые контуры — 20 и 60 фт для полутени; синяя — со спины 5 фт; фиолетовый круг — тёмное зрение. Линии к персонажам: красная — заметит / на виду, жёлтая — решит бросок, зелёная — не заметит, синяя — видит открытого (подпись: нужная Скрытность), серая — не видит. Обновляется само; убрать: <code>!ad5stealth fov off</code>.');
     }
     function fovChanged(t,prev){
         if(!prev||!Object.keys(fovStore()).length)return;
@@ -675,6 +695,11 @@ var AD5Visibility=AD5Visibility||(function(){
         else if(sub==='markers')gm(markerList(args.slice(2).join(' ')));
         else if(sub==='fov')fovCommand(msg,String(args[2]||'on').toLowerCase());
         else if(sub==='alert')alertCommand(msg,args);
+        else if(sub==='bright'){
+            var bp=Number(args[2]),bf=Number(args[3]),bpen=Number(args[4]);
+            if(args.length>2){if(!(bp>=0&&bf>bp&&bpen>=0))throw new Error('Формат: !ad5stealth bright НА_ВИДУ ДАЛЬНЯЯ ШТРАФ, например 60 120 5.');root().bright={plain:bp,far:bf,penalty:bpen};}
+            var brn=brightRules();gm('Яркий свет: на виду до <b>'+brn.plain+' фт</b>, пассивная без штрафа до <b>'+brn.far+' фт</b>, дальше −'+brn.penalty+'.');
+        }
         else if(sub==='alarm')alarmCommand(msg,String(args[2]||'on').toLowerCase());
         else if(sub==='alertmarker'){var an=args.slice(2).join(' ').trim();root().alertMarker=an?resolveMarker(an):null;gm('Маркер настороженности: <b>'+esc(alertMarker())+'</b>.');}
         else if(sub==='alertbuttons')ensureAlertButtonsBatched(function(n){gm('Кнопка «'+ALERT_ABILITY+'» добавлена листам NPC: '+n+'.');});
