@@ -3,7 +3,7 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
     log('AD5Visibility: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Visibility 1.15.1 — скрытность игроков и зрение NPC.
+ * AD5 Visibility 1.15.2 — скрытность игроков и зрение NPC.
  *
  * Невидимость (1.15.0) — состояние «Невидим» (AD5 Effect Turns, Condition Engine; маркер
  * ninja-mask). Невидимого не видит никто, кроме существ с истинным зрением, слепым
@@ -115,7 +115,7 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
  */
 var AD5Visibility=AD5Visibility||(function(){
     'use strict';
-    var VERSION='1.15.1',SCRIPT='AD5 Скрытность';
+    var VERSION='1.15.2',SCRIPT='AD5 Скрытность';
     var ABILITY_NAME='Скрытность',ABILITY_ACTION='!ad5stealth roll @{selected|token_id} ?{Бросок Скрытности|Обычный,normal|С преимуществом,adv|С помехой,dis}';
     // 1.0.1: после перезапуска песочницы Roll20 может отдавать объекты с задержкой.
     // Запись удаляется, только если токена нет и после повторных проверок
@@ -455,7 +455,7 @@ var AD5Visibility=AD5Visibility||(function(){
         if(!isToken(t))return false;var r=root(),was=!!r.alert[t.id];
         if(on===was)return false;
         if(on)r.alert[t.id]={time:Date.now(),why:String(why||'')};else delete r.alert[t.id];
-        setMarker(t,alertMarker(),on);scheduleFovRefresh();return true;
+        setMarker(t,alertMarker(),on);scheduleFovRefresh('lines');return true;
     }
     // NPC, которые видят token (или его самого видит раскрытый персонаж), настораживаются.
     function alertWitnesses(token,why){
@@ -526,7 +526,7 @@ var AD5Visibility=AD5Visibility||(function(){
         r.hidden[token.id]={dc:total,pid:pid||'',time:Date.now(),marker:tag,markerWasPresent:prev?!!prev.markerWasPresent:hasMarker(token,tag)};
         setMarker(token,tag,true);
         try{dropGhost(token);}catch(ignoreGhost){}
-        scheduleFovRefresh();
+        scheduleFovRefresh('lines');
         whisper(pid,'<b>'+esc(tokenName(token))+'</b> скрывается: Скрытность <b>'+total+'</b>'+(detail?' ('+esc(detail)+')':'')+'. '+(isInvisible(token)?'Персонаж невидим: NPC ищут его на слух (до '+INVIS_FAR+' фт, во все стороны), кроме тех, кто видит невидимое.':'NPC проверяют Внимательность в свой ход, если персонаж у них в поле зрения.'));
     }
     // Имя персонажа: лист, который представляет токен, иначе имя токена.
@@ -536,7 +536,7 @@ var AD5Visibility=AD5Visibility||(function(){
     }
     function reveal(token,reason,pid,gmDetail){
         var r=root(),rec=r.hidden[token.id];if(!rec)return false;
-        delete r.hidden[token.id];clearGhost(token.id);scheduleFovRefresh();
+        delete r.hidden[token.id];clearGhost(token.id);scheduleFovRefresh('lines');
         if(!rec.markerWasPresent)setMarker(token,rec.marker||markerTag(),false);
         var inv=isInvisible(token),text='<b>'+esc(tokenName(token))+'</b> больше не скрыт — '+esc(reason)+'.'+(inv?' Персонаж по-прежнему невидим: NPC знают, где он, атаки по нему — с помехой, его атаки — с преимуществом.':'');
         // 1.8.2: обнаружение — сообщение всем в чат с именем персонажа: «Зувара, тебя заметили!»
@@ -772,8 +772,13 @@ var AD5Visibility=AD5Visibility||(function(){
     var FOV_RAYS=48,FOV_TARGET_RADIUS=35,FOV_BACK_COLOR='#2f6fdf',FOV_TRUE_COLOR='#facc15',FOV_FEEL_COLOR='#22d3ee';
     function fovStore(){var r=root();r.fov=r.fov&&typeof r.fov==='object'?r.fov:{};return r.fov;}
     function isJumpgate(){var c=Campaign(),v='';try{v=String(c.get('release')||c.get('_release')||'').toLowerCase();}catch(ignore){}return v==='jumpgate';}
+    // 1.15.2: линии к персонажам и подпись хранятся отдельно от зон — перемещение персонажа,
+    // скрытие, настороженность перерисовывают только их (зоны — десятки фигур на NPC).
+    function fovLineStore(){var r=root();r.fovLines=r.fovLines&&typeof r.fovLines==='object'?r.fovLines:{};return r.fovLines;}
+    function removeRefs(list){(list||[]).forEach(function(ref){var o=getObj(ref.type,ref.id);if(o)o.remove();});}
+    function clearFovLines(id){var ls=fovLineStore();removeRefs(ls[id]);delete ls[id];}
     function clearFov(id){
-        var st=fovStore();(st[id]||[]).forEach(function(ref){var o=getObj(ref.type,ref.id);if(o)o.remove();});delete st[id];
+        var st=fovStore();removeRefs(st[id]);delete st[id];clearFovLines(id);
     }
     function rayLength(page,ox,oy,ux,uy,len){
         try{if(typeof AD5Sight!=='undefined'&&AD5Sight&&typeof AD5Sight.firstHit==='function'){var hit=AD5Sight.firstHit(page,ox,oy,ox+ux*len,oy+uy*len,false);if(hit&&hit.t>=0)return len*hit.t;}}catch(ignore){}
@@ -888,20 +893,35 @@ var AD5Visibility=AD5Visibility||(function(){
         var si=invisibleSenses(t),feel=Math.max(si.blindsight,si.tremorsense);
         if(si.truesight>0)ringAt(si.truesight,FOV_TRUE_COLOR);
         if(feel>0&&feel!==si.truesight)ringAt(feel,FOV_FEEL_COLOR);
+        fovStore()[t.id]=refs;
+        drawFovLines(t);
+    }
+    function drawFovLines(t){
+        clearFovLines(t.id);if(!isToken(t))return;
+        var page=t.get('_pageid'),cx=Number(t.get('left')),cy=Number(t.get('top')),ro=radius(t),round=allRound(t),dv=darkvisionFor(t),si=invisibleSenses(t),feel=Math.max(si.blindsight,si.tremorsense),refs=[];
+        function keep(r){if(r)refs.push(r);}
         keep(drawText(page,cx,cy-ro-14,tokenName(t)+' · пасс '+passivePerception(t)+(isAlert(t)?' · НАСТОРОЖЕ':'')+(dv>0?' · тёмн. '+Math.round(dv)+' фт':'')+(si.all?' · видит невидимое':si.truesight>0?' · истин. '+Math.round(si.truesight)+' фт':'')+(feel>0?' · слеп. '+Math.round(feel)+' фт':''),isAlert(t)?'#ff6b6b':'#ffffff',14));
         if(!round)partyTokens(page).forEach(function(pc){
             var v=fovVerdict(t,pc),color=FOV_LINE[v.kind]||'#ffffff',px=Number(pc.get('left')),py=Number(pc.get('top'));
             keep(drawPolygon(page,[{x:cx,y:cy},{x:px,y:py}],color,{fill:'transparent',width:v.kind==='none'?1:3,open:true}));
             keep(drawText(page,(cx+px)/2,(cy+py)/2-10,tokenName(pc)+(isInvisible(pc)?' [невидим]':'')+(hiddenRec(pc)?' (Сл '+hiddenRec(pc).dc+')':'')+': '+v.text,color,12));
         });
-        fovStore()[t.id]=refs;
+        fovLineStore()[t.id]=refs;
     }
     // Перерисовка всех показанных полей зрения страницы (персонаж сдвинулся, скрылся,
     // раскрыт, NPC насторожился) — один раз на пачку изменений.
-    var fovRefreshTimer=null;
-    function scheduleFovRefresh(){
-        if(fovRefreshTimer||!Object.keys(fovStore()).length)return;
-        fovRefreshTimer=setTimeout(function(){fovRefreshTimer=null;Object.keys(fovStore()).forEach(function(id){var t=getObj('graphic',id);if(t)drawFov(t);else clearFov(id);});},100);
+    // 1.15.2: full — зоны и линии (свет, NPC изменился); lines — только линии и подписи
+    // (персонаж сдвинулся, скрылся, раскрыт, NPC насторожился). Пачка изменений — одна
+    // перерисовка через 250 мс.
+    var fovRefreshTimer=null,fovRefreshFull=false;
+    function scheduleFovRefresh(kind){
+        if(!Object.keys(fovStore()).length)return;
+        if(kind!=='lines')fovRefreshFull=true;
+        if(fovRefreshTimer)return;
+        fovRefreshTimer=setTimeout(function(){
+            var full=fovRefreshFull;fovRefreshTimer=null;fovRefreshFull=false;
+            Object.keys(fovStore()).forEach(function(id){var t=getObj('graphic',id);if(!t){clearFov(id);return;}if(full)drawFov(t);else drawFovLines(t);});
+        },250);
     }
     function fovCommand(msg,mode){
         var sel=(msg.selected||[]).map(function(x){return getObj('graphic',x._id);}).filter(isToken),st=fovStore();
@@ -918,11 +938,11 @@ var AD5Visibility=AD5Visibility||(function(){
         var moved=['left','top','rotation','fliph','flipv','width','height','_pageid','layer'].some(function(k){return String(prev[k])!==String(t.get(k));});
         var lit=['emits_bright_light','bright_light_distance','emits_low_light','low_light_distance','light_radius','light_dimradius'].some(function(k){return String(prev[k])!==String(t.get(k));});
         // 1.15.0: маркер невидимости или настороженности сменили вручную — пересчёт рисунка.
-        if(!moved&&!lit){if(String(prev.statusmarkers||'')!==String(t.get('statusmarkers')||''))scheduleFovRefresh();return;}
+        if(!moved&&!lit){if(String(prev.statusmarkers||'')!==String(t.get('statusmarkers')||''))scheduleFovRefresh('lines');return;}
         // Источник света сдвинулся или изменился — свет поменялся у всех показанных NPC.
         if(lit||(moved&&isLightSource(t))){scheduleFovRefresh();return;}
         if(fovStore()[t.id])drawFov(t);
-        else if(isToken(t)&&side(t)==='players')scheduleFovRefresh();
+        else if(isToken(t)&&side(t)==='players')scheduleFovRefresh('lines');
     }
     // 1.9.0: автоповорот — токен персонажа или NPC поворачивается по направлению движения
     // (последний отрезок пути). Поворот 0 — взгляд вниз; flipv учитывается. Отключение:
@@ -986,7 +1006,8 @@ var AD5Visibility=AD5Visibility||(function(){
     }
     function effectsChanged(token,before,after){
         if(!isToken(token)||effectSig(before)===effectSig(after))return;
-        scheduleFovRefresh();
+        // Эффект у показанного NPC меняет круги чувств — полная перерисовка; у персонажа — линии.
+        scheduleFovRefresh(fovStore()[token.id]?'full':'lines');
         if(Object.keys(root().hidden).length)queueMoveCheck(token);
     }
     // Старые записи скрытности с маркером ninja-mask (маркер невидимости) — на маркер скрытности.
