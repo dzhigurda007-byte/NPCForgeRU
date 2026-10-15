@@ -3,7 +3,7 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
     log('AD5Visibility: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Visibility 1.3.1 — скрытность игроков и зрение NPC.
+ * AD5 Visibility 1.4.0 — скрытность игроков и зрение NPC.
  *
  * Маркер: «603-Stealthy» из набора Earthdawn Fourth Edition Token Marker Set.
  *
@@ -46,10 +46,13 @@ if(typeof AD5Visibility!=='undefined'&&AD5Visibility) {
  *   !ad5stealth markers [ФИЛЬТР]                 — (GM) маркеры кампании (Earthdawn 4E)
  *   !ad5stealth marker ИМЯ                       — (GM) маркер скрытности (пусто — автоподбор)
  *   !ad5stealth buttons                          — (GM) кнопки «Скрытность» листам игроков
+ *   !ad5stealth fov [on|all|off|clear]           — (GM) показать поле зрения выделенных
+ *       токенов (без выделения — всех NPC на карте) на слое мастера; off/clear — убрать.
+ *       Макрос мастера «Поле-зрения» создаётся автоматически (действие токена).
  */
 var AD5Visibility=AD5Visibility||(function(){
     'use strict';
-    var VERSION='1.3.1',SCRIPT='AD5 Скрытность';
+    var VERSION='1.4.0',SCRIPT='AD5 Скрытность';
     var ABILITY_NAME='Скрытность',ABILITY_ACTION='!ad5stealth roll @{selected|token_id} ?{Бросок Скрытности|Обычный,normal|С преимуществом,adv|С помехой,dis}';
     // 1.0.1: после перезапуска песочницы Roll20 может отдавать объекты с задержкой.
     // Запись удаляется, только если токена нет и после повторных проверок
@@ -394,6 +397,66 @@ var AD5Visibility=AD5Visibility||(function(){
         });
         gm(lines.join('<br>'));
     }
+    // ---- 1.4.0: показ поля зрения (проверка скрытности). Зоны рисуются на слое
+    // мастера (видит только мастер) от центра токена: зелёная — 100% (до 20 фт),
+    // жёлтая — 50% (до 60 фт), красная — 25% (показана до 120 фт), синяя — 5 фт со
+    // спины. Границы даны для центра цели среднего размера (дистанция в скрипте —
+    // от края до края). Лучи обрезаются стенами динамического освещения (AD5 Sight).
+    // Рисунок обновляется при перемещении и повороте токена.
+    var FOV_RAYS=48,FOV_FAR=120,FOV_TARGET_RADIUS=35,FOV_ZONES=[{feet:FOV_FAR,color:'#d0312d'},{feet:FRONT_HALF,color:'#e8c02f'},{feet:FRONT_FULL,color:'#2fa84f'}],FOV_BACK_COLOR='#2f6fdf';
+    function fovStore(){var r=root();r.fov=r.fov&&typeof r.fov==='object'?r.fov:{};return r.fov;}
+    function isJumpgate(){var c=Campaign(),v='';try{v=String(c.get('release')||c.get('_release')||'').toLowerCase();}catch(ignore){}return v==='jumpgate';}
+    function clearFov(id){
+        var st=fovStore();(st[id]||[]).forEach(function(ref){var o=getObj(ref.type,ref.id);if(o)o.remove();});delete st[id];
+    }
+    function rayLength(page,ox,oy,ux,uy,len){
+        try{if(typeof AD5Sight!=='undefined'&&AD5Sight&&typeof AD5Sight.firstHit==='function'){var hit=AD5Sight.firstHit(page,ox,oy,ox+ux*len,oy+uy*len,false);if(hit&&hit.t>=0)return len*hit.t;}}catch(ignore){}
+        return len;
+    }
+    function fovPolygon(page,cx,cy,dirAngle,spread,radius){
+        var pts=[{x:cx,y:cy}],n=Math.max(8,Math.round(FOV_RAYS*spread/Math.PI));
+        for(var i=0;i<=n;i++){var a=dirAngle-spread/2+spread*i/n,ux=Math.cos(a),uy=Math.sin(a),l=rayLength(page,cx,cy,ux,uy,radius);pts.push({x:cx+ux*l,y:cy+uy*l});}
+        return pts;
+    }
+    function drawPolygon(page,pts,color){
+        var minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+        pts.forEach(function(p){minX=Math.min(minX,p.x);minY=Math.min(minY,p.y);maxX=Math.max(maxX,p.x);maxY=Math.max(maxY,p.y);});
+        var w=Math.max(1,maxX-minX),h=Math.max(1,maxY-minY),cx=(minX+maxX)/2,cy=(minY+maxY)/2,rel=pts.map(function(p){return [p.x-minX,p.y-minY];}),o;
+        if(isJumpgate())o=createObj('pathv2',{pageid:page,layer:'gmlayer',shape:'pol',points:JSON.stringify(rel),x:cx,y:cy,rotation:0,stroke:color,stroke_width:2,fill:color,controlledby:'',fadeOnOverlap:false,renderAsScenery:false,baseOpacity:1});
+        else{var cmd=rel.map(function(p,i){return [i?'L':'M',p[0],p[1]];});cmd.push(['L',rel[0][0],rel[0][1]]);
+            o=createObj('path',{_pageid:page,layer:'gmlayer',_path:JSON.stringify(cmd),width:w,height:h,left:cx,top:cy,rotation:0,scaleX:1,scaleY:1,stroke:color,stroke_width:2,fill:color,controlledby:''});}
+        return o?{type:o.get('_type')||(isJumpgate()?'pathv2':'path'),id:o.id}:null;
+    }
+    function drawFov(t){
+        clearFov(t.id);if(!isToken(t))return;
+        var page=t.get('_pageid'),ppf=pxPerFoot(page),cx=Number(t.get('left')),cy=Number(t.get('top')),ro=radius(t),f=facing(t),dir=Math.atan2(f.y,f.x),refs=[];
+        FOV_ZONES.forEach(function(z){var r=drawPolygon(page,fovPolygon(page,cx,cy,dir,Math.PI,ro+z.feet*ppf+FOV_TARGET_RADIUS),z.color);if(r)refs.push(r);});
+        var back=drawPolygon(page,fovPolygon(page,cx,cy,dir+Math.PI,Math.PI,ro+BACK_FEET*ppf+FOV_TARGET_RADIUS),FOV_BACK_COLOR);if(back)refs.push(back);
+        fovStore()[t.id]=refs;
+    }
+    function fovCommand(msg,mode){
+        var sel=(msg.selected||[]).map(function(x){return getObj('graphic',x._id);}).filter(isToken),st=fovStore();
+        if(mode==='clear'||(mode==='off'&&!sel.length)){Object.keys(st).forEach(clearFov);gm('Поле зрения скрыто у всех токенов.');return;}
+        if(mode==='off'){sel.forEach(function(t){clearFov(t.id);});gm('Поле зрения скрыто: '+sel.length+'.');return;}
+        var list=sel;
+        if(mode==='all'||!list.length){var page=Campaign().get('playerpageid');list=(findObjs({_type:'graphic',_subtype:'token',_pageid:page,layer:'objects'})||[]).filter(function(t){return isToken(t)&&side(t)==='npcs';});}
+        list.forEach(drawFov);
+        gm('Поле зрения на слое мастера: '+list.length+' ('+list.map(function(t){return esc(tokenName(t));}).join(', ')+'). Зелёная зона — 100% (20 фт), жёлтая — 50% (60 фт), красная — 25%, синяя — со спины 5 фт. Обновляется при перемещении и повороте; убрать: <code>!ad5stealth fov off</code>.');
+    }
+    function fovChanged(t,prev){
+        if(!fovStore()[t.id]||!prev)return;
+        if(['left','top','rotation','fliph','flipv','width','height','_pageid'].some(function(k){return String(prev[k])!==String(t.get(k));}))drawFov(t);
+    }
+    var FOV_MACRO='Поле-зрения';
+    function ensureFovMacro(){
+        (findObjs({_type:'player'})||[]).filter(function(p){return playerIsGM(p.id);}).forEach(function(p){
+            var action='!ad5stealth fov ?{Поле зрения|Выделенные (или все NPC),on|Все NPC на карте,all|Убрать у выделенных,off|Убрать все,clear}';
+            var m=(findObjs({_type:'macro',playerid:p.id,name:FOV_MACRO})||[])[0];
+            if(!m)createObj('macro',{playerid:p.id,name:FOV_MACRO,action:action,visibleto:'',istokenaction:true});
+            else if(m.get('action')!==action)m.set('action',action);
+        });
+    }
+
     function command(msg){
         var content=String(msg.content||'').trim();
         if(/^!снять-скрытность(?:\s|$)/i.test(content)){revealCommand(msg,/\sall\b|\sвсе\b/i.test(content));return;}
@@ -404,6 +467,7 @@ var AD5Visibility=AD5Visibility||(function(){
         else if(sub==='check'){var obs=currentObservers();if(!obs.length)gm('Сейчас не ход NPC.');else if(!turnCheck(obs,'проверка мастера, ход '+tokenName(obs[0])))gm('В поле зрения NPC текущего хода скрытых нет.');}
         else if(sub==='marker'){var name=args.slice(2).join(' ').trim();root().marker=resolveMarker(name);gm('Маркер скрытности: <b>'+esc(markerTag())+'</b>.');}
         else if(sub==='markers')gm(markerList(args.slice(2).join(' ')));
+        else if(sub==='fov')fovCommand(msg,String(args[2]||'on').toLowerCase());
         else if(sub==='buttons')ensureButtonsBatched(function(n){gm('Кнопка «'+ABILITY_NAME+'» добавлена листам игроков: '+n+'.');});
         else status();
     }
@@ -427,7 +491,9 @@ var AD5Visibility=AD5Visibility||(function(){
             }catch(e){whisper(msg.playerid,esc(e.message||e));}
         });
         on('change:campaign:turnorder',function(){try{turnChanged();}catch(e){log(SCRIPT+': '+e.message);}});
-        on('destroy:graphic',function(t){delete root().hidden[t.id];});
+        on('destroy:graphic',function(t){delete root().hidden[t.id];if(fovStore()[t.id])clearFov(t.id);});
+        on('change:graphic',function(t,prev){try{fovChanged(t,prev);}catch(e){log(SCRIPT+': поле зрения — '+e.message);}});
+        try{ensureFovMacro();}catch(e){log(SCRIPT+': макрос поля зрения — '+e.message);}
         on('add:character',function(c){var cid=c.id;setTimeout(function(){try{ensureButton(cid);}catch(ignore){}},3000);});
         ensureButtonsBatched(function(n){log(SCRIPT+' '+VERSION+' ready. Новых кнопок «'+ABILITY_NAME+'»: '+n+'.');});
         gm('<b>'+SCRIPT+' '+VERSION+'</b> запущен. Маркер скрытности: <b>'+esc(markerTag())+'</b> (список: <code>!ad5stealth markers</code>). Снять скрытность: <code>!снять-скрытность</code>.');
