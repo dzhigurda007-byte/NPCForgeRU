@@ -3,7 +3,8 @@ if(typeof AD5Classes!=='undefined'&&AD5Classes) {
     log('AD5Classes: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Classes 1.10.0 — автоматическая прокачка по полям листа «D&D 5E by Roll20» (Legacy).
+ * AD5 Classes 1.10.1 — автоматическая прокачка по полям листа «D&D 5E by Roll20» (Legacy).
+ * 1.10.1: после записи классовых атак обновляются кнопки DBM (новая атака сразу на токене).
  * 1.10.0: класс Хранитель рун (Runekeeper, dnd.su/homebrew/class/419-runekeeper) и 6 диалектов; руны —
  *        «Руны: …» (начертанные) и «Лексикон: …» в ad5_class_choices, тексты рун — скрипт AD5 Runes;
  *        кнопки «Пробудить руну», Каузальное пробуждение, рунические стойки, умения диалектов.
@@ -56,7 +57,7 @@ if(typeof AD5Classes!=='undefined'&&AD5Classes) {
  */
 var AD5Classes=(function(){
     'use strict';
-    var VERSION='1.10.0',SCRIPT='AD5 Классы',BEGIN='# авто:начало (AD5 Классы)',END='# авто:конец';
+    var VERSION='1.10.1',SCRIPT='AD5 Классы',BEGIN='# авто:начало (AD5 Классы)',END='# авто:конец';
     var WATCH=/^(class|base_level|subclass|custom_class|cust_classname|multiclass[1-3](?:_flag|_lvl|_subclass)?|ad5_class_choices)$/i;
     var timers={},pendingHp={},hpSeq=0;
 
@@ -976,7 +977,7 @@ var AD5Classes=(function(){
     function sync(cid,reason){
         var c=getObj('character',cid);if(!c)return null;
         var r=compute(cid),st=loadState(cid),before={},beforeLv=st.levels||{},firstSync=!st.levels;(Object.keys(st.traits||{})).forEach(function(k){before[k]=1;});
-        writeFeatures(cid,r.lines,st);writeTraits(cid,r.traits,st);writeResources(cid,r.resources,st);writeActions(cid,r.actions,st);var pasNotes=writePassive(cid,r.passive,st);r.warnings=r.warnings.concat(pasNotes);r.companionNotes=writeCompanions(cid,r.companions||[],st);
+        writeFeatures(cid,r.lines,st);writeTraits(cid,r.traits,st);writeResources(cid,r.resources,st);writeActions(cid,r.actions,st);try{if(typeof DBMAccessibility!=='undefined'&&DBMAccessibility&&typeof DBMAccessibility.syncCharacter==='function')setTimeout(function(){DBMAccessibility.syncCharacter(cid);},0);}catch(ignoreDbm){}var pasNotes=writePassive(cid,r.passive,st);r.warnings=r.warnings.concat(pasNotes);r.companionNotes=writeCompanions(cid,r.companions||[],st);
         var levels={};r.classes.forEach(function(x){levels[x.key]=x.level;});st.levels=levels;st.version=VERSION;saveState(cid,st);
         var added=r.traits.filter(function(t){return !before[t.key];}).map(function(t){return t.name;});
         var removed=Object.keys(before).filter(function(k){return !st.traits[k];}).length;

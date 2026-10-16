@@ -3,7 +3,8 @@ if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
     log('AD5EffectTurns: duplicate module skipped; keep one installed copy.');
 } else {
 /*
-AD5 Effect Turns 1.6.25
+AD5 Effect Turns 1.6.26
+1.6.26: «КД 19» / «Атака 19» (статический бонус больше 10) не применяются — раньше это давало постоянные +19 к КД; кнопки восстановления ищутся по листу, а не по всей кампании; условные события пропускают записи без условных эффектов.
 1.6.25: модификаторы «видение невидимого» и «истинное зрение [N фт]»; изменения эффектов передаются AD5 Visibility (невидимость, «Видение невидимого», «Истинное зрение» — сразу пересчёт скрытности и поля зрения).
 1.6.24: изменения эффектов токена передаются AD5 Counters (счётчик снимается вместе со своим эффектом).
 1.6.23: бонус «инициатива +1д8» больше не передаёт ход при пересортировке трекера; изменения маркеров без заметок не читают лист; одна проверка условных связей на пачку перемещений.
@@ -72,7 +73,7 @@ var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5
 // silently shadow every newer fix.
 var AD5EffectTurns = (function () {
     'use strict';
-    var VERSION='1.6.25', SCRIPT='AD5 Effect Turns';
+    var VERSION='1.6.26', SCRIPT='AD5 Effect Turns',MAX_FLAT_MODIFIER=10;
     var runtimeLastGroup=Object.create(null);
     var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
     var markerCacheRaw=null, markerCacheByName=Object.create(null);
@@ -574,6 +575,9 @@ var AD5EffectTurns = (function () {
             if(m){metric=metricName(m[3]);spec=modifierFormulaSpec((m[1]||'+')+m[2]);}
         }
         if(!metric||!spec)return null;
+        // 1.6.26: статический бонус КД/атаки больше 10 — почти наверняка «КД стал 19», а не
+        // «+19 к КД»: такой эффект не применяется (раньше давал постоянные +19 и промахи).
+        if((metric==='ac'||metric==='attack')&&!spec.dynamic&&Math.abs(spec.value)>MAX_FLAT_MODIFIER)return null;
         if(metric==='ac'){
             if(spec.dynamic)return null; // AC remains deterministic.
             return {type:'ac',value:spec.value,positive:spec.positive,label:modifierLabel('КД',spec)};
@@ -1388,7 +1392,11 @@ var AD5EffectTurns = (function () {
     function обработатьУсловноеСобытие(тип,ev){
         var db=root().tokens,changed=0,removed=0,концентрацииКЗавершению={};
         Object.keys(db).slice().forEach(function(tokenId){
-            var token=getObj('graphic',tokenId);if(!token){delete db[tokenId];return;}var before=snapshot(tokenId),after=cleanRecord(before),touched=false;
+            var token=getObj('graphic',tokenId);if(!token){delete db[tokenId];return;}
+            // 1.6.26: большинство записей без условных эффектов — не клонировать их на каждом событии.
+            var rawEffects=db[tokenId]&&db[tokenId].effects;
+            if(!rawEffects||!Object.keys(rawEffects).some(function(k){return !!(rawEffects[k]&&rawEffects[k].условный);}))return;
+            var after=snapshot(tokenId),touched=false;
             Object.keys(after.effects).forEach(function(key){
                 var e=after.effects[key],p=e&&e.условный;if(!e||!p)return;
                 var failedWhile=первоеЛожноеПока(e,token);
@@ -2263,9 +2271,8 @@ var AD5EffectTurns = (function () {
     }
     function recoveryAbilityObjects(cid){
         if(!cid)return [];
-        return findObjs({_type:'ability'}).filter(function(a){
-            var owner=String(a.get('_characterid')||a.get('characterid')||'');
-            if(owner!==String(cid))return false;
+        // 1.6.26: только способности этого листа (раньше — перебор всех способностей кампании).
+        return findObjs({_type:'ability',_characterid:String(cid)}).filter(function(a){
             return String(a.get('action')||'').indexOf('!ad5fx recover ')===0 || String(a.get('name')||'').indexOf(RECOVERY_ACTION_PREFIX)===0;
         });
     }
@@ -2281,12 +2288,17 @@ var AD5EffectTurns = (function () {
         if(!token)return;
         var cid=token.get('represents');if(!cid)return;
         var info=currentTurnInfo();if(!info||info.groupKey!==groupKey(token)||token.get('_pageid')!==info.pageId)return;
-        clearRecoveryAbilitiesForCharacter(cid);
+        // 1.6.26: кнопки пересоздаются, только если их набор изменился (раньше — на каждой записи).
+        var want=[];
         activeRecoveryEffects(token).forEach(function(x){
             if(x.e.recovery.attempted||(npcToken(token)&&!x.e.recovery.action))return;
             var r=x.e.recovery,base=(CONDITIONS[x.e.condition]&&CONDITIONS[x.e.condition].label)||x.e.label;
-            createObj('ability',{characterid:cid,name:Array(21).join('\u200b')+RECOVERY_ACTION_PREFIX+(r.action?'Действие · ':'')+base+' '+r.short+r.dc,action:'!ad5fx recover '+(npcToken(token)?'@{selected|token_id}':token.id)+' '+x.e.condition,istokenaction:true});
+            want.push({name:Array(21).join('\u200b')+RECOVERY_ACTION_PREFIX+(r.action?'Действие · ':'')+base+' '+r.short+r.dc,action:'!ad5fx recover '+(npcToken(token)?'@{selected|token_id}':token.id)+' '+x.e.condition});
         });
+        var have=recoveryAbilityObjects(cid),sig=function(list){return list.map(function(x){return x.name+'\n'+x.action;}).sort().join('\n\n');};
+        if(sig(want)===sig(have.map(function(a){return {name:String(a.get('name')||''),action:String(a.get('action')||'')};})))return;
+        have.forEach(function(a){a.remove();});
+        want.forEach(function(w){createObj('ability',{characterid:cid,name:w.name,action:w.action,istokenaction:true});});
     }
     function clearRecoveryActionsForGroup(pageId,key){
         var done={};

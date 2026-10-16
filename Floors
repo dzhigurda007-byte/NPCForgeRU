@@ -3,7 +3,9 @@ if(typeof AD5Floors!=='undefined'&&AD5Floors) {
     log('AD5Floors: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Floors 1.2.6 — многоэтажные карты на одной Roll20 Page.
+ * AD5 Floors 1.2.9 — многоэтажные карты на одной Roll20 Page.
+ * 1.2.9: токен вне всех зон этажей считается в общем пространстве — видит и виден с любого этажа
+ *   (раньше «застревал» на последнем этаже: полное укрытие и бесконечная дистанция до всех снаружи).
  *
  * Архитектура:
  * - каждый этаж = одна или несколько скрытых Path/PathV2-зон на GM Layer;
@@ -52,7 +54,7 @@ if(typeof AD5Floors!=='undefined'&&AD5Floors) {
  */
 var AD5Floors=(function(){
     'use strict';
-    var VERSION='1.2.8',SCRIPT='AD5 Floors',teleporting=Object.create(null),pending=Object.create(null),portalLayerGuard=Object.create(null),patched=false,originals={};
+    var VERSION='1.2.9',SCRIPT='AD5 Floors',teleporting=Object.create(null),pending=Object.create(null),portalLayerGuard=Object.create(null),patched=false,originals={};
 
     var portalsMigrated=false;
     function root(){
@@ -216,10 +218,16 @@ var AD5Floors=(function(){
         if(f){r.tokenFloor[token.id]=f.key;return f;}
         var old=floorByKey(remembered);return old&&old.page===page?old:null;
     }
+    function physicalFloor(token){return floorAtPoint(pageIdOf(token),Number(token.get('left'))||0,Number(token.get('top'))||0,String(root().tokenFloor[token.id]||''));}
     function floorOf(tokenOrId){var t=typeof tokenOrId==='string'?getObj('graphic',tokenOrId):tokenOrId,f=floorRecordOf(t);return f?f.id:'';}
     function sameFloor(aOrId,bOrId){
         var a=typeof aOrId==='string'?getObj('graphic',aOrId):aOrId,b=typeof bOrId==='string'?getObj('graphic',bOrId):bOrId;if(!isToken(a)||!isToken(b))return true;if(pageIdOf(a)!==pageIdOf(b))return false;
-        var page=pageIdOf(a);if(!hasFloors(page))return true;var fa=floorRecordOf(a),fb=floorRecordOf(b);if(!fa&&!fb)return true;return !!(fa&&fb&&fa.key===fb.key);
+        var page=pageIdOf(a);if(!hasFloors(page))return true;var fa=floorRecordOf(a),fb=floorRecordOf(b);if(!fa&&!fb)return true;
+        // 1.2.9: токен, который сейчас стоит вне всех зон этажей (улица, не размеченная как этаж),
+        // находится в общем пространстве — раньше он «оставался» на последнем этаже, и все
+        // снаружи не видели и не могли атаковать его (и он их).
+        if(!physicalFloor(a)||!physicalFloor(b))return true;
+        return !!(fa&&fb&&fa.key===fb.key);
     }
     function floorForArea(a,path){
         if(!a)return null;var page=String(a.page||(path&&pageIdOf(path))||'');

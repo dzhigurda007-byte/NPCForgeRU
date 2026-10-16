@@ -3,7 +3,8 @@ if(typeof NPCForge!=='undefined'&&NPCForge) {
     log('NPCForge: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * NPC Forge RU v2.8.1 — массовый импорт очередью (без зависания Roll20), права игрокам и группы-оглавления
+ * NPC Forge RU v2.8.2 — массовый импорт очередью (без зависания Roll20), права игрокам и группы-оглавления
+ * 2.8.2: изменения хитов и чувств листа NPC настраивают его токены одной пачкой через 300 мс.
  * 2.8.1: способность с СЧЁТЗАВЕРШИТЬ (детонатор AD5 Counters) открывает курсор выбора цели Roll20 при нажатии.
  *   !npc-settings — кому выдавать новых NPC (мастер / все / выбранные игроки) и группа импорта
  *   !npc-give --player|Имя|all|none [--group|Название] — права уже созданным NPC (выделенные токены или группа)
@@ -16,7 +17,7 @@ if(typeof NPCForge!=='undefined'&&NPCForge) {
 var NPCForge = NPCForge || (function () {
     'use strict';
 
-    var VERSION = '2.8.1';
+    var VERSION = '2.8.2';
     var STARTUP_SCHEMA_MIN = '2.6.5'; // UI-only version bumps must not rebuild every NPC sheet.
     var SCRIPT = 'NPC Forge RU';
     function tokenActionName(rank,label){return Array(Math.max(0,Number(rank)||0)+1).join('\u200b')+String(label||'').replace(/^\u200b+/,'');}
@@ -993,6 +994,14 @@ var NPCForge = NPCForge || (function () {
         if(typeof AD5HealthView!=='undefined'){AD5HealthView.update(token);}
         return true;
     }
+    // Пачка изменений хитов/чувств листа (урон по связанной полосе, правка листа) — одна
+    // настройка токенов через 300 мс, а не перебор токенов на каждое изменение.
+    var configureQueue=Object.create(null);
+    function scheduleConfigureAll(charId){
+        charId=String(charId||'');if(!charId||configureQueue[charId])return;
+        configureQueue[charId]=true;
+        setTimeout(function(){delete configureQueue[charId];try{configureAllTokens(charId);}catch(e){log('NPCForge: '+(e.message||e));}},300);
+    }
     function configureAllTokens(charId){
         var count=0;
         // Called on every hp change of any sheet (linked token bars). A player
@@ -1488,7 +1497,7 @@ var NPCForge = NPCForge || (function () {
         on('change:attribute',function(a){
             if(a.get('name')==='npc_size')resizeCharacterTokens(a.get('_characterid'));
             if(a.get('name')==='wtype' && attrValue(a.get('_characterid'),'npc')==='1' && !npcPlayerOwned(a.get('_characterid')) && a.get('current')!=='/w gm '){upsert(a.get('_characterid'),'wtype','/w gm ');}
-            if(/^(npc|npc_toggle|hp|npc_hpbase|npc_senses|npcforge_aura)$/.test(a.get('name'))){configureAllTokens(a.get('_characterid'));}
+            if(/^(npc|npc_toggle|hp|npc_hpbase|npc_senses|npcforge_aura)$/.test(a.get('name'))){scheduleConfigureAll(a.get('_characterid'));}
             if(a.get('name')==='rtype' && isNpcCharacter(a.get('_characterid'))){scheduleCharacterFix(a.get('_characterid'));}
             if(/^repeating_(?:npcaction(?:-l)?|npcreaction|npcbonusaction)_.+_(ad5_targets|ad5_contest|ad5_effect_count|ad5_damage\d+|ad5_damagetype\d+|ad5_crit\d+|ad5_is_spell|ad5_spell_level|ad5_spell_casting_time|ad5_reaction_trigger|ad5_reaction_effect|ad5_reaction_range|ad5_reaction_side|attack_flag|damage_flag|attack_damage2?|attack_damagetype2?|attack_crit2?|save_flag|save_attr|save_dc|save_effect|attack_range|description|desc|name)$/.test(a.get('name')) && isNpcCharacter(a.get('_characterid'))){
                 scheduleCharacterFix(a.get('_characterid'));

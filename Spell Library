@@ -1129,37 +1129,6 @@ var AD5SpellLibrary = (function(){
     // accidentally declared inside loadCustom()'s "no Handout" branch, so the
     // ready callback could not see it and Roll20 threw ReferenceError.
     var deletedAttackRepair=Object.create(null);
-    function deletedAttackRowInfo(a){
-        if(!a)return null;
-        var cid=String(a.get('_characterid')||''),name=String(a.get('name')||'');
-        var m=/^repeating_attack_(.+)_rollbase(?:_[a-z]+)?$/i.exec(name);
-        if(!m||!cid)return null;
-        var rowId=normalizeAttackId(m[1]);
-        return {cid:cid,rowId:rowId,key:cid+'|'+rowId};
-    }
-    function scheduleDeletedAttackRepair(a){
-        var info=deletedAttackRowInfo(a);
-        if(!info||nativeDeleteSuppressed(info.cid,info.rowId))return;
-        if(deletedAttackRepair[info.key])clearTimeout(deletedAttackRepair[info.key]);
-        deletedAttackRepair[info.key]=setTimeout(function(){
-            delete deletedAttackRepair[info.key];
-            try{
-                // If Roll20/Sheet Worker has already recreated the row, do nothing.
-                if(attr(info.cid,'repeating_attack_'+info.rowId+'_rollbase'))return;
-                if(typeof AD5==='undefined'||!AD5||!AD5.spellbook||typeof AD5.spellbook.rows!=='function')return;
-                var row=(AD5.spellbook.rows(info.cid)||[]).filter(function(r){
-                    return normalizeAttackId(r.attackId)===info.rowId&&String(r.output||'').toUpperCase()==='ATTACK';
-                })[0];
-                if(!row)return;
-                switchToAttack(info.cid,row.prefix,function(err,link){
-                    if(err){log(SCRIPT+' deleted-link repair: '+String(err.message||err));return;}
-                    if(link&&link.id)waitAd5Patch(info.cid,row.prefix,link.id,30,function(ok){
-                        log(SCRIPT+' deleted-link repair '+row.name+': '+(ok?'ok':'patch failed'));
-                    });
-                });
-            }catch(e){log(SCRIPT+' deleted-link repair error: '+String(e.stack||e));}
-        },1200);
-    }
 
     function loadCustom(pid,silent){
         var h=customHandout();

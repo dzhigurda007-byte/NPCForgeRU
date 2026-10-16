@@ -7,12 +7,13 @@
  * 1.1.5: retaliation {"anyAttack":true,"range":10} — any attack hit from within the range (Shadow of Moil).
  * 1.1.6: mark {"noConcentration":true} — метка без концентрации (Проклятие ведьмовского клинка), длительность — duration в раундах.
  * 1.1.7: перемещения и изменения атрибутов проверяют только эффекты нужного вида/токена; записи удалённых токенов (действия, бонусы, ходы) удаляются.
+ * 1.1.8: обработчики перемещения и атрибутов не роняют песочницу при ошибке (try/catch).
  * 1.1.3: mark effects own the Roll20 archery-target marker for their current target; transfer/end/undo restore it safely.
  */
 if(typeof AD5SpellEffects!=='undefined'&&AD5SpellEffects){log('AD5SpellEffects: duplicate skipped');}else{
 var AD5SpellEffects=(function(){
 'use strict';
-var VERSION='1.1.7',windows=Object.create(null),MARK_MARKER='archery-target';
+var VERSION='1.1.8',windows=Object.create(null),MARK_MARKER='archery-target';
 function root(){var r=state.AD5SpellEffects=state.AD5SpellEffects||{};r.effects=r.effects||{};r.turns=r.turns||{};r.actions=r.actions||{};r.bonus=r.bonus||{};r.markMarkerBase=r.markMarkerBase&&typeof r.markMarkerBase==='object'?r.markMarkerBase:{};r.sequence=Number(r.sequence)||0;r.clock=Number(r.clock)||0;return r;}
 function uid(prefix){return prefix+(++root().sequence).toString(36);}
 function clone(x){return x==null?x:JSON.parse(JSON.stringify(x));}
@@ -262,10 +263,10 @@ on('chat:message',function(msg){if(msg.type!=='api'||!/^!ad5spell(?:\s|$)/.test(
  // Other !ad5spell commands and search terms belong to Spell Library.
  }catch(e){tell(msg.playerid,esc(e.message));}});
 on('change:campaign:turnorder',turn);
-on('change:graphic',function(t,prev){if(prev&&String(prev.bar2_value)!==String(t.get('bar2_value')))manualTempChange(t,prev.bar2_value,t.get('bar2_value'));if(prev&&(prev.left!==t.get('left')||prev.top!==t.get('top')||prev._pageid!==t.get('_pageid')))moved(t);});
+on('change:graphic',function(t,prev){try{if(prev&&String(prev.bar2_value)!==String(t.get('bar2_value')))manualTempChange(t,prev.bar2_value,t.get('bar2_value'));if(prev&&(prev.left!==t.get('left')||prev.top!==t.get('top')||prev._pageid!==t.get('_pageid')))moved(t);}catch(e){log('AD5 Spell Effects: '+(e.message||e));}});
 on('destroy:graphic',function(t){Object.keys(root().effects).forEach(function(id){var r=root().effects[id];if(r.source===t.id||r.target===t.id)end(id,'токен удалён');});delete root().markMarkerBase[t.id];var R=root();delete R.actions[t.id];delete R.bonus[t.id];delete R.turns[t.id];});
 on('ready',function(){
- on('change:attribute',function(a,prev){var cid=a.get('_characterid'),name=String(a.get('name')||'');where(function(r){return r.kind==='armor'||r.kind==='retaliation';}).forEach(function(r){var t=token(r.target);if(r.kind==='armor'&&t&&t.get('represents')===cid&&r.armorAttribute===name&&Number(a.get('current'))>0)end(r.id,'надет доспех');if(r.kind==='retaliation'&&t&&prev&&t.get('represents')===cid&&(name==='hp_temp'||t.get('bar2_link')===a.id))manualTempChange(t,prev.current,a.get('current'));});});
+ on('change:attribute',function(a,prev){try{var cid=a.get('_characterid'),name=String(a.get('name')||'');where(function(r){return r.kind==='armor'||r.kind==='retaliation';}).forEach(function(r){var t=token(r.target);if(r.kind==='armor'&&t&&t.get('represents')===cid&&r.armorAttribute===name&&Number(a.get('current'))>0)end(r.id,'надет доспех');if(r.kind==='retaliation'&&t&&prev&&t.get('represents')===cid&&(name==='hp_temp'||t.get('bar2_link')===a.id))manualTempChange(t,prev.current,a.get('current'));});}catch(e){log('AD5 Spell Effects: '+(e.message||e));}});
  root();Object.keys(root().effects).forEach(function(k){var r=root().effects[k];delete r.movePending;if(!activeSource(r)||!token(r.target))end(k,'источник отсутствует',true);else if(r.kind==='retaliation'&&!r.noTemp&&!ownsTemp(r,token(r.target)))end(k,'временные HP отсутствуют',true);});var markTargets={};records().forEach(function(r){if(r.kind==='mark')markTargets[r.target]=true;});Object.keys(markTargets).forEach(syncMarkMarker);log('AD5 Spell Effects '+VERSION+' ready');});
 return {version:VERSION,canStand:function(t){return !records(t.id).some(function(r){return r.preventStanding;});},strip:strip,hasConcentration:function(id){return records().some(function(r){return r.concentration===id;});},parse:parse,releaseRestrained:function(tid){records(tid).slice().forEach(function(r){if(AD5EffectTurns.conditionKey(r.condition)==='restrained')end(r.id,'опутывание снято GM');});},creatureType:creatureType,protectedFrom:protectedFrom,protectionBlocks:protectionBlocks,protectionRecovery:protectionRecovery,validate:validate,applied:applied,immune:immune,armor:armor,onAction:onAction,actionFromCard:actionFromCard,preHit:preHit,hitCommitted:hitCommitted,markComponents:markComponents,afterDamage:afterDamage,harmful:harmful,attackRule:attackRule,checkDisadvantage:checkDisadvantage,gateMove:gateMove,removeConcentration:removeConcentration,offerShield:offerShield,missile:missile,snapshot:snapshot,historyCheck:historyCheck,restore:restore,
  tempOwnerChanged:tempOwnerChanged,_test:{add:add,end:end,records:records,repeat:repeat,transfer:transfer,turn:turn,gateMove:gateMove,grant:grant,check:check,decide:decide,windows:function(){return windows;},reactionProfiles:reactionProfiles,resources:resources,epoch:epoch}};

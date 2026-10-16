@@ -3,7 +3,10 @@ if(typeof AD5Reactions!=='undefined'&&AD5Reactions) {
     log('AD5Reactions: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Reactions v1.6.15 — Generic Resource Binding / Countershot / Sheet First
+ * AD5 Reactions v1.6.16 — Generic Resource Binding / Countershot / Sheet First
+ * 1.6.16: окно реакции без ответа пропускается через 90 с (атака не зависает); «щит» ищется только
+ *   в названии реакции; бонус КД не от Щита (Парирование) — против одной атаки; бонусы КД
+ *   истекают и без смены хода (2 мин / 30 мин).
  * 1.6.15: карточка заклинания игрока в чате не сканирует все листы: только персонажи с
  *         токеном на странице боя, атрибуты читаются один раз; убран пустой change:graphic.
  * 1.6.13: РЕЗ «КОПИЯ ЗАКЛИНАНИЯ» (Око мимикрии) — заклинание источника в лист реагирующего на 10 ходов, 1 использование.
@@ -46,7 +49,7 @@ if(typeof AD5Reactions!=='undefined'&&AD5Reactions) {
 var AD5Reactions = (function(){
     'use strict';
 
-    var VERSION='1.6.15', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
+    var VERSION='1.6.16', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
     var opportunityPending=Object.create(null);
     var runtimePending=Object.create(null), seq=0, recentMove=Object.create(null), lastAreaCheck=null, movementHookRegistered=false, featherCollecting=Object.create(null), reactionRowCache=Object.create(null);
     // 1.4.2 Fast Fall: cache Feather Fall card discovery per character.
@@ -321,12 +324,24 @@ var AD5Reactions = (function(){
     function resetAny(token,quiet){return resetToken(token,quiet);}
     function activateShield(token,reaction,bonus){
         if(!token||!token.get)return false;bonus=Number(bonus);if(!Number.isFinite(bonus))bonus=5;
-        root().shields[token.id]={bonus:bonus,time:Date.now(),blocksMagicMissile:!!(reaction&&reaction.blocksMagicMissile),reactionName:String(reaction&&reaction.name||'Щит')};
+        // 1.6.16: бонус КД не от «Щита» (Парирование «КД +7») — против одной атаки: AD5 снимает
+        // его после проверки попадания (consumeOneAttack). Щит — до начала хода владельца.
+        var oneAttack=!/(?:^|\s)(?:щит|shield)(?:$|\s)/.test(norm(reaction&&reaction.name||''))&&!(reaction&&reaction.effect==='shield');
+        root().shields[token.id]={bonus:bonus,time:Date.now(),oneAttack:oneAttack,blocksMagicMissile:!!(reaction&&reaction.blocksMagicMissile),reactionName:String(reaction&&reaction.name||'Щит')};
         return true;
     }
+    // Страховка: ход владельца не начался (трекер изменён скриптом, токен не в трекере) —
+    // бонус против одной атаки живёт 2 минуты, Щит — 30 минут.
+    var ONE_ATTACK_TTL=120000,SHIELD_TTL=1800000;
     function acBonusForToken(tokenOrId){
         var id=typeof tokenOrId==='string'?tokenOrId:(tokenOrId&&tokenOrId.id),e=id&&root().shields[id];
-        return e?Number(e.bonus)||0:0;
+        if(!e)return 0;
+        if(Date.now()-(Number(e.time)||0)>(e.oneAttack?ONE_ATTACK_TTL:SHIELD_TTL)){delete root().shields[id];return 0;}
+        return Number(e.bonus)||0;
+    }
+    function consumeOneAttack(tokenOrId){
+        var id=typeof tokenOrId==='string'?tokenOrId:(tokenOrId&&tokenOrId.id),e=id&&root().shields[id];
+        if(!e||!e.oneAttack)return false;delete root().shields[id];return true;
     }
     function clearShield(token){
         var id=typeof token==='string'?token:(token&&token.id);if(!id)return false;
@@ -413,7 +428,9 @@ var AD5Reactions = (function(){
         var v=norm(raw),all=norm(String(name||'')+' '+String(desc||''));
         if(!v){
             if(/counterspell|контрзаклин|контрзаклят|отражени/.test(all))return 'spell_cast';
-            if(/(?:^|\s)(?:щит|shield)(?:$|\s)/.test(all))return 'hit';
+            // 1.6.16: «щит» ищется только в названии (раньше — и в описании: Парирование с
+            // текстом «…щитом…» становилось Щитом +5 КД).
+            if(/(?:^|\s)(?:щит|shield)(?:$|\s)/.test(norm(name)))return 'hit';
             return 'manual';
         }
         if(/^(?:spell_cast|spell|заклин|каст|сотвор)/.test(v))return 'spell_cast';
@@ -442,7 +459,7 @@ var AD5Reactions = (function(){
         if(!v){
             if(/отражени|reflection|reflect\b/.test(all))return 'reflect';
             if(/counterspell|контрзаклин|контрзаклят/.test(all))return 'cancel';
-            if(/(?:^|\s)(?:щит|shield)(?:$|\s)/.test(all))return 'shield';
+            if(/(?:^|\s)(?:щит|shield)(?:$|\s)/.test(norm(name)))return 'shield';
             return 'execute';
         }
         if(/shield|щит/.test(v))return 'shield';
@@ -1494,8 +1511,22 @@ var AD5Reactions = (function(){
         if(a.executed)out.executed=true;return out;
     }
     function showNextGeneric(ev){
-        while(ev.genericIndex<ev.genericQueue.length){var c=ev.genericQueue[ev.genericIndex],t=getObj('graphic',c.tokenId);if(!t||!availableAny(t)||!reactionResourceReady(t,c.reaction)){ev.genericIndex++;continue;}ev.currentGenericKey=c.key;whisperReactionDecision(t,genericCard(ev,c));return true;}
+        while(ev.genericIndex<ev.genericQueue.length){var c=ev.genericQueue[ev.genericIndex],t=getObj('graphic',c.tokenId);if(!t||!availableAny(t)||!reactionResourceReady(t,c.reaction)){ev.genericIndex++;continue;}ev.currentGenericKey=c.key;whisperReactionDecision(t,genericCard(ev,c));armGenericTimeout(ev,c.key);return true;}
         resolveEvent(ev,finalGenericResult(ev));return false;
+    }
+    // 1.6.16: окно реакции без ответа не держит атаку вечно — через GENERIC_TIMEOUT_MS
+    // кандидат пропускается (как «Пропустить»), мастеру приходит сообщение.
+    var GENERIC_TIMEOUT_MS=90000;
+    function armGenericTimeout(ev,key){
+        setTimeout(function(){
+            try{
+                if(!runtimePending[ev.id]||ev.resolved||ev.currentGenericKey!==key)return;
+                var c=ev.genericQueue&&ev.genericQueue[ev.genericIndex];if(!c||c.key!==key)return;
+                var t=getObj('graphic',c.tokenId);
+                sendChat(SCRIPT,'/w gm Реакция «'+esc(c.reaction&&c.reaction.name||'')+'»'+(t?' ('+esc(t.get('name')||t.id)+')':'')+': нет ответа '+Math.round(GENERIC_TIMEOUT_MS/1000)+' с — пропущена, действие продолжается.',null,{noarchive:true});
+                ev.genericIndex++;showNextGeneric(ev);
+            }catch(e){log(SCRIPT+': тайм-аут реакции — '+(e.message||e));}
+        },GENERIC_TIMEOUT_MS);
     }
     function openGeneric(type,data,done){
         data=data||{};var ev={id:'G'+Date.now().toString(36)+(++seq).toString(36),type:type,sourceTokenId:String(data.sourceTokenId||''),sourceSide:String(data.sourceSide||''),targetTokenId:String(data.targetTokenId||''),tokenId:String(data.tokenId||''),playerId:String(data.playerId||''),actionName:String(data.actionName||type),effects:data.effects||[],attackClass:String(data.attackClass||''),attackDistance:Number(data.attackDistance)||0,attackTotal:Number(data.attackTotal)||0,naturalDie:Number(data.naturalDie)||0,critical:!!data.critical,damageAmount:Number(data.damageAmount)||0,damageByType:Array.isArray(data.damageByType)?data.damageByType:[],historyKey:String(data.historyKey||''),spellName:String(data.spellName||''),spellLevel:data.spellLevel,spellCastLevel:data.spellCastLevel,spellBaseLevel:data.spellBaseLevel,created:Date.now(),done:typeof done==='function'?done:function(){},resolved:false,genericAggregate:null};
@@ -2254,7 +2285,7 @@ var AD5Reactions = (function(){
 
     return {
         version:VERSION,opportunityContext:opportunityContext,invalidateCharacter:invalidateCharacter,beforeSpellCast:beforeSpellCast,beforeAreaApply:beforeAreaApply,beforeAttack:beforeAttack,afterHit:afterHit,beforeDamage:beforeDamage,afterDamage:afterDamage,afterEffect:afterEffect,beforeFall:beforeFall,spellLevels:eventSpellLevels,spellLevelValue:eventSpellLevelValue,spellLevelText:spellLevelText,reactionLevelAllowed:reactionLevelAllowed,available:available,spend:spend,reset:resetToken,availableAny:availableAny,spendAny:spendAny,resetAny:resetAny,
-        blocksMagicMissile:function(t){var e=root().shields[typeof t==='string'?t:t.id];return !!(e&&e.blocksMagicMissile);},canDecide:canDecideReaction,notify:whisperReactionDecision,canSee:canSeeForReaction,acBonusForToken:acBonusForToken,activateShield:activateShield,clearShield:clearShield,countershotForToken:countershotForToken,clearCountershot:clearCountershot,developerMode:developerMode,
+        blocksMagicMissile:function(t){var e=root().shields[typeof t==='string'?t:t.id];return !!(e&&e.blocksMagicMissile);},canDecide:canDecideReaction,notify:whisperReactionDecision,canSee:canSeeForReaction,acBonusForToken:acBonusForToken,consumeOneAttack:consumeOneAttack,activateShield:activateShield,clearShield:clearShield,countershotForToken:countershotForToken,clearCountershot:clearCountershot,developerMode:developerMode,
         distanceFeet:distanceFeet,reactionsForToken:reactionsForToken,reactionRangeSpec:reactionRangeSpec,reactionLimitForToken:reactionLimitForToken,sideOf:sideOf,isNpc:isNpc,hasSpellTag:hasSpellTag,
         classifyAttack:function(source,target){var d=distanceFeet(source,target);return {distance:d,type:d>10?'ranged':'melee'};},
         _test:{executeReaction:executeReaction,playerMeleeActions:playerMeleeActions,openOpportunityFromMovement:openOpportunityFromMovement,turnChanged:turnChanged,pendingCount:function(){return Object.keys(runtimePending).length;},closeAnsweredMovement:closeAnsweredMovement,reactionResourceSpec:reactionResourceSpec,characterResourceSlots:characterResourceSlots,resolveReactionResource:resolveReactionResource,reactionResourceReady:reactionResourceReady,consumeReactionResource:consumeReactionResource,countershotJoin:countershotJoin,countershotRowSnapshot:countershotRowSnapshot,countershotProficiencyExpr:countershotProficiencyExpr,countershotGlobalAttackRows:countershotGlobalAttackRows,countershotAd5AttackContext:countershotAd5AttackContext,countershotFallbackRowData:countershotFallbackRowData,countershotRowData:countershotRowData,touchCountershotSheetWorker:touchCountershotSheetWorker,findPlayerExecutableRow:findPlayerExecutableRow,activeCountershotEligible:activeCountershotEligible,runActiveCountershot:runActiveCountershot,normalizedDescriptionText:normalizedDescriptionText,descriptionField:descriptionField,normalizeTrigger:normalizeTrigger,normalizeSubject:normalizeSubject,normalizeEffect:normalizeEffect,rangeNumber:rangeNumber,reactionRangeSpec:reactionRangeSpec,reactionResultSpec:reactionResultSpec,activateCountershot:activateCountershot,markCountershotAttacker:markCountershotAttacker,unmarkCountershotAttacker:unmarkCountershotAttacker,countershotAttackerAvailable:countershotAttackerAvailable,noteCountershotAttack:noteCountershotAttack,bumpTurnEpoch:bumpTurnEpoch,turnEpoch:turnEpoch,proficiencyBonusForToken:proficiencyBonusForToken,playerReactionRows:playerReactionRows,candidatesFor:candidatesFor,reactionConditionAllowed:reactionConditionAllowed,eventPointToken:eventPointToken,npcMeleeActions:npcMeleeActions,initiativeForToken:initiativeForToken,sortSpellDefenses:sortSpellDefenses,effectMatchFrom:effectMatchFrom,featherFallRows:featherFallRows,fallStartRangeFeet:fallStartRangeFeet,parseFeatherRowsFromAttributes:parseFeatherRowsFromAttributes,rebuildFeatherIndexAll:rebuildFeatherIndexAll,hasFeatherFall:hasFeatherFall,canSeeForReaction:canSeeForReaction,validSpellOptions:validSpellOptions,movementReactionCandidates:movementReactionCandidates,spellDefenseAbility:spellDefenseAbility,spellDefenseReactionLevel:spellDefenseReactionLevel,spellDefenseCheck:spellDefenseCheck,classSpellAbility:classSpellAbility,highestMentalAbility:highestMentalAbility,abilityKey:abilityKey,parseSpellDefenseLevel:parseSpellDefenseLevel,playerCounterspellRow:playerCounterspellRow}

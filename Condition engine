@@ -49,7 +49,7 @@ if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine) {
  */
 var AD5ConditionEngine=(function(){
     'use strict';
-    var VERSION='1.2.20',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
+    var VERSION='1.2.21',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
     var MARKERS={
         blinded:'bleeding-eye',charmed:'chained-heart',deafened:'half-haze',frightened:'screaming',
         grappled:'grab',incapacitated:'broken-shield',no_reactions:'interdiction',invisible:'ninja-mask',paralyzed:'padlock',
@@ -110,7 +110,13 @@ var AD5ConditionEngine=(function(){
         var next=out.join(',');if(next!==String(token.get('statusmarkers')||'')){token.set('statusmarkers',next);return true;}return false;
     }
     function hasMarker(token,marker){return isToken(token)&&String(token.get('statusmarkers')||'').split(',').some(function(m){return String(m).replace(/@[^,]+$/,'')===marker;});}
-    function effectSnapshot(token){try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.snapshot==='function')return AD5EffectTurns.snapshot(token.id)||null;}catch(ignore){}return null;}
+    // 1.2.21: внутри одного attackRule запись эффектов токена копируется один раз (было ~15 копий).
+    var snapCache=null;
+    function effectSnapshot(token){
+        if(snapCache&&token.id in snapCache)return snapCache[token.id];
+        var rec=null;try{if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns&&typeof AD5EffectTurns.snapshot==='function')rec=AD5EffectTurns.snapshot(token.id)||null;}catch(ignore){}
+        if(snapCache)snapCache[token.id]=rec;return rec;
+    }
     function conditionEntry(token,key){
         if(!isToken(token))return null;var rec=effectSnapshot(token),effects=rec&&rec.effects;if(!effects)return null;
         var direct=effects['condition:'+key];if(direct&&direct.condition===key)return direct;var found=null;
@@ -151,6 +157,10 @@ var AD5ConditionEngine=(function(){
         return false;
     }
     function attackRule(source,target){
+        var outer=snapCache;if(!outer)snapCache=Object.create(null);
+        try{return attackRuleInner(source,target);}finally{if(!outer)snapCache=null;}
+    }
+    function attackRuleInner(source,target){
         var adv=[],dis=[],forceCritical=false,autoHitClose=false,blocked=source?canAct(source):{allowed:true,reasons:[]},dist=(source&&target)?rangeFeet(source,target):Infinity;
         if(target){
             if(has(target,'blinded'))adv.push('Ослеплён');
