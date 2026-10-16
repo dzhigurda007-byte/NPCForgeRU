@@ -73,6 +73,7 @@ hp листа используется однократно как началь�
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
 4.3.163: классовые механики — атрибут листа ad5_features: КРИТ 19/18, КРИТ КОСТИ, ПЕРЕБРОС УРОНА, СКРЫТАЯ АТАКА, РАЗ В ХОД, УРОН ЗАКЛИНАНИЙ/ШКОЛЫ, ЛУЧ, ЛЕЧЕНИЕ ЗАКЛИНАНИЙ; ПОСЛЕ ПОПАДАНИЯ — кнопки с расходом ячейки или ресурса (!ad5 posthit). ЯРОСТЬ, НЕУДЕРЖИМАЯ ЯРОСТЬ (!ad5 relentless-reset), ПРИ УБИЙСТВЕ [ЗАКЛИНАНИЕМ]; метамагия (!ad5 meta: Усиленное, Продлённое, Удвоенное, Осторожное), ФОРМИРОВАНИЕ ЗАКЛИНАНИЙ; спасбросок может быть автоуспешным. Описание — docs/class-features.md.
+4.3.179: итоговая карточка атаки без ответа Roll20 завершается сообщением через 15 с; Сл Убежища — от заклинателя (Effect Turns 1.6.27).
 4.3.178: лучи «СНРПОП: АТАКА» (Палящий луч, Мистический заряд) берут бонус атаки из броска карточки (раньше — только spell_attack_bonus, у NPC часто пустой → +0); КД цели луча — первое число атрибута; переброс атаки реакцией учитывает КРИТ 19; ошибка после реакции на урон не останавливает пачку лучей; бонус КД Парирования действует против одной атаки; перед действием поднимаются только закрытые токены; удалён неиспользуемый код миграций.
 4.3.177: AD5 Counters получает описание и имя текущей атаки (СЧЁТТРАТА — заряды счётчиков в урон этой атаки).
 4.3.176: ТОЛЧ/ТЯГ без явного токена атакующего и с несколькими копиями персонажа — ближайшая к цели копия.
@@ -807,7 +808,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.178', diagnostics = [], debug = false;
+    var VERSION = '4.3.179', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -3997,7 +3998,11 @@ var AD5 = (function () {
             var card='&{template:'+template+'} {{ad5internalroll=1}} '+(npcCard?'{{name='+esc(who)+'}} ':'{{charname='+esc(who)+'}} {{mod=AD5}} ')+
                 '{{rname='+esc(name)+'}} '+rollFields+
                 (npcCard?'{{description='+esc(reason.join(' · '))+'}}':'{{desc='+esc(reason.join(' · '))+'}}');
+            // 4.3.179: если Roll20 не вернул бросок (ошибка разбора выражения), через 15 с атака
+            // завершается сообщением, а не пропадает молча.
+            var cardDone=false,cardGuard=setTimeout(function(){if(cardDone)return;cardDone=true;done(new Error('Roll20 не вернул итоговую карточку атаки за 15 с — повторите атаку.'));},15000);
             sendChat(who,card,function(messages){
+                if(cardDone)return;cardDone=true;clearTimeout(cardGuard);
                 try{
                     var cm=messages&&messages[0];
                     if(!cm)throw new Error('Roll20 не вернул карточку итоговой атаки.');

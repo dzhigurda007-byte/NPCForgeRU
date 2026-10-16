@@ -3,7 +3,8 @@ if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
     log('AD5EffectTurns: duplicate module skipped; keep one installed copy.');
 } else {
 /*
-AD5 Effect Turns 1.6.26
+AD5 Effect Turns 1.6.27
+1.6.27: Сл Убежища — Сл заклинаний заклинателя (число в тексте — только если её нет на листе).
 1.6.26: «КД 19» / «Атака 19» (статический бонус больше 10) не применяются — раньше это давало постоянные +19 к КД; кнопки восстановления ищутся по листу, а не по всей кампании; условные события пропускают записи без условных эффектов.
 1.6.25: модификаторы «видение невидимого» и «истинное зрение [N фт]»; изменения эффектов передаются AD5 Visibility (невидимость, «Видение невидимого», «Истинное зрение» — сразу пересчёт скрытности и поля зрения).
 1.6.24: изменения эффектов токена передаются AD5 Counters (счётчик снимается вместе со своим эффектом).
@@ -73,7 +74,7 @@ var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5
 // silently shadow every newer fix.
 var AD5EffectTurns = (function () {
     'use strict';
-    var VERSION='1.6.26', SCRIPT='AD5 Effect Turns',MAX_FLAT_MODIFIER=10;
+    var VERSION='1.6.27', SCRIPT='AD5 Effect Turns',MAX_FLAT_MODIFIER=10;
     var runtimeLastGroup=Object.create(null);
     var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
     var markerCacheRaw=null, markerCacheByName=Object.create(null);
@@ -1016,7 +1017,7 @@ var AD5EffectTurns = (function () {
             }
             if(e.condition==='slowed')after.effects[e.key].slowLoss=(e.slowLoss===undefined?null:e.slowLoss);
             copyEffectExtras(e,after.effects[e.key]);
-            if(e.condition==='sanctuary')after.effects[e.key].sanctuaryDC=Number(e.sanctuaryDC)||null;
+            if(e.condition==='sanctuary')applySanctuaryDC(after.effects[e.key],e,sourceContext);
             if(e.periodic)after.effects[e.key].periodic=clone(e.periodic);
             after.effects[e.key].source=effectSourceRecord(sourceContext);
             if(e.condition==='no_reactions'){after.effects[e.key].remaining=1;after.effects[e.key].timed=true;after.effects[e.key].reactionTurnStarted=false;}
@@ -1620,7 +1621,7 @@ var AD5EffectTurns = (function () {
             }
         if(e.condition==='slowed')after.effects[e.key].slowLoss=(e.slowLoss===undefined?null:e.slowLoss);
         copyEffectExtras(e,after.effects[e.key]);
-        if(e.condition==='sanctuary')after.effects[e.key].sanctuaryDC=Number(e.sanctuaryDC)||null;
+        if(e.condition==='sanctuary')applySanctuaryDC(after.effects[e.key],e,sourceContext);
         if(e.periodic)after.effects[e.key].periodic=clone(e.periodic);
         after.effects[e.key].source=effectSourceRecord(sourceContext);
             if(e.condition==='no_reactions'){after.effects[e.key].remaining=1;after.effects[e.key].timed=true;after.effects[e.key].reactionTurnStarted=false;}
@@ -1667,6 +1668,21 @@ var AD5EffectTurns = (function () {
         return directSegments(description).filter(function(x){return !used[matchNorm(x)];}).join(', ');
     }
 
+    // 1.6.27: Сл Убежища — Сл заклинаний заклинателя (лист источника эффекта); число в тексте
+    // («убежище 15 10») — только если Сл заклинателя не найдена.
+    function casterSpellDC(sourceContext){
+        sourceContext=sourceContext||{};
+        var cid=String(sourceContext.actor||''),st=sourceContext.sourceToken&&getObj('graphic',String(sourceContext.sourceToken));
+        if(!getObj('character',cid)&&st)cid=String(st.get('represents')||'');
+        if(!cid)return 0;
+        var names=['spell_save_dc','spell_save_dc_base','npc_spelldc','npc_spell_dc','spell_dc'];
+        for(var i=0;i<names.length;i++){var a=findObjs({_type:'attribute',_characterid:cid,name:names[i]})[0],m=a&&/\d+/.exec(String(a.get('current')||''));var n=m?Number(m[0]):0;if(n>=5&&n<=40)return n;}
+        return 0;
+    }
+    function applySanctuaryDC(target,e,sourceContext){
+        var dc=casterSpellDC(sourceContext)||Number(e.sanctuaryDC)||null;
+        target.sanctuaryDC=dc;if(dc)target.label=CONDITIONS.sanctuary.label+' '+dc;
+    }
     function sanctuaryForToken(tokenId){
         var rec=snapshot(tokenId),e=rec&&rec.effects&&rec.effects['condition:sanctuary'];
         if(!e)return null;

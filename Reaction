@@ -3,7 +3,9 @@ if(typeof AD5Reactions!=='undefined'&&AD5Reactions) {
     log('AD5Reactions: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Reactions v1.6.16 — Generic Resource Binding / Countershot / Sheet First
+ * AD5 Reactions v1.6.17 — Generic Resource Binding / Countershot / Sheet First
+ * 1.6.17: все окна реакций (NPC и игроков: контрзаклинание, защита от заклинаний, реакции на
+ *   попадание/урон, атаки по возможности, Падение пёрышком) пропускаются через 90 с без ответа.
  * 1.6.16: окно реакции без ответа пропускается через 90 с (атака не зависает); «щит» ищется только
  *   в названии реакции; бонус КД не от Щита (Парирование) — против одной атаки; бонусы КД
  *   истекают и без смены хода (2 мин / 30 мин).
@@ -49,7 +51,7 @@ if(typeof AD5Reactions!=='undefined'&&AD5Reactions) {
 var AD5Reactions = (function(){
     'use strict';
 
-    var VERSION='1.6.16', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
+    var VERSION='1.6.17', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
     var opportunityPending=Object.create(null);
     var runtimePending=Object.create(null), seq=0, recentMove=Object.create(null), lastAreaCheck=null, movementHookRegistered=false, featherCollecting=Object.create(null), reactionRowCache=Object.create(null);
     // 1.4.2 Fast Fall: cache Feather Fall card discovery per character.
@@ -1061,7 +1063,7 @@ var AD5Reactions = (function(){
         var source=getObj('graphic',String(data&&data.sourceTokenId||''));if(!source)return null;
         var ev=newSpellEvent(data,done,areaApply);if(!ev.sourceSide)ev.sourceSide=sideOf(source);
         var q=setupSpellDefenseQueue(ev,candidatesFor(ev));if(!q.length)return null;
-        runtimePending[ev.id]=ev;showNextSpellDefense(ev);return ev;
+        runtimePending[ev.id]=ev;armWatch();showNextSpellDefense(ev);return ev;
     }
     function resolveEvent(ev,result){
         if(!ev||ev.resolved)return;
@@ -1074,7 +1076,7 @@ var AD5Reactions = (function(){
         var raw=candidatesFor(ev),perToken=Object.create(null);
         raw.forEach(function(c,i){c.key='C'+(i+1);ev.candidates.push(c);(perToken[c.tokenId]||(perToken[c.tokenId]=[])).push(c);});
         if(!ev.candidates.length){if(!opts.noImmediateCallback)ev.done({cancelled:false});return null;}
-        runtimePending[ev.id]=ev;
+        runtimePending[ev.id]=ev;armWatch();
         Object.keys(perToken).forEach(function(tid){var t=getObj('graphic',tid);if(t)whisperReactionDecision(t,eventCard(ev,t,perToken[tid]));});
         sendChat(SCRIPT,'/w gm <b>'+esc(ev.actionName)+'</b>: доступно реакций — '+ev.candidates.length+'. [Продолжить без реакции](!ad5react continue '+ev.id+')',null,{noarchive:true});
         return ev.id;
@@ -1116,7 +1118,7 @@ var AD5Reactions = (function(){
         var ev=newSpellEvent(data,done,true),all=candidatesFor(ev),q=setupSpellDefenseQueue(ev,all);
         lastAreaCheck={time:Date.now(),opened:false,reason:q.length?'queued':'no-candidate',actionName:ev.actionName,sourceTokenId:ev.sourceTokenId,sourceSide:ev.sourceSide,spellSource:ev.spellSource,candidateCount:q.length,allReactionCandidates:all.length,queueCount:q.length};
         if(!q.length)return false;
-        runtimePending[ev.id]=ev;showNextSpellDefense(ev);return true;
+        runtimePending[ev.id]=ev;armWatch();showNextSpellDefense(ev);return true;
     }
 
     // ---------- Executable NPC reactions and movement zones ----------
@@ -1282,7 +1284,7 @@ var AD5Reactions = (function(){
         var now=Date.now(),ev={id:'O'+now.toString(36)+(++seq).toString(36),type:'movement',moverTokenId:mover.id,sourceTokenId:mover.id,targetTokenId:mover.id,movementTxn:String(move.movementTxn||move.id||''),created:now,candidates:[],responses:Object.create(null),resolved:false};
         var perNpc=Object.create(null),idx=0;
         combatTokens(page).forEach(function(npc){if(npc.id===mover.id||!available(npc)||sideOf(npc)===sideOf(mover))return;movementReactionCandidates(npc,mover,move).forEach(function(c){c.key='O'+(++idx);ev.candidates.push(c);(perNpc[npc.id]||(perNpc[npc.id]=[])).push(c);});});
-        if(!ev.candidates.length)return;runtimePending[ev.id]=ev;
+        if(!ev.candidates.length)return;runtimePending[ev.id]=ev;armWatch();
         Object.keys(perNpc).forEach(function(id){var npc=getObj('graphic',id);if(npc)whisperReactionDecision(npc,opportunityCard(ev,npc,perNpc[id]));});
     }
 
@@ -1480,7 +1482,7 @@ var AD5Reactions = (function(){
         if(!batch||batch.resolved||!batch.collecting){
             if(!potentialFeatherCaster(probe,pageId))return false;
             batch={id:'F'+Date.now().toString(36)+(++seq).toString(36),type:'feather_batch',pageId:pageId,events:[],casters:[],casterIndex:0,currentCasterId:'',selection:Object.create(null),collecting:true,created:Date.now(),resolved:false};
-            featherCollecting[pageId]=batch;runtimePending[batch.id]=batch;
+            featherCollecting[pageId]=batch;runtimePending[batch.id]=batch;armWatch();
             setTimeout(function(){flushFeatherBatch(batch.id);},FEATHER_BATCH_MS);
         }
         batch.events.push({id:batch.id+':'+(batch.events.length+1),type:'fall',tokenId:token.id,targetTokenId:token.id,startHeight:probe.startHeight,landingHeight:probe.landingHeight,distance:probe.distance,reason:String(data.reason||'Падение'),formula:String(data.formula||''),created:Date.now(),done:typeof done==='function'?done:function(){},resolved:false});
@@ -1514,20 +1516,41 @@ var AD5Reactions = (function(){
         while(ev.genericIndex<ev.genericQueue.length){var c=ev.genericQueue[ev.genericIndex],t=getObj('graphic',c.tokenId);if(!t||!availableAny(t)||!reactionResourceReady(t,c.reaction)){ev.genericIndex++;continue;}ev.currentGenericKey=c.key;whisperReactionDecision(t,genericCard(ev,c));armGenericTimeout(ev,c.key);return true;}
         resolveEvent(ev,finalGenericResult(ev));return false;
     }
-    // 1.6.16: окно реакции без ответа не держит атаку вечно — через GENERIC_TIMEOUT_MS
-    // кандидат пропускается (как «Пропустить»), мастеру приходит сообщение.
-    var GENERIC_TIMEOUT_MS=90000;
-    function armGenericTimeout(ev,key){
-        setTimeout(function(){
-            try{
-                if(!runtimePending[ev.id]||ev.resolved||ev.currentGenericKey!==key)return;
-                var c=ev.genericQueue&&ev.genericQueue[ev.genericIndex];if(!c||c.key!==key)return;
-                var t=getObj('graphic',c.tokenId);
-                sendChat(SCRIPT,'/w gm Реакция «'+esc(c.reaction&&c.reaction.name||'')+'»'+(t?' ('+esc(t.get('name')||t.id)+')':'')+': нет ответа '+Math.round(GENERIC_TIMEOUT_MS/1000)+' с — пропущена, действие продолжается.',null,{noarchive:true});
-                ev.genericIndex++;showNextGeneric(ev);
-            }catch(e){log(SCRIPT+': тайм-аут реакции — '+(e.message||e));}
-        },GENERIC_TIMEOUT_MS);
+    // 1.6.17: единый сторож всех окон реакций (NPC и игроков): контрзаклинание и защита от
+    // заклинаний, реакции на попадание/урон/эффект, окна «Реакции» с несколькими кандидатами,
+    // атаки по возможности, Падение пёрышком. Если текущий шаг окна ждёт ответа дольше
+    // REACTION_TIMEOUT_MS, он пропускается как «Пропустить» — атака или заклинание продолжаются.
+    var REACTION_TIMEOUT_MS=90000,WATCH_TICK_MS=5000,watchTimer=null;
+    function windowStage(ev){
+        if(ev.counterQueue)return 'K'+ev.counterIndex+':'+(ev.currentCounterKey||'');
+        if(ev.genericQueue)return 'G'+ev.genericIndex+':'+(ev.currentGenericKey||'');
+        if(ev.casters)return 'F'+ev.casterIndex;
+        return 'W';
     }
+    function windowName(ev){return String(ev.actionName||ev.spellName||(ev.type==='movement'?'перемещение':'действие')||'');}
+    function expireWindow(ev){
+        var label=windowName(ev);
+        sendChat(SCRIPT,'/w gm Реакция на «'+esc(label)+'»: нет ответа '+Math.round(REACTION_TIMEOUT_MS/1000)+' с — пропущено, действие продолжается.',null,{noarchive:true});
+        if(ev.counterQueue){ev.counterIndex++;showNextSpellDefense(ev);return;}
+        if(ev.genericQueue){ev.genericIndex++;showNextGeneric(ev);return;}
+        if(ev.casters){finishUnprotectedFeatherEvents(ev);return;}
+        if(ev.type==='movement'){ev.resolved=true;delete runtimePending[ev.id];return;}
+        resolveEvent(ev,{cancelled:false,forced:true,timeout:true});
+    }
+    function watchWindows(){
+        watchTimer=null;var now=Date.now(),ids=Object.keys(runtimePending);
+        ids.forEach(function(id){
+            var ev=runtimePending[id];if(!ev||ev.resolved){delete runtimePending[id];return;}
+            var st=windowStage(ev);
+            if(ev._watchStage!==st){ev._watchStage=st;ev._watchSince=now;return;}
+            if(now-(Number(ev._watchSince)||now)<REACTION_TIMEOUT_MS)return;
+            ev._watchStage=null;
+            try{expireWindow(ev);}catch(e){log(SCRIPT+': тайм-аут реакции — '+(e.message||e));ev.resolved=true;delete runtimePending[id];}
+        });
+        if(Object.keys(runtimePending).length)watchTimer=setTimeout(watchWindows,WATCH_TICK_MS);
+    }
+    function armWatch(){if(!watchTimer)watchTimer=setTimeout(watchWindows,WATCH_TICK_MS);}
+    function armGenericTimeout(){armWatch();}
     function openGeneric(type,data,done){
         data=data||{};var ev={id:'G'+Date.now().toString(36)+(++seq).toString(36),type:type,sourceTokenId:String(data.sourceTokenId||''),sourceSide:String(data.sourceSide||''),targetTokenId:String(data.targetTokenId||''),tokenId:String(data.tokenId||''),playerId:String(data.playerId||''),actionName:String(data.actionName||type),effects:data.effects||[],attackClass:String(data.attackClass||''),attackDistance:Number(data.attackDistance)||0,attackTotal:Number(data.attackTotal)||0,naturalDie:Number(data.naturalDie)||0,critical:!!data.critical,damageAmount:Number(data.damageAmount)||0,damageByType:Array.isArray(data.damageByType)?data.damageByType:[],historyKey:String(data.historyKey||''),spellName:String(data.spellName||''),spellLevel:data.spellLevel,spellCastLevel:data.spellCastLevel,spellBaseLevel:data.spellBaseLevel,created:Date.now(),done:typeof done==='function'?done:function(){},resolved:false,genericAggregate:null};
         var q=sortGeneric(candidatesFor(ev));
@@ -1536,7 +1559,7 @@ var AD5Reactions = (function(){
         if(type==='spell_cast')q=q.filter(function(c){return !c.reaction||['cancel','reflect'].indexOf(c.reaction.effect)<0;});
         q.forEach(function(c,i){c.key='G'+(i+1);});
         if(!q.length)return null;
-        ev.genericQueue=q;ev.genericIndex=0;runtimePending[ev.id]=ev;showNextGeneric(ev);return ev;
+        ev.genericQueue=q;ev.genericIndex=0;runtimePending[ev.id]=ev;armWatch();showNextGeneric(ev);return ev;
     }
     function afterHit(data,done){if(runActiveCountershot(data,done))return true;return !!openGeneric('hit',data,done);}
     function beforeDamage(data,done){return !!openGeneric('damage_pending',data,done);}
@@ -1872,7 +1895,11 @@ var AD5Reactions = (function(){
         }
         throw new Error('AD5 не предоставляет мост нанесения урона реакции.');
     }
-    function resolveCountershot(owner,reaction,ev,done){
+    function resolveCountershot(owner,reaction,ev,doneRaw){
+        // 1.6.17: продолжение атаки вызывается из ответа Roll20 на бросок; если ответа нет
+        // REACTION_TIMEOUT_MS — атака продолжается без встречного выстрела.
+        var finished=false,guard=setTimeout(function(){if(finished)return;finished=true;sendChat(SCRIPT,'/w gm Упреждающий выстрел: Roll20 не вернул бросок — атака продолжается без него.',null,{noarchive:true});try{doneRaw({cancelled:false,reactionUsed:false,countershot:false,timeout:true});}catch(e){log(SCRIPT+' countershot: '+(e.message||e));}},REACTION_TIMEOUT_MS);
+        function done(r){if(finished)return;finished=true;clearTimeout(guard);doneRaw(r);}
         var attacker=ev&&ev.sourceTokenId&&getObj('graphic',String(ev.sourceTokenId||''));
         if(!owner||!attacker){done({cancelled:false,reactionUsed:false,countershot:false});return;}
         var rowData;

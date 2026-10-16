@@ -7,13 +7,14 @@
  * 1.1.5: retaliation {"anyAttack":true,"range":10} — any attack hit from within the range (Shadow of Moil).
  * 1.1.6: mark {"noConcentration":true} — метка без концентрации (Проклятие ведьмовского клинка), длительность — duration в раундах.
  * 1.1.7: перемещения и изменения атрибутов проверяют только эффекты нужного вида/токена; записи удалённых токенов (действия, бонусы, ходы) удаляются.
+ * 1.1.9: окно реакции-заклинания (Щит, Адское возмездие) без ответа пропускается через 90 с.
  * 1.1.8: обработчики перемещения и атрибутов не роняют песочницу при ошибке (try/catch).
  * 1.1.3: mark effects own the Roll20 archery-target marker for their current target; transfer/end/undo restore it safely.
  */
 if(typeof AD5SpellEffects!=='undefined'&&AD5SpellEffects){log('AD5SpellEffects: duplicate skipped');}else{
 var AD5SpellEffects=(function(){
 'use strict';
-var VERSION='1.1.8',windows=Object.create(null),MARK_MARKER='archery-target';
+var VERSION='1.1.9',windows=Object.create(null),MARK_MARKER='archery-target';
 function root(){var r=state.AD5SpellEffects=state.AD5SpellEffects||{};r.effects=r.effects||{};r.turns=r.turns||{};r.actions=r.actions||{};r.bonus=r.bonus||{};r.markMarkerBase=r.markMarkerBase&&typeof r.markMarkerBase==='object'?r.markMarkerBase:{};r.sequence=Number(r.sequence)||0;r.clock=Number(r.clock)||0;return r;}
 function uid(prefix){return prefix+(++root().sequence).toString(36);}
 function clone(x){return x==null?x:JSON.parse(JSON.stringify(x));}
@@ -228,6 +229,8 @@ function offer(kind,t,source,done){
  if(!t){if(done)done(false);return false;}
  var options=reactionOptions(t,kind,source);if(!options.length){if(done)done(false);return false;}
  var id=uid('r'),w={kind:'reaction',target:t.id,source:source&&source.id,spellKind:kind,options:options,pass:function(){if(done)done(false);},done:done};windows[id]=w;
+ // 1.1.9: без ответа 90 с — реакция пропускается, атака продолжается.
+ setTimeout(function(){var ww=windows[id];if(ww!==w)return;delete windows[id];try{sendChat('AD5 Spell Effects','/w gm Реакция ('+esc(t.get('name'))+'): нет ответа 90 с — пропущена.',null,{noarchive:true});}catch(ignore){}try{w.pass();}catch(e){log('AD5 Spell Effects: '+(e.message||e));}},90000);
  var html='Реакция · '+esc(t.get('name'));
  options.forEach(function(o,i){html+=' ['+esc(o.name)+' · '+o.level+' круг](!ad5spell react '+id+' '+i+')';});html+=' [Пропустить](!ad5spell pass '+id+')';notify(t,html);return true;
 }
