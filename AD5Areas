@@ -1,6 +1,8 @@
 /* Disable old Areas before installing this guarded module. */
 if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skipped.');}else{
-/* AD5 Areas 2.30.1 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
+/* AD5 Areas 2.30.2 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
+ * 2.30.2: МУВ при принудительном перемещении (ТОЛЧ/ТЯГ) — урон за путь (Шипы) запускается после
+ *          завершения атаки; «МУВ: 1д4 колющий, добровольно» — только при добровольном движении.
  * 2.30.1: область, чей путь или носитель исчез при выключенной песочнице, снимает свои ПАСС-эффекты и внешнюю область Environment.
  * 2.30.0: шаблон «полукруг» (10 фт полукруг — взмах вокруг атакующего, центр в центре токена); атака по области
  *          (бросок атаки по каждой цели) не задевает атакующего.
@@ -92,7 +94,7 @@ if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skip
  */
 var AD5Areas=(function(){
     'use strict';
-    var VERSION='2.30.1';
+    var VERSION='2.30.2';
     var resolutionSequence=0;
     function nextResolutionId(prefix){return String(prefix||'area')+':'+Date.now().toString(36)+':'+(++resolutionSequence);}
     function root(){
@@ -1246,6 +1248,9 @@ var AD5Areas=(function(){
     }
     function movementRule(body){
         body=String(body||'').replace(/^[\s,;:.—–-]+|[\s,;:.—–-]+$/g,'').trim();
+        // 2.30.2: «добровольно» — МУВ только при добровольном движении (не при толчке/притягивании).
+        var voluntary=/(?:^|[\s,;(])(?:только\s+)?добровольн[а-яё]*\)?/i.test(body);
+        if(voluntary){body=body.replace(/[\s,;]*\(?(?:только\s+)?добровольн[а-яё]*\)?/ig,'').trim();var vr=movementRule(body);if(vr)vr.voluntaryOnly=true;return vr;}
         if(!body)return null;
         // Formula first; optional explicit damage type may follow it.
         // Examples: "1д4", "2d6 + 3", "1д4 колющий".
@@ -1293,7 +1298,7 @@ var AD5Areas=(function(){
                 throw new Error('ПАСС требует AD5 Effect Turns 1.2.1 или новее.');
             if(typeof AD5EffectTurns.validatePassive==='function')AD5EffectTurns.validatePassive(passText);
         }
-        if(rules.move)rules.move=movementAreaApi().prepareMovement(snapshot,rules.move);
+        if(rules.move){var volOnly=!!rules.move.voluntaryOnly;rules.move=movementAreaApi().prepareMovement(snapshot,rules.move);if(volOnly&&rules.move)rules.move.voluntaryOnly=true;}
     }
     // ---------- Non-stacking identical persistent areas (2.23.3) ----------
     // Two areas are considered the same EFFECT when their lifecycle mechanics are
@@ -2587,6 +2592,11 @@ var AD5Areas=(function(){
     }
     function triggerMovementRule(rec,path,token,points,movementContext,pageObj){
         if(!rec||!rec.rules||!rec.rules.move||!path||!token)return 0;
+        // 2.30.2: принудительное перемещение (ТОЛЧ/ТЯГ, перенос захваченного). Урон за путь
+        // (Шипы: «за каждые 5 фт перемещения») — действует и при нём; МУВ с пометкой
+        // «добровольно» — нет. Стоимость движения при принудительном перемещении не списывается.
+        var forcedMove=!!(movementContext&&movementContext.mode==='forced');
+        if(forcedMove&&rec.rules.move.voluntaryOnly)return 0;
         // МУВ is always damaging in the current syntax.  The physical token
         // holding a concentration aura is completely immune to its own aura
         // damage, including movement damage.
@@ -2605,8 +2615,19 @@ var AD5Areas=(function(){
         if(after>0)rec.moveProgress[token.id]=after;else delete rec.moveProgress[token.id];
         if(movementContext&&movementContext.movementTxn)recordMoveProgress(movementContext.movementTxn,rec.id,token.id,before,after);
         if(triggers>0){
-            var totalFeet=triggers*5;
-            try{movementAreaApi().triggerMovement(rec.snapshot,rec.rules.move,token.id,'МУВ · '+String(totalFeet)+' фт',{movementTxn:(movementContext&&movementContext.movementTxn)?movementContext.movementTxn:null,moveRepeats:triggers});}
+            var totalFeet=triggers*5,moveTxn=(movementContext&&movementContext.movementTxn)?movementContext.movementTxn:null,label='МУВ · '+String(totalFeet)+' фт'+(forcedMove?' (принудительно)':'');
+            // Толчок выполняется внутри обработки атаки — урон области запускается после неё,
+            // иначе вложенная обработка урона во время незавершённой атаки терялась.
+            if(forcedMove){
+                var recId=rec.id,tokId=token.id;
+                setTimeout(function(){
+                    var live=persistentDb()[recId],liveTok=getObj('graphic',tokId);if(!live||!liveTok)return;
+                    try{movementAreaApi().triggerMovement(live.snapshot,live.rules.move,tokId,label,{movementTxn:moveTxn,moveRepeats:triggers});}
+                    catch(e2){sendChat('Области','/w gm <b>'+escape(live.name)+'</b> · МУВ · '+escape(liveTok.get('name')||tokId)+': '+escape(e2.message||e2),null,{noarchive:true});}
+                },0);
+                return triggers;
+            }
+            try{movementAreaApi().triggerMovement(rec.snapshot,rec.rules.move,token.id,label,{movementTxn:moveTxn,moveRepeats:triggers});}
             catch(e){tell(rec.owner,'<b>'+escape(rec.name)+'</b> · МУВ: '+escape(e.message||e));sendChat('Области','/w gm <b>'+escape(rec.name)+'</b> · МУВ · '+escape(token.get('name')||token.id)+': '+escape(e.message||e),null,{noarchive:true});}
         }
         return triggers;

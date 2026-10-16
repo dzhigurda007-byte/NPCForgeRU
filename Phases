@@ -2,19 +2,20 @@
 if(typeof AD5Phases!=='undefined'&&AD5Phases) {
     log('AD5Phases: duplicate module skipped; keep one installed copy.');
 } else {
-/* AD5 Phases 1.1.6 — КАСТ, НАЧК/НАЧИ, НАЧТ, КНЦИ, КНЦТ, ОКОН, ОСВОБ, ВХОД, ВЫХОД, ОБЛН, ОБЛК, ПАСС, МУВ.
+/* AD5 Phases 1.1.7 — КАСТ, НАЧК/НАЧИ, НАЧТ, КНЦИ, КНЦТ, ОКОН, ОСВОБ, ВХОД, ВЫХОД, ОБЛН, ОБЛК, ПАСС, МУВ.
  * 1.1.6: эффект, у которого удалены все токены-цели, завершается.
  * 1.1.5: «РОСТ 1д6» in a phase adds that much damage for every turn the caster has kept
  * concentration (Delayed Blast Fireball: «ОКОН: ПРВ: Урон1, РОСТ 1д6; УСП: Урон1, половина урона, РОСТ 1д6»).
  * 1.1.2: explicit НАЧТ overrides legacy «Каждый ход»; НАЧК is the preferred
  * caster/source-start label, while НАЧИ remains a backwards-compatible alias.
+ * 1.1.7: «МУВ: … добровольно» — урон только при добровольном движении (не при толчке/притягивании).
  * 1.1.4: МУВ is included in has(); a move-only phase now enters the phase/persistent-area pipeline correctly.
  * Requires AD5 4.3.6+, Areas 2.16.0+, Effect Turns 1.2.0+.
  * И = source turn, Т = affected target turn. ОСВОБ is a voluntary action check.
  */
 var AD5Phases=(function(){
     'use strict';
-    var VERSION='1.1.6',seq=0,ending={},boundaryQueues={};
+    var VERSION='1.1.7',seq=0,ending={},boundaryQueues={};
     var labels={cast:'КАСТ',sourceStart:'НАЧК',turn:'НАЧТ',sourceEnd:'КНЦИ',targetEnd:'КНЦТ',end:'ОКОН',entry:'ВХОД',exit:'ВЫХОД',areaStart:'ОБЛН',areaEnd:'ОБЛК',passive:'ПАСС',move:'МУВ',recovery:'ОСВОБ'};
     function copy(x){return x==null?x:JSON.parse(JSON.stringify(x));}
     function text(s){
@@ -95,9 +96,12 @@ var AD5Phases=(function(){
                 else throw new Error('Фаза '+labels[x.kind]+' указана дважды.');
             }
             if(x.kind==='move'){
+                // 1.1.7: «МУВ: 1д4 колющий, добровольно» — только добровольное движение (не толчок/притягивание).
+                var voluntary=/(?:^|[\s,;(])(?:только\s+)?добровольн[а-яё]*\)?/i.test(body);if(voluntary)body=body.replace(/[\s,;]*\(?(?:только\s+)?добровольн[а-яё]*\)?/ig,'').trim();
                 var b=branch(body);if(b.extra.length===1&&!b.refs.length&&!b.effects.length)out.move={formula:b.extra[0].expression,damageType:b.extra[0].type,raw:body};
                 else if(/^[0-9dдк+*\/().\s-]+$/i.test(body))out.move={formula:body.replace(/[кд]/gi,'d'),raw:body};
                 else throw new Error('МУВ: ожидается формула, например 1д4 колющий.');
+                if(out.move&&voluntary)out.move.voluntaryOnly=true;
             }else if(x.kind==='recovery'){
                 var rm=/^(.+?)\s*[,;]\s*ПРОВЕРКА\s+(?:(СИЛ|ЛОВ|ТЕЛ|ИНТ|МДР|ХАР)\s*(\d{1,2})|(\d{1,2})\s*(СИЛ|ЛОВ|ТЕЛ|ИНТ|МДР|ХАР))\s*[,;]\s*(.*)$/i.exec(body);
                 if(!rm)throw new Error('ОСВОБ: опутан, ПРОВЕРКА СИЛ19, ПРВ: 1д6 колющий');
