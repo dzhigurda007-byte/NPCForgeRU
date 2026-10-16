@@ -3,7 +3,8 @@ if(typeof AD5FX!=='undefined'&&AD5FX) {
     log('AD5FX: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 FX 1.3.1 — визуальные эффекты боя и пинг активного хода.
+ * AD5 FX 1.3.2 — визуальные эффекты боя и пинг активного хода.
+ * 1.3.2: смена хода — через AD5 Turns (единая граница хода, записи трекера скриптами видны).
  *
  * Эффекты (по событиям AD5 События) — встроенные эффекты Roll20 (размер 100%).
  * !ad5vfx size 10–99 — уменьшенные копии: скрипт создаёт «свои эффекты» (custfx) с
@@ -29,7 +30,7 @@ if(typeof AD5FX!=='undefined'&&AD5FX) {
  */
 var AD5FX=AD5FX||(function(){
     'use strict';
-    var VERSION='1.3.1',SCRIPT='AD5 FX';
+    var VERSION='1.3.2',SCRIPT='AD5 FX';
     var FX_PER_SECOND=12,fxWindow=0,fxCount=0;
     var TYPE_COLORS=[
         [/огон|fire/,'fire'],[/холод|cold|frost/,'frost'],[/кислот|acid/,'acid'],[/яд|poison/,'slime'],
@@ -184,7 +185,9 @@ var AD5FX=AD5FX||(function(){
             AD5События.подписаться('ПОПАДАНИЕ',function(e){try{onHit(e||{});}catch(err){log(SCRIPT+': '+err.message);}});
             AD5События.подписаться('ЦЕЛЬ УМЕРЛА',function(e){try{onDeath(e||{});}catch(err){log(SCRIPT+': '+err.message);}});
         }
-        on('change:campaign:turnorder',function(){try{turnChanged();}catch(e){log(SCRIPT+': '+e.message);}});
+        // AD5 Turns: смена хода — через единый детектор (без него — обработчик Roll20, как раньше).
+        function ad5OnTurn(name,order,fn){var hooked=false;function hook(){if(hooked)return true;if(typeof AD5Turns!=='undefined'&&AD5Turns&&typeof AD5Turns.subscribe==='function'){AD5Turns.subscribe(name,function(i){fn(Campaign(),{turnorder:i.beforeRaw},i);},order);hooked=true;}return hooked;}if(!hook())setTimeout(function(){if(!hook())on('change:campaign:turnorder',function(c,p){fn(c,p,null);});},0);}
+        ad5OnTurn('Effects',80,function(c,p,i){if(i&&!i.newTurn)return;try{turnChanged();}catch(e){log(SCRIPT+': '+e.message);}});
         on('destroy:graphic',function(g){if(g.id===activeId)activeId='';});
         on('chat:message',function(msg){if(msg.type==='api'&&/^!ad5vfx(?:\s|$)/i.test(msg.content||''))command(msg);});
         log(SCRIPT+' '+VERSION+' ready.'+(ev?'':' Нет AD5 События — эффекты урона отключены.'));

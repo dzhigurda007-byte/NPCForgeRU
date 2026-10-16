@@ -3,7 +3,8 @@ if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
     log('AD5EffectTurns: duplicate module skipped; keep one installed copy.');
 } else {
 /*
-AD5 Effect Turns 1.6.27
+AD5 Effect Turns 1.6.28
+1.6.28: смена хода — через AD5 Turns (единая граница хода, записи трекера скриптами видны).
 1.6.27: Сл Убежища — Сл заклинаний заклинателя (число в тексте — только если её нет на листе).
 1.6.26: «КД 19» / «Атака 19» (статический бонус больше 10) не применяются — раньше это давало постоянные +19 к КД; кнопки восстановления ищутся по листу, а не по всей кампании; условные события пропускают записи без условных эффектов.
 1.6.25: модификаторы «видение невидимого» и «истинное зрение [N фт]»; изменения эффектов передаются AD5 Visibility (невидимость, «Видение невидимого», «Истинное зрение» — сразу пересчёт скрытности и поля зрения).
@@ -74,7 +75,7 @@ var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5
 // silently shadow every newer fix.
 var AD5EffectTurns = (function () {
     'use strict';
-    var VERSION='1.6.27', SCRIPT='AD5 Effect Turns',MAX_FLAT_MODIFIER=10;
+    var VERSION='1.6.28', SCRIPT='AD5 Effect Turns',MAX_FLAT_MODIFIER=10;
     var runtimeLastGroup=Object.create(null);
     var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
     var markerCacheRaw=null, markerCacheByName=Object.create(null);
@@ -2971,9 +2972,11 @@ var AD5EffectTurns = (function () {
         }catch(e){sendChat(SCRIPT,'/w gm Ошибка: '+esc(e.message||e));}
     }
 
-    on('change:campaign:turnorder',turnChanged);
+    // AD5 Turns: смена хода — через единый детектор (без него — обработчик Roll20, как раньше).
+    function ad5OnTurn(name,order,fn){var hooked=false;function hook(){if(hooked)return true;if(typeof AD5Turns!=='undefined'&&AD5Turns&&typeof AD5Turns.subscribe==='function'){AD5Turns.subscribe(name,function(i){fn(Campaign(),{turnorder:i.beforeRaw},i);},order);hooked=true;}return hooked;}if(!hook())setTimeout(function(){if(!hook())on('change:campaign:turnorder',function(c,p){fn(c,p,null);});},0);}
+    ad5OnTurn('Effect Turns',10,turnChanged);
     // 1.6.16: «инициатива +1д8» — a new Turn Tracker entry of the bearer gets the bonus once.
-    on('change:campaign:turnorder',function(campaign,prev){
+    ad5OnTurn('Effect Turns · инициатива',5,function(campaign,prev){
         try{
             var order=JSON.parse(Campaign().get('turnorder')||'[]')||[],before=[];try{before=JSON.parse((prev&&prev.turnorder)||'[]')||[];}catch(ignorePrev){}
             var had={};before.forEach(function(x){had[String(x.id)]=true;});var changed=false,notes=[],applied=root().initiativeApplied=root().initiativeApplied||{};
@@ -2988,7 +2991,7 @@ var AD5EffectTurns = (function () {
             });
             // 1.6.23: после сортировки текущий ход остаётся первым — order[0] в Roll20 и есть
             // активный ход; раньше сортировка молча передавала ход самому высокому.
-            if(changed){var current=order[0];order.sort(function(a,b){return Number(b.pr)-Number(a.pr);});var ci=order.indexOf(current);if(ci>0)order=order.slice(ci).concat(order.slice(0,ci));Campaign().set('turnorder',JSON.stringify(order));sendChat(SCRIPT,'/w gm Инициатива: '+notes.join(', ')+'.');}
+            if(changed){var current=order[0];order.sort(function(a,b){return Number(b.pr)-Number(a.pr);});var ci=order.indexOf(current);if(ci>0)order=order.slice(ci).concat(order.slice(0,ci));var beforeSort=Campaign().get('turnorder');Campaign().set('turnorder',JSON.stringify(order));try{if(typeof AD5Turns!=='undefined'&&AD5Turns&&AD5Turns.written)AD5Turns.written(beforeSort);}catch(ignoreTurns){}sendChat(SCRIPT,'/w gm Инициатива: '+notes.join(', ')+'.');}
         }catch(ignoreInit){}
     });
     on('change:campaign:playerpageid',function(){clearAllRecoveryAbilities();runtimeLastGroup=Object.create(null);initCurrentTurn();migrateLegacyDirectEffects();});

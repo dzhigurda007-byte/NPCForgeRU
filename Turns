@@ -1,0 +1,93 @@
+/* Installation guard: disable old unguarded versions before installing. */
+if(typeof AD5Turns!=='undefined'&&AD5Turns) {
+    log('AD5Turns: duplicate module skipped; keep one installed copy.');
+} else {
+/*
+ * AD5 Turns 1.0.0 — единый детектор смены хода для всех модулей AD5.
+ *
+ * Раньше каждый модуль сам слушал change:campaign:turnorder и по-своему решал, что
+ * считать сменой хода (смена верхней строки, группы NPC, поворот трекера, любое изменение).
+ * Теперь трекер разбирается один раз, граница хода считается одинаково для всех, и
+ * подписчики вызываются в постоянном порядке.
+ *
+ * Граница хода (newTurn): сменилась ГРУППА верхней строки трекера — для токена ключ группы
+ * NPC Group Initiative (NPC одного имени — одна группа, персонаж — свой токен), для
+ * пользовательской строки (id −1) — её текст. Правка инициативы, добавление и удаление
+ * строк без смены верхней группы ходом не считаются.
+ *
+ * Изменения трекера скриптами (Campaign().set('turnorder')) событий Roll20 не порождают —
+ * такой скрипт вызывает AD5Turns.written(старое значение), и подписчики получают то же событие.
+ *
+ * API:
+ *   AD5Turns.subscribe(имя, fn(info), порядок)  — порядок: меньше — раньше (по умолчанию 50)
+ *   AD5Turns.written(beforeRaw)                 — трекер изменён скриптом
+ *   AD5Turns.info()                             — текущее состояние (без вызова подписчиков)
+ * info: {seq, source:'event'|'api', beforeRaw, afterRaw, before[], after[], prevRow, newRow,
+ *        prevToken, newToken, prevGroup, newGroup, topChanged, groupChanged, newTurn,
+ *        rotation, round, pageId}
+ * Команда (GM): !ad5turns — подписчики и последнее событие.
+ */
+var AD5Turns=AD5Turns||(function(){
+    'use strict';
+    var VERSION='1.0.0',SCRIPT='AD5 Turns',subs=[],seq=0,dispatching=false,queue=[],round=1,lastInfo=null;
+    function parse(raw){if(Array.isArray(raw))return raw;try{var a=JSON.parse(String(raw==null||raw===''?'[]':raw));return Array.isArray(a)?a:[];}catch(e){return [];}}
+    function rowKey(r){return r?String(r.id==null?'':r.id)+'|'+String(r.custom||''):'';}
+    function tokenOf(r){return r&&String(r.id)!=='-1'?getObj('graphic',String(r.id||''))||null:null;}
+    function groupKeyOfRow(r){
+        if(!r)return '';
+        var t=tokenOf(r);
+        if(t){try{if(typeof NPCGroupInitiative!=='undefined'&&NPCGroupInitiative&&typeof NPCGroupInitiative.groupKey==='function')return String(NPCGroupInitiative.groupKey(t)||('token:'+t.id));}catch(ignore){}return 'token:'+t.id;}
+        if(String(r.id)==='-1')return 'custom:'+String(r.custom||'').trim().toLowerCase();
+        return 'row:'+rowKey(r);
+    }
+    function isRotation(before,after){
+        if(before.length!==after.length||before.length<2)return false;
+        for(var i=0;i<after.length;i++)if(rowKey(after[i])!==rowKey(before[(i+1)%before.length]))return false;
+        return true;
+    }
+    function build(beforeRaw,afterRaw,source){
+        var before=parse(beforeRaw),after=parse(afterRaw),pr=before[0]||null,nr=after[0]||null;
+        var prevGroup=groupKeyOfRow(pr),newGroup=groupKeyOfRow(nr),groupChanged=prevGroup!==newGroup,newTurn=groupChanged&&!!nr;
+        if(!after.length)round=1;
+        // Новый раунд: трекер повернулся, и наверх вернулась строка с наибольшей инициативой.
+        else if(newTurn&&pr&&nr&&isRotation(before,after)&&Number(nr.pr)>Number(pr.pr))round++;
+        return {seq:++seq,source:source,beforeRaw:typeof beforeRaw==='string'?beforeRaw:JSON.stringify(before),afterRaw:typeof afterRaw==='string'?afterRaw:JSON.stringify(after),
+            before:before,after:after,prevRow:pr,newRow:nr,prevToken:tokenOf(pr),newToken:tokenOf(nr),prevGroup:prevGroup,newGroup:newGroup,
+            topChanged:rowKey(pr)!==rowKey(nr),groupChanged:groupChanged,newTurn:newTurn,rotation:isRotation(before,after),round:round,
+            pageId:String(Campaign().get('playerpageid')||'')};
+    }
+    function dispatch(info){
+        lastInfo=info;
+        subs.slice().forEach(function(s){
+            try{s.fn(info);}catch(e){log(SCRIPT+' · '+s.name+': '+(e&&e.stack||e));}
+        });
+    }
+    // Подписчик может сам изменить трекер и вызвать written — такое событие обрабатывается
+    // после текущего, а не вложенно.
+    function emit(beforeRaw,afterRaw,source){
+        queue.push([beforeRaw,afterRaw,source]);if(dispatching)return;
+        dispatching=true;
+        try{while(queue.length){var q=queue.shift();if(String(q[0]==null?'':q[0])===String(q[1]==null?'':q[1])&&q[2]==='api')continue;dispatch(build(q[0],q[1],q[2]));}}
+        finally{dispatching=false;}
+    }
+    function subscribe(name,fn,order){
+        if(typeof fn!=='function')return false;
+        subs.push({name:String(name||'?'),fn:fn,order:Number.isFinite(Number(order))?Number(order):50,idx:subs.length});
+        subs.sort(function(a,b){return a.order-b.order||a.idx-b.idx;});
+        return true;
+    }
+    function written(beforeRaw){emit(beforeRaw,Campaign().get('turnorder'),'api');}
+    function info(){var raw=Campaign().get('turnorder');return build(raw,raw,'status');}
+    on('change:campaign:turnorder',function(c,prev){emit(prev&&prev.turnorder,c.get('turnorder'),'event');});
+    on('ready',function(){
+        on('chat:message',function(msg){
+            if(msg.type!=='api'||!/^!ad5turns(?:\s|$)/i.test(msg.content||'')||!playerIsGM(msg.playerid))return;
+            var li=lastInfo,lines=['<b>'+SCRIPT+' '+VERSION+'</b> · раунд '+round+' · подписчиков: '+subs.length,subs.map(function(s){return s.order+' '+s.name;}).join(', ')];
+            if(li)lines.push('Последнее событие #'+li.seq+' ('+li.source+'): '+(li.newTurn?'<b>новый ход</b> ':'')+(li.prevGroup||'—')+' → '+(li.newGroup||'—'));
+            sendChat(SCRIPT,'/w gm '+lines.join('<br>'),null,{noarchive:true});
+        });
+        log(SCRIPT+' '+VERSION+' ready.');
+    });
+    return {version:VERSION,subscribe:subscribe,written:written,info:info,groupKeyOfRow:groupKeyOfRow,rowKey:rowKey};
+}());
+}

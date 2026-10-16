@@ -4,7 +4,8 @@ if(typeof NPCGroupInitiative!=='undefined'&&NPCGroupInitiative) {
 } else {
 /*
  * NPC Group Initiative for Roll20
- * Version 1.3.2
+ * Version 1.3.5
+ * 1.3.5: после записи трекера сообщает AD5 Turns (модули видят смену хода от !npc-init).
  *
  * Main command:
  *   !npc-init
@@ -27,7 +28,7 @@ var NPCGroupInitiative = NPCGroupInitiative || (function () {
     'use strict';
 
     var SCRIPT = 'NPC Group Initiative';
-    var VERSION = '1.3.4';
+    var VERSION = '1.3.5';
     var STATE_KEY = 'NPCGroupInitiative';
 
     function stateData() {
@@ -417,10 +418,13 @@ var NPCGroupInitiative = NPCGroupInitiative || (function () {
         // Roll20 documentation requires initiativepage and every turn item's
         // _pageid to point to the same page. Set both properties atomically so
         // opening/switching the tracker cannot clear the newly written order.
+        // 1.3.5: запись через API не порождает событие Roll20 — сообщаем AD5 Turns (смена хода для всех модулей).
+        var turnsBefore = Campaign().get('turnorder');
         Campaign().set({
             initiativepage: pid,
             turnorder: JSON.stringify(finalOrder)
         });
+        try { if (typeof AD5Turns !== 'undefined' && AD5Turns && AD5Turns.written) AD5Turns.written(turnsBefore); } catch (ignoreTurns) {}
 
         // Let Roll20 commit, then verify the exact token rows were retained.
         setTimeout(function () {
@@ -525,10 +529,13 @@ var NPCGroupInitiative = NPCGroupInitiative || (function () {
 
         stateData().managedTokenIds = [];
 
+        // 1.3.5: запись через API не порождает событие Roll20 — сообщаем AD5 Turns (смена хода для всех модулей).
+        var turnsBefore = Campaign().get('turnorder');
         Campaign().set({
             initiativepage: pid,
             turnorder: JSON.stringify(turns)
         });
+        try { if (typeof AD5Turns !== 'undefined' && AD5Turns && AD5Turns.written) AD5Turns.written(turnsBefore); } catch (ignoreTurns) {}
         gm('NPC-записи этого скрипта удалены из Turn Tracker.');
     }
 

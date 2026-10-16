@@ -73,6 +73,7 @@ hp листа используется однократно как началь�
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
 4.3.163: классовые механики — атрибут листа ad5_features: КРИТ 19/18, КРИТ КОСТИ, ПЕРЕБРОС УРОНА, СКРЫТАЯ АТАКА, РАЗ В ХОД, УРОН ЗАКЛИНАНИЙ/ШКОЛЫ, ЛУЧ, ЛЕЧЕНИЕ ЗАКЛИНАНИЙ; ПОСЛЕ ПОПАДАНИЯ — кнопки с расходом ячейки или ресурса (!ad5 posthit). ЯРОСТЬ, НЕУДЕРЖИМАЯ ЯРОСТЬ (!ad5 relentless-reset), ПРИ УБИЙСТВЕ [ЗАКЛИНАНИЕМ]; метамагия (!ad5 meta: Усиленное, Продлённое, Удвоенное, Осторожное), ФОРМИРОВАНИЕ ЗАКЛИНАНИЙ; спасбросок может быть автоуспешным. Описание — docs/class-features.md.
+4.3.180: смена хода — через AD5 Turns (единая граница хода для всех модулей; выданные заклинания, лёгкие раны и счётчики «раз в ход» больше не срабатывают на правке трекера).
 4.3.179: итоговая карточка атаки без ответа Roll20 завершается сообщением через 15 с; Сл Убежища — от заклинателя (Effect Turns 1.6.27).
 4.3.178: лучи «СНРПОП: АТАКА» (Палящий луч, Мистический заряд) берут бонус атаки из броска карточки (раньше — только spell_attack_bonus, у NPC часто пустой → +0); КД цели луча — первое число атрибута; переброс атаки реакцией учитывает КРИТ 19; ошибка после реакции на урон не останавливает пачку лучей; бонус КД Парирования действует против одной атаки; перед действием поднимаются только закрытые токены; удалён неиспользуемый код миграций.
 4.3.177: AD5 Counters получает описание и имя текущей атаки (СЧЁТТРАТА — заряды счётчиков в урон этой атаки).
@@ -808,7 +809,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.179', diagnostics = [], debug = false;
+    var VERSION = '4.3.180', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -4779,7 +4780,9 @@ var AD5 = (function () {
     function attackedLastTurn(srcId,tgtId){
         var list=((attackLog[String(srcId||'')]||{})[String(tgtId||'')])||[],seq=Number(attackTurnSeq[String(srcId||'')]||0);return list.indexOf(seq-1)>=0;
     }
-    on('change:campaign:turnorder',function(){try{var order=JSON.parse(Campaign().get('turnorder')||'[]')||[];var top=order.length?String(order[0].id||''):'';if(top&&top!=='-1'&&top!==attackLastTop){attackTurnSeq[top]=Number(attackTurnSeq[top]||0)+1;}attackLastTop=top;}catch(ignoreAttackSeq){}});
+    // AD5 Turns: смена хода — через единый детектор (без него — обработчик Roll20, как раньше).
+    function ad5OnTurn(name,order,fn){var hooked=false;function hook(){if(hooked)return true;if(typeof AD5Turns!=='undefined'&&AD5Turns&&typeof AD5Turns.subscribe==='function'){AD5Turns.subscribe(name,function(i){fn(Campaign(),{turnorder:i.beforeRaw},i);},order);hooked=true;}return hooked;}if(!hook())setTimeout(function(){if(!hook())on('change:campaign:turnorder',function(c,p){fn(c,p,null);});},0);}
+    ad5OnTurn('AutoDamage · атаки',70,function(c,p,i){if(i&&!i.newTurn)return;try{var order=JSON.parse(Campaign().get('turnorder')||'[]')||[];var top=order.length?String(order[0].id||''):'';if(top&&top!=='-1'&&top!==attackLastTop){attackTurnSeq[top]=Number(attackTurnSeq[top]||0)+1;}attackLastTop=top;}catch(ignoreAttackSeq){}});
     function grappleRefsOf(token){try{if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine&&typeof AD5ConditionEngine.grapplesOf==='function')return AD5ConditionEngine.grapplesOf(token)||[];}catch(ignoreGrapple){}return [];}
     function sourceClauseMatches(token,c){
         var m;
@@ -5567,7 +5570,8 @@ var AD5 = (function () {
             if(g.rounds!==null&&g.rounds!==undefined&&top&&top===String(g.tokenId)){g.rounds=Number(g.rounds)-1;if(g.rounds<=0)revokeGrant(k,'время вышло');}
         });
     }
-    on('change:campaign:turnorder',function(){setTimeout(function(){try{grantsTurnCheck();}catch(ignoreGrants){}},500);});
+    // 4.3.180: выданные заклинания считают ходы только на смене хода (раньше — на любой правке трекера).
+    ad5OnTurn('AutoDamage · выданные заклинания',71,function(c,p,i){if(i&&!i.newTurn)return;setTimeout(function(){try{grantsTurnCheck();}catch(ignoreGrants){}},500);});
     function chainCommand(pid,id){
         var rec=chains[String(id||'')];if(!rec)throw new Error('Перескок недоступен: кнопка устарела.');
         if(rec.pid!==pid&&!playerIsGM(pid))throw new Error('Перескок может сделать только заклинатель.');
@@ -7617,11 +7621,15 @@ var AD5 = (function () {
         for(var i=0;i<before.length-1;i++)if(turnRowKey(after[i])!==turnRowKey(before[i+1]))return false;
         return turnRowKey(after[after.length-1])===turnRowKey(before[0]);
     }
-    function lightWoundTurnStart(campaign,prev){
+    function lightWoundTurnStart(campaign,prev,turnInfo){
         var after=parseTurnOrder(Campaign().get('turnorder')),before=parseTurnOrder(prev&&prev.turnorder);
-        if(!after.length||!isNextTurnRotation(before,after))return;
-        // 4.3.175: одна запись в трекере «поворачивается» в саму себя при любой правке — это не новый ход.
-        if(after.length===1&&String(after[0].pr)!==String(before[0]&&before[0].pr))return;
+        // 4.3.180: граница хода — общая (AD5 Turns: сменилась группа наверху трекера).
+        if(turnInfo){if(!turnInfo.newTurn||!after.length)return;}
+        else{
+            if(!after.length||!isNextTurnRotation(before,after))return;
+            // 4.3.175: одна запись в трекере «поворачивается» в саму себя при любой правке — это не новый ход.
+            if(after.length===1&&String(after[0].pr)!==String(before[0]&&before[0].pr))return;
+        }
         var row=after[0];
         if(!row||!row.id||row.id==='-1')return;
         var token=getObj('graphic',row.id);
@@ -8963,7 +8971,7 @@ var AD5 = (function () {
     //   ЛУЧ Мистический заряд: +ХАР — к каждому лучу заклинания (Мучительный взрыв);
     //   ЛЕЧЕНИЕ ЗАКЛИНАНИЙ: +2+КРУГ — к лечению заклинаниями 1+ круга (Последователь жизни).
     var featureTurnSeq=0,featureUsed={};
-    on('change:campaign:turnorder',function(){try{var order=JSON.parse(Campaign().get('turnorder')||'[]')||[];var top=order.length?String(order[0].id||''):'';if(top&&top!==featureLastTop)featureTurnSeq++;featureLastTop=top;}catch(ignoreFeatureSeq){}});
+    ad5OnTurn('AutoDamage · умения',72,function(c,p,i){if(i&&!i.newTurn)return;try{var order=JSON.parse(Campaign().get('turnorder')||'[]')||[];var top=order.length?String(order[0].id||''):'';if(top&&top!==featureLastTop)featureTurnSeq++;featureLastTop=top;}catch(ignoreFeatureSeq){}});
     var featureLastTop='';
     function actorFeatureLines(cid){
         cid=String(cid||'');if(!cid)return [];var raw='';try{raw=String(getAttrByName(cid,'ad5_features')||'');}catch(ignoreFeatures){}
@@ -9699,12 +9707,12 @@ var AD5 = (function () {
         },0);
     });
     on('destroy:path', function(){scheduleCombatFront('destroy-path');});
-    on('change:campaign:turnorder', lightWoundTurnStart);
+    ad5OnTurn('AutoDamage · лёгкие раны',73,lightWoundTurnStart);
 
     // 4.2.44: every Turn Tracker change immediately reasserts combat-token
     // z-order.  A second delayed pass is intentional: Roll20 or another script
     // may finish its own turn-change rendering just after this event.
-    on('change:campaign:turnorder', function(){
+    ad5OnTurn('AutoDamage · порядок слоёв',74,function(){
         try{
             var rawTurnMemory=Campaign().get('turnorder'),turnMemory=rawTurnMemory?JSON.parse(rawTurnMemory):[];
             var activeMemory=turnMemory&&turnMemory[0]&&getObj('graphic',turnMemory[0].id);

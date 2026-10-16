@@ -1,6 +1,7 @@
 /* Disable old Areas before installing this guarded module. */
 if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skipped.');}else{
-/* AD5 Areas 2.30.2 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
+/* AD5 Areas 2.30.3 — площадные эффекты, ауры и ПАСС для AD5 4.3.15+.
+ * 2.30.3: смена хода — через AD5 Turns (единая граница хода, записи трекера скриптами видны).
  * 2.30.2: МУВ при принудительном перемещении (ТОЛЧ/ТЯГ) — урон за путь (Шипы) запускается после
  *          завершения атаки; «МУВ: 1д4 колющий, добровольно» — только при добровольном движении.
  * 2.30.1: область, чей путь или носитель исчез при выключенной песочнице, снимает свои ПАСС-эффекты и внешнюю область Environment.
@@ -94,7 +95,7 @@ if(typeof AD5Areas!=='undefined'&&AD5Areas){log('AD5Areas: duplicate module skip
  */
 var AD5Areas=(function(){
     'use strict';
-    var VERSION='2.30.2';
+    var VERSION='2.30.3';
     var resolutionSequence=0;
     function nextResolutionId(prefix){return String(prefix||'area')+':'+Date.now().toString(36)+':'+(++resolutionSequence);}
     function root(){
@@ -3222,7 +3223,9 @@ var AD5Areas=(function(){
     });
     on('change:graphic',movementChanged);
     on('change:graphic',heightChangedFromGraphic);
-    on('change:campaign:turnorder',persistentTurnChanged);
+    // AD5 Turns: смена хода — через единый детектор (без него — обработчик Roll20, как раньше).
+    function ad5OnTurn(name,order,fn){var hooked=false;function hook(){if(hooked)return true;if(typeof AD5Turns!=='undefined'&&AD5Turns&&typeof AD5Turns.subscribe==='function'){AD5Turns.subscribe(name,function(i){fn(Campaign(),{turnorder:i.beforeRaw},i);},order);hooked=true;}return hooked;}if(!hook())setTimeout(function(){if(!hook())on('change:campaign:turnorder',function(c,p){fn(c,p,null);});},0);}
+    ad5OnTurn('Areas',45,persistentTurnChanged);
     function areaPathChanged(path){
         var rec=persistentDb()[path.id];if(!rec)return;
         rec.pathType=pathObjectType(path);rec.page=pathPage(path)||rec.page;

@@ -2,7 +2,8 @@
 if(typeof AD5Phases!=='undefined'&&AD5Phases) {
     log('AD5Phases: duplicate module skipped; keep one installed copy.');
 } else {
-/* AD5 Phases 1.1.7 — КАСТ, НАЧК/НАЧИ, НАЧТ, КНЦИ, КНЦТ, ОКОН, ОСВОБ, ВХОД, ВЫХОД, ОБЛН, ОБЛК, ПАСС, МУВ.
+/* AD5 Phases 1.1.8 — КАСТ, НАЧК/НАЧИ, НАЧТ, КНЦИ, КНЦТ, ОКОН, ОСВОБ, ВХОД, ВЫХОД, ОБЛН, ОБЛК, ПАСС, МУВ.
+ * 1.1.8: смена хода — через AD5 Turns (единая граница хода, записи трекера скриптами видны).
  * 1.1.6: эффект, у которого удалены все токены-цели, завершается.
  * 1.1.5: «РОСТ 1д6» in a phase adds that much damage for every turn the caster has kept
  * concentration (Delayed Blast Fireball: «ОКОН: ПРВ: Урон1, РОСТ 1д6; УСП: Урон1, половина урона, РОСТ 1д6»).
@@ -15,7 +16,7 @@ if(typeof AD5Phases!=='undefined'&&AD5Phases) {
  */
 var AD5Phases=(function(){
     'use strict';
-    var VERSION='1.1.7',seq=0,ending={},boundaryQueues={};
+    var VERSION='1.1.8',seq=0,ending={},boundaryQueues={};
     var labels={cast:'КАСТ',sourceStart:'НАЧК',turn:'НАЧТ',sourceEnd:'КНЦИ',targetEnd:'КНЦТ',end:'ОКОН',entry:'ВХОД',exit:'ВЫХОД',areaStart:'ОБЛН',areaEnd:'ОБЛК',passive:'ПАСС',move:'МУВ',recovery:'ОСВОБ'};
     function copy(x){return x==null?x:JSON.parse(JSON.stringify(x));}
     function text(s){
@@ -271,7 +272,9 @@ var AD5Phases=(function(){
             if(owned(oldRec)&&!owned(newRec))setTimeout(function(){var live=root().instances[id];if(live&&!owned(AD5EffectTurns.snapshot(token.id)))end(id);},0);
         });
     }
-    on('change:campaign:turnorder',function(c,p){try{turnChanged(c,p);}catch(e){sendChat('AD5 Phases','/w gm '+String(e.message).replace(/[<>]/g,''));}});
+    // AD5 Turns: смена хода — через единый детектор (без него — обработчик Roll20, как раньше).
+    function ad5OnTurn(name,order,fn){var hooked=false;function hook(){if(hooked)return true;if(typeof AD5Turns!=='undefined'&&AD5Turns&&typeof AD5Turns.subscribe==='function'){AD5Turns.subscribe(name,function(i){fn(Campaign(),{turnorder:i.beforeRaw},i);},order);hooked=true;}return hooked;}if(!hook())setTimeout(function(){if(!hook())on('change:campaign:turnorder',function(c,p){fn(c,p,null);});},0);}
+    ad5OnTurn('Phases',30,function(c,p){try{turnChanged(c,p);}catch(e){sendChat('AD5 Phases','/w gm '+String(e.message).replace(/[<>]/g,''));}});
     on('chat:message',function(msg){
         if(msg.type!=='api'||!/^!ad5phase\s/.test(msg.content))return;
         try{

@@ -49,7 +49,7 @@ if(typeof AD5ConditionEngine!=='undefined'&&AD5ConditionEngine) {
  */
 var AD5ConditionEngine=(function(){
     'use strict';
-    var VERSION='1.2.21',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
+    var VERSION='1.2.22',SCRIPT='AD5 Condition Engine',syncing=Object.create(null),relationshipCleanupPending=false,movementHookRegistered=false;
     var MARKERS={
         blinded:'bleeding-eye',charmed:'chained-heart',deafened:'half-haze',frightened:'screaming',
         grappled:'grab',incapacitated:'broken-shield',no_reactions:'interdiction',invisible:'ninja-mask',paralyzed:'padlock',
@@ -729,7 +729,9 @@ var AD5ConditionEngine=(function(){
     }
 
     on('chat:message',command);
-    on('change:campaign:turnorder',function(){setTimeout(promptDeathSave,0);});
+    // AD5 Turns: смена хода — через единый детектор (без него — обработчик Roll20, как раньше).
+    function ad5OnTurn(name,order,fn){var hooked=false;function hook(){if(hooked)return true;if(typeof AD5Turns!=='undefined'&&AD5Turns&&typeof AD5Turns.subscribe==='function'){AD5Turns.subscribe(name,function(i){fn(Campaign(),{turnorder:i.beforeRaw},i);},order);hooked=true;}return hooked;}if(!hook())setTimeout(function(){if(!hook())on('change:campaign:turnorder',function(c,p){fn(c,p,null);});},0);}
+    ad5OnTurn('Condition Engine',40,function(c,p,i){if(i&&!i.newTurn)return;setTimeout(promptDeathSave,0);});
     on('add:graphic',function(t){if(isToken(t))setTimeout(function(){syncToken(t);scheduleRelationshipCleanup();},0);});
     on('change:graphic',function(t,prev){
         if(!isToken(t))return;

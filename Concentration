@@ -23,7 +23,7 @@ if(typeof AD5Concentration!=='undefined'&&AD5Concentration) {
  */
 var AD5Concentration=(function(){
     'use strict';
-    var VERSION='1.2.15',SCRIPT='AD5 Concentration',SEQ=0;
+    var VERSION='1.2.16',SCRIPT='AD5 Concentration',SEQ=0;
     var FALLBACK_MARKERS=['overdrive','aura','stopwatch','white-tower'];
     var ACTION_NAME=Array(21).join('\u200b')+'AD5 · Снять концентрацию',ACTION_CMD='!ad5conc endselected',runtimeTurnKey='';
 
@@ -412,7 +412,9 @@ var AD5Concentration=(function(){
     on('chat:message',function(msg){try{if(msg.type==='api')command(msg);else spellCard(msg);}catch(e){gm('Ошибка spellcard: '+esc(e.message||e));}});
     on('destroy:graphic',function(t){var rec=currentForToken(t);if(rec&&rec.sourceToken===t.id)endById(rec.id,'токен заклинателя удалён');});
     on('change:graphic',function(t,prev){try{var hpChanged=String(t.get('bar1_value'))!==String(prev&&prev.bar1_value),statusChanged=String(t.get('statusmarkers'))!==String(prev&&prev.statusmarkers);if((hpChanged||statusChanged)&&currentForToken(t))onStateChange(t);}catch(ignore){}});
-    on('change:campaign:turnorder',function(c,p){try{turnChanged(c,p);}catch(e){gm('Ошибка счётчика концентрации: '+esc(e.message||e));}});
+    // AD5 Turns: смена хода — через единый детектор (без него — обработчик Roll20, как раньше).
+    function ad5OnTurn(name,order,fn){var hooked=false;function hook(){if(hooked)return true;if(typeof AD5Turns!=='undefined'&&AD5Turns&&typeof AD5Turns.subscribe==='function'){AD5Turns.subscribe(name,function(i){fn(Campaign(),{turnorder:i.beforeRaw},i);},order);hooked=true;}return hooked;}if(!hook())setTimeout(function(){if(!hook())on('change:campaign:turnorder',function(c,p){fn(c,p,null);});},0);}
+    ad5OnTurn('Concentration',20,function(c,p){try{turnChanged(c,p);}catch(e){gm('Ошибка счётчика концентрации: '+esc(e.message||e));}});
     on('ready',function(){root();var deduped=enforceSingleActive();clearAllConcentrationActions();Object.keys(root().active).forEach(function(id){var rec=root().active[id];if(rec){syncConcentrationAction(rec.actorId);syncMarkerCounter(rec);}});initTurn();gm('<b>'+SCRIPT+' '+VERSION+'</b> запущен. Концентрация: «КОН»/«КОН N» в Дистанции или штатный {{concentration=1}} spellcard. Одновременно у одного существа действует только одна концентрация; новая автоматически завершает предыдущую. Счётчик берётся из N или Duration. Маркер: overdrive, при занятости — aura/stopwatch. AD5 Transform: Дикая форма подавляет проверки концентрации от урона; Полиморф сохраняет проверки.'+(deduped?' Удалено старых дубликатов концентрации: '+deduped+'.':''));});
     return {version:VERSION,checkDc:checkDc,elapsed:elapsed,claimAction:claimAction,bindSource:bindSource,onDamage:onDamage,onStateChange:onStateChange,end:endById,currentForToken:currentForToken,refreshToken:refreshToken,tooltipLines:tooltipLines,_test:{effectiveActorId:effectiveActorId,rangeConcentration:rangeConcentration,rangeConcentrationTurns:rangeConcentrationTurns,durationToTurns:durationToTurns,sheetSpellConcentration:sheetSpellConcentration,ownerKey:ownerKey,sameConcentrator:sameConcentrator,enforceSingleActive:enforceSingleActive,incapacitated:incapacitated}};
 }());

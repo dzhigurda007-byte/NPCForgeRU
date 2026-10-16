@@ -3,7 +3,8 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
     log('AD5Counters: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Counters 1.4.1 — счётчики-рамки на токенах (заряды способностей).
+ * AD5 Counters 1.4.2 — счётчики-рамки на токенах (заряды способностей).
+ * 1.4.2: смена хода — через AD5 Turns (единая граница хода, записи трекера скриптами видны).
  *
  * 1.4.1: рамка догоняет токен и после перемещений скриптами (толчок, притягивание, телепорт,
  *   откат движения) — сверка через 60 мс после сообщения чата, перемещения или смены хода.
@@ -88,7 +89,7 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
  */
 var AD5Counters=AD5Counters||(function(){
     'use strict';
-    var VERSION='1.4.1',SCRIPT='AD5 Счётчики';
+    var VERSION='1.4.2',SCRIPT='AD5 Счётчики';
     var COLORS={'фиолетовый':'#8a2be2','красный':'#d0312d','синий':'#2f6fdf','голубой':'#3fb6e8','зелёный':'#2fa84f','зеленый':'#2fa84f','жёлтый':'#e8c02f','желтый':'#e8c02f','оранжевый':'#ef7d1a','белый':'transparent','чёрный':'#222222','черный':'#222222','серый':'#8a8a8a','розовый':'#e85fa8'};
     var EVENTS={
         'НАЧАЛО ХОДА':{ev:'НАЧАЛО ХОДА',who:'bearerTurn'},'КОНЕЦ ХОДА':{ev:'КОНЕЦ ХОДА',who:'bearerTurn'},
@@ -689,7 +690,9 @@ var AD5Counters=AD5Counters||(function(){
     var started=false;
     on('change:graphic',function(g,prev){if(!started)return;try{graphicChanged(g,prev);}catch(e){log(SCRIPT+': '+e.message);}scheduleFollow();});
     on('chat:message',function(){if(started)scheduleFollow();});
-    on('change:campaign:turnorder',function(){if(started)scheduleFollow();});
+    // AD5 Turns: смена хода — через единый детектор (без него — обработчик Roll20, как раньше).
+    function ad5OnTurn(name,order,fn){var hooked=false;function hook(){if(hooked)return true;if(typeof AD5Turns!=='undefined'&&AD5Turns&&typeof AD5Turns.subscribe==='function'){AD5Turns.subscribe(name,function(i){fn(Campaign(),{turnorder:i.beforeRaw},i);},order);hooked=true;}return hooked;}if(!hook())setTimeout(function(){if(!hook())on('change:campaign:turnorder',function(c,p){fn(c,p,null);});},0);}
+    ad5OnTurn('Counters',90,function(){if(started)scheduleFollow();});
     on('ready',function(){
         started=true;
         root();

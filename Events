@@ -65,7 +65,7 @@ if(typeof AD5События!=='undefined'&&AD5События) {
 var AD5События = AD5События || (function () {
     'use strict';
 
-    var ВЕРСИЯ = '1.0.2';
+    var ВЕРСИЯ = '1.0.3';
     var СКРИПТ = 'AD5 События';
     var КЛЮЧ_СОСТОЯНИЯ = 'AD5События';
     var ПОДПИСЧИКИ = Object.create(null);
@@ -601,7 +601,9 @@ var AD5События = AD5События || (function () {
         } catch (ошибка) { ответ(msg, '<b>Ошибка:</b> ' + экр(ошибка.message || ошибка)); }
     }
 
-    on('change:campaign:turnorder', function (кампания, предыдущее) {
+    // AD5 Turns: смена хода — через единый детектор (без него — обработчик Roll20, как раньше).
+    function ad5OnTurn(name,order,fn){var hooked=false;function hook(){if(hooked)return true;if(typeof AD5Turns!=='undefined'&&AD5Turns&&typeof AD5Turns.subscribe==='function'){AD5Turns.subscribe(name,function(i){fn(Campaign(),{turnorder:i.beforeRaw},i);},order);hooked=true;}return hooked;}if(!hook())setTimeout(function(){if(!hook())on('change:campaign:turnorder',function(c,p){fn(c,p,null);});},0);}
+    ad5OnTurn('Events',35, function (кампания, предыдущее) {
         try { сменаХода(кампания, предыдущее); }
         catch (ошибка) { мастер('<b>Ошибка Turn Tracker:</b> ' + экр(ошибка.message || ошибка)); }
     });
