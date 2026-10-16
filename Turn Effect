@@ -3,7 +3,8 @@ if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
     log('AD5EffectTurns: duplicate module skipped; keep one installed copy.');
 } else {
 /*
-AD5 Effect Turns 1.6.29
+AD5 Effect Turns 1.6.30
+1.6.30: броски NPC без контроля игрока (снятие эффекта, спасбросок после урона, Мерцание, Замешательство, Разлом реальности) — шёпотом мастеру.
 1.6.29: кубы урона «при движении» и Разлома реальности передаются в краткий отчёт AutoDamage.
 1.6.28: смена хода — через AD5 Turns (единая граница хода, записи трекера скриптами видны).
 1.6.27: Сл Убежища — Сл заклинаний заклинателя (число в тексте — только если её нет на листе).
@@ -76,7 +77,7 @@ var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5
 // silently shadow every newer fix.
 var AD5EffectTurns = (function () {
     'use strict';
-    var VERSION='1.6.29', SCRIPT='AD5 Effect Turns',MAX_FLAT_MODIFIER=10;
+    var VERSION='1.6.30', SCRIPT='AD5 Effect Turns',MAX_FLAT_MODIFIER=10;
     var runtimeLastGroup=Object.create(null);
     var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
     var markerCacheRaw=null, markerCacheByName=Object.create(null);
@@ -500,7 +501,7 @@ var AD5EffectTurns = (function () {
             var e=old.effects[k],md=e&&e.modifier;if(!md||md.type!=='onEnd'||(rec&&rec.effects&&rec.effects[k]))return;
             var id=token.id;setTimeout(function(){var live=getObj('graphic',id);if(!live)return;
                 var r={ability:md.saveAbility,dc:md.dc,short:RECOVERY_ABILITIES[md.saveAbility].short},result=recoveryRollTotal(live,r,e),ok=recoverySucceeded(result,r);
-                sendChat(SCRIPT,'&{template:default} {{name=Окончание: '+esc((e.source&&e.source.actionName)||e.label)+'}} {{Цель='+esc(live.get('name')||'')+'}} {{Спасбросок='+esc(RECOVERY_ABILITIES[md.saveAbility].label)+'}} {{Результат='+result.total+' ('+result.die+(result.bonus>=0?'+':'')+result.bonus+')}} {{Итог='+(ok?'УСПЕХ':'ПРОВАЛ — '+esc(md.outcome))+'}}');
+                rollChat(live,'&{template:default} {{name=Окончание: '+esc((e.source&&e.source.actionName)||e.label)+'}} {{Цель='+esc(live.get('name')||'')+'}} {{Спасбросок='+esc(RECOVERY_ABILITIES[md.saveAbility].label)+'}} {{Результат='+result.total+' ('+result.die+(result.bonus>=0?'+':'')+result.bonus+')}} {{Итог='+(ok?'УСПЕХ':'ПРОВАЛ — '+esc(md.outcome))+'}}');
                 if(!ok){try{applyCondition(live,md.outcome,clone(e.source||{}));}catch(err){sendChat(SCRIPT,'/w gm '+esc(err.message||err));}}
             },0);
         });
@@ -2006,7 +2007,7 @@ var AD5EffectTurns = (function () {
         var rec=snapshot(token.id),key=null;if(!rec)return false;
         Object.keys(rec.effects).some(function(k){if(rec.effects[k].damageSave){key=k;return true;}return false;});if(!key)return false;
         var e=rec.effects[key],r=e.damageSave,result=recoveryRollTotal(token,r,e),success=recoverySucceeded(result,r);
-        sendChat(SCRIPT,'&{template:default} {{name=Спасбросок после урона: '+esc(e.label)+'}} {{Цель='+esc(token.get('name')||'')+'}} {{Результат='+esc(String(result.total))+'}} {{Статус=<b>'+(success?'УСПЕХ — эффект снят':'ПРОВАЛ')+'</b>}}');
+        rollChat(token,'&{template:default} {{name=Спасбросок после урона: '+esc(e.label)+'}} {{Цель='+esc(token.get('name')||'')+'}} {{Результат='+esc(String(result.total))+'}} {{Статус=<b>'+(success?'УСПЕХ — эффект снят':'ПРОВАЛ')+'</b>}}');
         if(success){removeWithSiblings(rec,key);writeRecord(token,rec);}
         return success;
     }
@@ -2043,6 +2044,15 @@ var AD5EffectTurns = (function () {
     // (Hypnotic Pattern). AutoDamage registers the spell name; !ad5fx shake <token> removes its effects.
     function registerShakeable(name){var r=root();r.shakeable=r.shakeable||{};if(name)r.shakeable[matchNorm(name)]=true;}
     // 1.6.16: «при движении …» fires only when the bearer moves during its own turn (a willing move).
+    // 1.6.30: броски NPC без контроля игрока (спасброски снятия эффекта, Мерцание, Замешательство,
+    // Разлом реальности) — шёпотом мастеру; броски персонажей игроков и подконтрольных NPC — в общий чат.
+    function playerSideToken(t){
+        if(!t)return false;
+        try{if(typeof AD5Sides!=='undefined'&&AD5Sides&&typeof AD5Sides.side==='function')return AD5Sides.side(t)==='players';}catch(ignore){}
+        var c=getObj('character',String(t.get('represents')||'')),ids=String((c&&c.get('controlledby'))||t.get('controlledby')||'').split(',');
+        return ids.some(function(id){id=id.trim();return id==='all'||(!!id&&!playerIsGM(id));});
+    }
+    function rollChat(t,text){sendChat(SCRIPT,(playerSideToken(t)?'':'/w gm ')+text);}
     // 1.6.29: lastRollText — кубы последнего броска (для краткого отчёта AutoDamage в чат).
     var lastRollText='';
     function rollFormula(formula){
@@ -2075,7 +2085,7 @@ var AD5EffectTurns = (function () {
         else if(r<=5){var sv=recoveryRollTotal(token,{ability:'dexterity',dc:dc,short:'ЛОВ'},e),ok=recoverySucceeded(sv,{dc:dc});text='Разрывающий разлом: спасбросок Ловкости '+sv.total+' — '+(ok?'успех, урона нет':'провал, 8d12 урона силовым полем');if(!ok)hit('8d12','силовое поле','разрыв');}
         else if(r<=8){text='Червоточина: телепорт до 30 фт по выбору заклинателя (вручную), 10d12 урона силовым полем, сбит с ног';hit('10d12','силовое поле','червоточина');cond('сбит с ног');}
         else{text='Холод тёмной пустоты: 10d12 урона холодом и слепота до конца хода';hit('10d12','холод','пустота');cond('ослеплён 1');}
-        sendChat(SCRIPT,'&{template:default} {{name=Разлом реальности}} {{Существо='+esc(token.get('name')||'')+'}} {{d10='+r+'}} {{Эффект='+esc(text)+'}}');
+        rollChat(token,'&{template:default} {{name=Разлом реальности}} {{Существо='+esc(token.get('name')||'')+'}} {{d10='+r+'}} {{Эффект='+esc(text)+'}}');
     }
     function onDamageAdvantage(ev){
         var id=String(ev.цельТокенId||'');if(!id||!(Number(ev.уронПослеЗащит)>0))return;
@@ -2393,7 +2403,7 @@ var AD5EffectTurns = (function () {
         // show the result/status, but do not publish the DC in the common chat.
         var modeText=result.mode==='adv'?'Преимущество':result.mode==='dis'?'Помеха':result.autoFailCondition?('Автопровал: '+((result.conditionLabels||[]).join(', ')||'состояние')):'';
         var resultText=result.autoFailCondition?'автоматический провал':(result.total+' ('+result.die+(result.bonus>=0?'+':'')+result.bonus+')');
-        sendChat(SCRIPT,'&{template:default} {{name=Снятие эффекта: '+effectName+'}} {{Цель='+who+'}} {{'+(r.check?'Проверка (действие)':'Спасбросок')+'='+esc(RECOVERY_ABILITIES[r.ability].label)+'}} {{Результат='+esc(resultText)+'}}'+(modeText?' {{Модификатор='+esc(modeText)+'}}':'')+' {{Статус=<b>'+status+'</b>}}'+(automatic?' {{Режим=автоматически}}':''));
+        rollChat(token,'&{template:default} {{name=Снятие эффекта: '+effectName+'}} {{Цель='+who+'}} {{'+(r.check?'Проверка (действие)':'Спасбросок')+'='+esc(RECOVERY_ABILITIES[r.ability].label)+'}} {{Результат='+esc(resultText)+'}}'+(modeText?' {{Модификатор='+esc(modeText)+'}}':'')+' {{Статус=<b>'+status+'</b>}}'+(automatic?' {{Режим=автоматически}}':''));
         sendChat(SCRIPT,'/w gm '+who+': '+effectName+', '+r.short+' СЛ '+r.dc+', результат '+result.total+' — '+(success?'успех, эффект снят':'провал, эффект остаётся')+'.');
     }
     function removeRecoveryEffect(token,condition){
@@ -2486,7 +2496,7 @@ var AD5EffectTurns = (function () {
         else if(r<=6)text='не двигается и не совершает действий в этот ход';
         else if(r<=8)text='атакует рукопашной атакой случайное существо в пределах досягаемости; если такого нет — ничего не делает';
         else text='действует как обычно';
-        sendChat(SCRIPT,'&{template:default} {{name=Замешательство}} {{Существо='+esc(token.get('name')||token.id)+'}} {{d10='+r+'}} {{Поведение='+esc(text)+'}}');
+        rollChat(token,'&{template:default} {{name=Замешательство}} {{Существо='+esc(token.get('name')||token.id)+'}} {{d10='+r+'}} {{Поведение='+esc(text)+'}}');
         return r;
     }
     function announceCommand(token,e){
@@ -2554,7 +2564,7 @@ var AD5EffectTurns = (function () {
                 var e=after.effects[k];if(!e)return;
                 if(e.condition==='no_reactions'){if(e.reactionTurnStarted){delete after.effects[k];touched=true;expired++;}return;}
                 if((e.condition==='commanded'&&e.commandAnnounced)||e.condition==='teleport'){delete after.effects[k];touched=true;expired++;return;}
-                if(e.condition==='blink'){var bd=typeof randomInteger==='function'?randomInteger(20):1+Math.floor(Math.random()*20);sendChat(SCRIPT,'Мерцание — '+esc(token.get('name')||'')+': d20 '+bd+(bd>=11?' — уходит на Эфирный план до начала своего хода.':' — остаётся.'));if(bd>=11)blinkOut.push(token.id);}
+                if(e.condition==='blink'){var bd=typeof randomInteger==='function'?randomInteger(20):1+Math.floor(Math.random()*20);rollChat(token,'Мерцание — '+esc(token.get('name')||'')+': d20 '+bd+(bd>=11?' — уходит на Эфирный план до начала своего хода.':' — остаётся.'));if(bd>=11)blinkOut.push(token.id);}
                 if(!e.recovery)return;
                 // Recovery-save effects resolve their periodic damage at END of
                 // the turn. A successful recovery save removed the effect earlier,

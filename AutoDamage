@@ -73,6 +73,7 @@ hp листа используется однократно как началь�
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
 4.3.163: классовые механики — атрибут листа ad5_features: КРИТ 19/18, КРИТ КОСТИ, ПЕРЕБРОС УРОНА, СКРЫТАЯ АТАКА, РАЗ В ХОД, УРОН ЗАКЛИНАНИЙ/ШКОЛЫ, ЛУЧ, ЛЕЧЕНИЕ ЗАКЛИНАНИЙ; ПОСЛЕ ПОПАДАНИЯ — кнопки с расходом ячейки или ресурса (!ad5 posthit). ЯРОСТЬ, НЕУДЕРЖИМАЯ ЯРОСТЬ (!ad5 relentless-reset), ПРИ УБИЙСТВЕ [ЗАКЛИНАНИЕМ]; метамагия (!ad5 meta: Усиленное, Продлённое, Удвоенное, Осторожное), ФОРМИРОВАНИЕ ЗАКЛИНАНИЙ; спасбросок может быть автоуспешным. Описание — docs/class-features.md.
+4.3.182: краткий отчёт о бросках — только если источник персонаж игрока или NPC под его контролем; результаты лучей/снарядов NPC мастера — шёпотом мастеру.
 4.3.181: краткий отчёт в общий чат о бросках, сделанных скриптом (МУВ, периодический урон, урон реакций/эффектов, фазы областей), если участвует персонаж игрока: источник → получатель · кубы · урон / лечение / состояние.
 4.3.180: смена хода — через AD5 Turns (единая граница хода для всех модулей; выданные заклинания, лёгкие раны и счётчики «раз в ход» больше не срабатывают на правке трекера).
 4.3.179: итоговая карточка атаки без ответа Roll20 завершается сообщением через 15 с; Сл Убежища — от заклинателя (Effect Turns 1.6.27).
@@ -810,7 +811,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.181', diagnostics = [], debug = false;
+    var VERSION = '4.3.182', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -6837,7 +6838,9 @@ var AD5 = (function () {
             if(g.items.filter(function(x){return !x.missing&&!x.missed;}).length>1)rows.push('<b>Сумма бросков по цели: '+g.total+'</b>');
             return '<b>'+esc(g.name)+'</b><br>'+rows.join('<br>');
         });
-        sendChat('шепот звезд','<div style="border:1px solid #806443;padding:8px;background:#fffaf0;color:#222"><b>'+esc(q.name)+' — результаты бросков</b><br><br>'+body.join('<br><br>')+'</div>');
+        // 4.3.182: лучи и снаряды NPC мастера — шёпотом мастеру.
+        var beamPrefix=reportSide(q.sourceToken,q.actor)==='players'?'':'/w gm ';
+        sendChat('шепот звезд',beamPrefix+'<div style="border:1px solid #806443;padding:8px;background:#fffaf0;color:#222"><b>'+esc(q.name)+' — результаты бросков</b><br><br>'+body.join('<br><br>')+'</div>');
     }
     function projectileReport(q){
         var lines=(q.projectileResults||[]).map(function(r,i){return (i+1)+'. '+esc(r.name||r.targetId)+' — '+esc(r.status||'завершено')+(r.historyKey?' [Отменить](!ad5 undo '+r.historyKey+')':'');});
@@ -8870,8 +8873,9 @@ var AD5 = (function () {
     function publicAutoReport(msg,f,p,t,info){
         var dice=takeAutoDice();
         if(!msg||String(msg.content||'')!=='')return;
-        var targetSide=reportSide(t.token.id,t.cid),sourceSide=reportSide(p.conditionSourceToken||p.sourceToken,p.actor);
-        if(targetSide!=='players'&&sourceSide!=='players')return;
+        // 4.3.182: только если источник — персонаж игрока или NPC под контролем игрока;
+        // броски NPC мастера игроки не видят (урон от них — без отчёта).
+        if(reportSide(p.conditionSourceToken||p.sourceToken,p.actor)!=='players')return;
         var parts=[];
         var rollText=String(p.rollText||'')||autoDiceText(dice);
         if(rollText)parts.push('бросок '+esc(rollText));
