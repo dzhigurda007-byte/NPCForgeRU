@@ -73,6 +73,7 @@ hp листа используется однократно как началь�
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
 4.3.163: классовые механики — атрибут листа ad5_features: КРИТ 19/18, КРИТ КОСТИ, ПЕРЕБРОС УРОНА, СКРЫТАЯ АТАКА, РАЗ В ХОД, УРОН ЗАКЛИНАНИЙ/ШКОЛЫ, ЛУЧ, ЛЕЧЕНИЕ ЗАКЛИНАНИЙ; ПОСЛЕ ПОПАДАНИЯ — кнопки с расходом ячейки или ресурса (!ad5 posthit). ЯРОСТЬ, НЕУДЕРЖИМАЯ ЯРОСТЬ (!ad5 relentless-reset), ПРИ УБИЙСТВЕ [ЗАКЛИНАНИЕМ]; метамагия (!ad5 meta: Усиленное, Продлённое, Удвоенное, Осторожное), ФОРМИРОВАНИЕ ЗАКЛИНАНИЙ; спасбросок может быть автоуспешным. Описание — docs/class-features.md.
+4.3.181: краткий отчёт в общий чат о бросках, сделанных скриптом (МУВ, периодический урон, урон реакций/эффектов, фазы областей), если участвует персонаж игрока: источник → получатель · кубы · урон / лечение / состояние.
 4.3.180: смена хода — через AD5 Turns (единая граница хода для всех модулей; выданные заклинания, лёгкие раны и счётчики «раз в ход» больше не срабатывают на правке трекера).
 4.3.179: итоговая карточка атаки без ответа Roll20 завершается сообщением через 15 с; Сл Убежища — от заклинателя (Effect Turns 1.6.27).
 4.3.178: лучи «СНРПОП: АТАКА» (Палящий луч, Мистический заряд) берут бонус атаки из броска карточки (раньше — только spell_attack_bonus, у NPC часто пустой → +0); КД цели луча — первое число атрибута; переброс атаки реакцией учитывает КРИТ 19; ошибка после реакции на урон не останавливает пачку лучей; бонус КД Парирования действует против одной атаки; перед действием поднимаются только закрытые токены; удалён неиспользуемый код миграций.
@@ -809,7 +810,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.180', diagnostics = [], debug = false;
+    var VERSION = '4.3.181', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -6232,12 +6233,21 @@ var AD5 = (function () {
             report.push('Одно или несколько состояний не применились из-за невосприимчивости цели к состояниям.');
         }
         history[key]=entry;historyKeys.push(key);if(historyKeys.length>100)delete history[historyKeys.shift()];
+        try{
+            var autoSaveText='';
+            if(active(f,'save')&&saveResult&&spec){
+                var abil={strength:'Силы',dexterity:'Ловкости',constitution:'Телосложения',intelligence:'Интеллекта',wisdom:'Мудрости',charisma:'Харизмы'}[spec.ability]||'';
+                autoSaveText=saveResult.autoFailSkull||saveResult.autoFailCondition?'спасбросок '+abil+': автоматический провал':'спасбросок '+abil+' к20 '+dieLabel(saveResult.die)+' = '+saveResult.total+' против Сл '+spec.dc+' — '+(success?'успех':'провал');
+            }
+            var appliedConditions=(effectTurnPlan&&effectTurnPlan.applied||[]).map(function(e){return String(e&&e.label||'');}).filter(Boolean);
+            publicAutoReport(msg,f,p,t,{damage:Math.max(0,Number(damageAmount)||0),damageType:String(f.dmg1type||''),healing:Math.max(0,Number(actualHealing)||0),conditions:appliedConditions,save:autoSaveText});
+        }catch(autoReportErr){record('Краткий отчёт: '+(autoReportErr.message||autoReportErr));}
         var transformOverflowApplied=0,transformFinish=null;
         try{if(transformDamagePlan&&typeof AD5Transform!=='undefined'&&AD5Transform&&typeof AD5Transform.applyOverflow==='function')transformOverflowApplied=AD5Transform.applyOverflow(transformDamagePlan)||0;}catch(transformOverflowError){record('Transform overflow: '+(transformOverflowError.message||transformOverflowError));gm('<b>Трансформация:</b> '+esc(transformOverflowError.message||transformOverflowError));}
         try{
             if(typeof AD5Concentration!=='undefined'&&AD5Concentration){
                 if(typeof AD5Concentration.onStateChange==='function')AD5Concentration.onStateChange(t.token);
-                if(damageAmount>0&&typeof AD5Concentration.onDamage==='function')AD5Concentration.onDamage(t.token,damageAmount,{instances:damageInstancesFor(p,damageAmount),historyKey:key,sourceActor:p.actor||null,transformMode:transformDamagePlan?transformDamagePlan.mode:null,transformBreak:!!(transformDamagePlan&&transformDamagePlan.breaks),overflowDamage:transformOverflowApplied});
+                if(damageAmount>0&&typeof AD5Concentration.onDamage==='function')AD5Concentration.onDamage(t.token,damageAmount,{sourceName:String(p.name||f.rname||''),instances:damageInstancesFor(p,damageAmount),historyKey:key,sourceActor:p.actor||null,transformMode:transformDamagePlan?transformDamagePlan.mode:null,transformBreak:!!(transformDamagePlan&&transformDamagePlan.breaks),overflowDamage:transformOverflowApplied});
             }
         }catch(concentrationError){record('Концентрация: '+(concentrationError.message||concentrationError));gm('<b>Концентрация:</b> '+esc(concentrationError.message||concentrationError));}
         try{if(transformDamagePlan&&typeof AD5Transform!=='undefined'&&AD5Transform&&typeof AD5Transform.finishDamage==='function')transformFinish=AD5Transform.finishDamage(transformDamagePlan);}catch(transformFinishError){record('Transform finishDamage: '+(transformFinishError.message||transformFinishError));gm('<b>Трансформация:</b> '+esc(transformFinishError.message||transformFinishError));}
@@ -8834,6 +8844,47 @@ var AD5 = (function () {
             .replace(/\s+/g,'')
             .trim();
     }
+    // 4.3.181: журнал кубов, брошенных скриптом в текущем событии (для краткого отчёта в чат).
+    var autoDiceLog=[],autoDiceTimer=null;
+    function logAutoDice(count,sides,rolls){
+        if(!count||!rolls||!rolls.length)return;
+        autoDiceLog.push({count:count,sides:sides,rolls:rolls.slice()});if(autoDiceLog.length>40)autoDiceLog.shift();
+        if(!autoDiceTimer)autoDiceTimer=setTimeout(function(){autoDiceTimer=null;autoDiceLog=[];},0);
+    }
+    function takeAutoDice(){var out=autoDiceLog;autoDiceLog=[];return out;}
+    function autoDiceText(list){
+        return list.map(function(d){return d.count+'к'+d.sides+' ('+d.rolls.join(', ')+')';}).join(' + ');
+    }
+    function reportSide(tokenId,actorId){
+        var tok=tokenId&&getObj('graphic',String(tokenId));
+        try{if(tok&&typeof AD5Sides!=='undefined'&&AD5Sides&&typeof AD5Sides.side==='function')return AD5Sides.side(tok);}catch(ignore){}
+        var cid=String(actorId||(tok&&tok.get('represents'))||''),c=cid&&getObj('character',cid);
+        if(!c)return 'npcs';
+        var npcAttr=findObjs({_type:'attribute',_characterid:cid,name:'npc'})[0];
+        var ctrl=String(c.get('controlledby')||'').split(',').some(function(id){id=id.trim();return id==='all'||(!!id&&!playerIsGM(id));});
+        return ctrl||String(npcAttr&&npcAttr.get('current'))!=='1'?'players':'npcs';
+    }
+    // 4.3.181: краткий отчёт в общий чат о бросках, сделанных скриптом автоматически
+    // (МУВ, периодический урон, урон реакций и эффектов, фазы областей), если в событии
+    // участвует персонаж игрока: источник, получатель, кубы, итоговый урон / лечение / состояния.
+    function publicAutoReport(msg,f,p,t,info){
+        var dice=takeAutoDice();
+        if(!msg||String(msg.content||'')!=='')return;
+        var targetSide=reportSide(t.token.id,t.cid),sourceSide=reportSide(p.conditionSourceToken||p.sourceToken,p.actor);
+        if(targetSide!=='players'&&sourceSide!=='players')return;
+        var parts=[];
+        var rollText=String(p.rollText||'')||autoDiceText(dice);
+        if(rollText)parts.push('бросок '+esc(rollText));
+        if(info.save)parts.push(info.save);
+        var res=[];
+        if(info.damage>0)res.push('урон <b>'+info.damage+'</b>'+(info.damageType?' '+esc(info.damageType):''));
+        if(info.healing>0)res.push('лечение <b>'+info.healing+'</b>');
+        if(info.conditions&&info.conditions.length)res.push('состояние: <b>'+esc(info.conditions.join(', '))+'</b>');
+        if(!res.length)res.push(info.blocked?'без эффекта':'урона нет');
+        parts.push(res.join(', '));
+        var targetName=String(t.token.get('name')||(getObj('character',t.cid)||{get:function(){return '';}}).get('name')||'цель');
+        sendChat('Шепот звезд','<b>'+esc(String(p.name||f.rname||'Эффект'))+'</b> → <b>'+esc(targetName)+'</b>: '+parts.join(' · '));
+    }
     function areaRollExpression(expression,fallback){
         var s=areaStripRollLabels(expression),pos=0;
         function fail(){throw new Error('unsupported');}
@@ -8850,6 +8901,7 @@ var AD5 = (function () {
             if(!Number.isSafeInteger(count)||count<0||count>1000||!Number.isSafeInteger(sides)||sides<1||sides>100000)fail();
             var rolls=[],i;for(i=0;i<count;i++)rolls.push(typeof randomInteger==='function'?randomInteger(sides):(Math.floor(Math.random()*sides)+1));
             if(mode){rolls.sort(function(a,b){return a-b;});if(keep<0||keep>rolls.length)fail();rolls=mode==='kh'?rolls.slice(rolls.length-keep):rolls.slice(0,keep);}
+            logAutoDice(count,sides,rolls);
             return rolls.reduce(function(a,b){return a+b;},0);
         }
         function primary(){
@@ -9314,7 +9366,7 @@ var AD5 = (function () {
         rule=persistentAreaMovementRule(snapshot,rule);
         var repeats=Math.max(1,Math.floor(Number(context&&context.moveRepeats)||1));
         // 4.3.161: каждые 5 фт — отдельный бросок урона; концентрация проверяется по каждому (Шипы).
-        var pid=persistentAreaOwner(snapshot),t=target(targetId,pid),moveRolls=[],amount=0;
+        takeAutoDice();var pid=persistentAreaOwner(snapshot),t=target(targetId,pid),moveRolls=[],amount=0;
         for(var mr=0;mr<repeats;mr++){var one=Math.max(0,Number(areaRollExpression(rule.formula,0))||0);moveRolls.push(one);amount+=one;}
         var phaseName=String(snapshot.name||'Область')+' · '+String(label||'МУВ');
         if(repeats>1)phaseName+=' ×'+String(repeats);
@@ -9374,6 +9426,7 @@ var AD5 = (function () {
         }else{delete f.save;delete f.saveattr;delete f.savedc;}
     }
     function phaseTrigger(snapshot,phase,targetId,label,context){
+        takeAutoDice();
         context=context||{};
         var pid=persistentAreaOwner(snapshot),t=target(targetId,pid),f=Object.create(null);
         var name=String(snapshot.name||'Эффект')+' · '+String(label||'фаза');
@@ -9409,6 +9462,7 @@ var AD5 = (function () {
         return !!previous&&now-previous<2000;
     }
     function persistentAreaTrigger(snapshot,phase,targetId,label,context){
+        takeAutoDice();
         if(!snapshot||!phase)throw new Error('Повреждены данные постоянной области.');
         if(duplicatePersistentTurnPhase(targetId,label,context)){
             record('Дубликат фазового тика подавлен: '+String(label||'эффект')+' · цель '+String(targetId)+'.');
@@ -9497,7 +9551,7 @@ var AD5 = (function () {
         if(!formula)throw new Error('У периодического эффекта отсутствует формула урона.');
         if(!damageType||['лечение','временное хп','атака'].indexOf(damageType)>=0)
             throw new Error('Не определён тип урона периодического эффекта.');
-        var amount=areaRollExpression(formula,0);
+        takeAutoDice();var amount=areaRollExpression(formula,0);
         var phaseName=String(label||'Периодический эффект');
         var f=Object.create(null);
         f.rname=phaseName;f.charname=actorName;f.ad5source=sourceActor;f.ad5target=t.token.id;
@@ -9532,7 +9586,7 @@ var AD5 = (function () {
         var f=Object.create(null);f.rname=actionName;f.charname=actorName;f.ad5source=actorId;f.ad5target=t.token.id;if(sourceToken)f.ad5sourcetoken=sourceToken.id;f.description='';f.desc='';f.dmg1flag='1';f.dmg1=String(amount);f.dmg1type=type;
         var msg={type:'general',playerid:pid,who:actorName,rolltemplate:'dmg',content:'',inlinerolls:[]};
         var pctx={actor:actorId,sourceName:actorName,npcMessage:false,name:actionName,target:t.token.id,cid:t.cid,hit:true,ac:0,hasAttack:false,total:0,baseAttackTotal:0,globalAttack:0,tokenAttackBonus:0,sourceToken:sourceToken?sourceToken.id:null,conditionSourceToken:sourceToken?sourceToken.id:null,concentrationId:null,die:0,factor:1,time:Date.now(),batch:null,reactionExec:true,fixedDamage:!!context.fixedDamage,onComplete:typeof context.onComplete==='function'?context.onComplete:null,sourceModifiers:sourceToken?effectModifiersForToken(sourceToken):emptyCombatModifiers()};
-        if(context.typeless)pctx.typeless=true;if(context.wardingShare)pctx.wardingShare=true;if(context.tetherShare)pctx.tetherShare=true;
+        if(context.typeless)pctx.typeless=true;if(context.wardingShare)pctx.wardingShare=true;if(context.tetherShare)pctx.tetherShare=true;if(context.rollText)pctx.rollText=String(context.rollText);
         finish(msg,f,pctx);return {amount:amount,type:type,targetId:t.token.id,label:actionName};
     }
 

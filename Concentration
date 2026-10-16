@@ -23,7 +23,7 @@ if(typeof AD5Concentration!=='undefined'&&AD5Concentration) {
  */
 var AD5Concentration=(function(){
     'use strict';
-    var VERSION='1.2.16',SCRIPT='AD5 Concentration',SEQ=0;
+    var VERSION='1.2.17',SCRIPT='AD5 Concentration',SEQ=0;
     var FALLBACK_MARKERS=['overdrive','aura','stopwatch','white-tower'];
     var ACTION_NAME=Array(21).join('\u200b')+'AD5 · Снять концентрацию',ACTION_CMD='!ad5conc endselected',runtimeTurnKey='';
 
@@ -346,6 +346,15 @@ var AD5Concentration=(function(){
         return ['broken-shield','padlock','lightning-helix','sleepy','frozen-orb'].some(function(m){return statusMarker(token,m);});
     }
     function onStateChange(token){var rec=currentForToken(token);if(!rec)return false;if(incapacitated(token)){endById(rec.id,'заклинатель недееспособен или имеет 0 HP');return true;}return false;}
+    // 1.2.17: краткая строка в общий чат — источник урона, к20 и итог (как у других автоматических бросков).
+    function rollText(res){
+        if(res.autoFailCondition)return 'автоматический провал ('+esc((res.conditionLabels||[]).join(', ')||'состояние')+')';
+        var dice=res.mode==='normal'?'к20 '+res.d1:'к20 '+res.d1+'/'+res.d2+' ('+(res.mode==='adv'?'преимущество':'помеха')+') → '+res.die,bonus=res.base+(Number(res.modifier)||0);
+        return dice+(bonus>=0?' + ':' − ')+Math.abs(bonus)+' = '+res.total;
+    }
+    function publicCheck(name,rec,res,dc,sourceName){
+        notify('<b>Концентрация</b>'+(sourceName?' ('+esc(sourceName)+')':'')+' → <b>'+esc(name)+'</b>: '+rollText(res)+' против Сл '+dc+' — <b>'+(res.success?'сохранена':'потеряна')+'</b>'+(rec&&rec.spellName?' · '+esc(rec.spellName):'')+'.');
+    }
     function onDamage(token,damage,context){
         damage=Math.max(0,Number(damage)||0);if(damage<=0)return null;var rec=currentForToken(token);if(!rec)return null;
         var transformMode=context&&context.transformMode||null;
@@ -360,13 +369,13 @@ var AD5Concentration=(function(){
         if(parts.length>1){
             var last=null;
             for(var pi=0;pi<parts.length;pi++){
-                last=onDamage(token,parts[pi],{transformMode:transformMode||'none'});
+                last=onDamage(token,parts[pi],{transformMode:transformMode||'none',sourceName:context&&context.sourceName});
                 if(!last||last.success===false||!currentForToken(token))break;
             }
             return last;
         }
         var dc=Math.max(10,Math.floor(damage/2)),res=autoSave(token,dc),name=String(token.get('name')||rec.casterName||'Персонаж');
-        notify('<b>Концентрация — '+esc(name)+':</b> '+res.total+' против СЛ '+dc+' — <b>'+(res.success?'УСПЕХ':'ПРОВАЛ')+'</b>.');
+        publicCheck(name,rec,res,dc,context&&context.sourceName);
         gm(esc(name)+': '+(res.mode==='normal'?'d20 '+res.d1:(res.mode==='adv'?'ПРЕМ ':'ПОМ ')+res.d1+'/'+res.d2+' → '+res.die)+' + '+res.base+(res.modifier?(' '+(res.modifier>0?'+ ':'- ')+Math.abs(res.modifier)):'')+' = <b>'+res.total+'</b>, СЛ '+dc+' (урон '+damage+').');
         if(!res.success)endById(rec.id,'провален спасбросок концентрации СЛ '+dc);
         return res;
@@ -376,7 +385,7 @@ var AD5Concentration=(function(){
         var rec=currentForToken(token);if(!rec)return null;
         if(incapacitated(token)){endById(rec.id,'заклинатель недееспособен или имеет 0 HP');return {success:false,automaticLoss:true};}
         dc=Math.max(1,Number(dc)||10);var res=autoSave(token,dc),name=String(token.get('name')||rec.casterName||'Персонаж');
-        notify('<b>Концентрация — '+esc(name)+'</b>'+(reason?' ('+esc(reason)+')':'')+': '+res.total+' против СЛ '+dc+' — <b>'+(res.success?'УСПЕХ':'ПРОВАЛ')+'</b>.');
+        publicCheck(name,rec,res,dc,reason);
         if(!res.success)endById(rec.id,(reason?reason+': ':'')+'провален спасбросок концентрации СЛ '+dc);
         return res;
     }

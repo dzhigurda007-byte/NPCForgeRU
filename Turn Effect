@@ -3,7 +3,8 @@ if(typeof AD5EffectTurns!=='undefined'&&AD5EffectTurns) {
     log('AD5EffectTurns: duplicate module skipped; keep one installed copy.');
 } else {
 /*
-AD5 Effect Turns 1.6.28
+AD5 Effect Turns 1.6.29
+1.6.29: кубы урона «при движении» и Разлома реальности передаются в краткий отчёт AutoDamage.
 1.6.28: смена хода — через AD5 Turns (единая граница хода, записи трекера скриптами видны).
 1.6.27: Сл Убежища — Сл заклинаний заклинателя (число в тексте — только если её нет на листе).
 1.6.26: «КД 19» / «Атака 19» (статический бонус больше 10) не применяются — раньше это давало постоянные +19 к КД; кнопки восстановления ищутся по листу, а не по всей кампании; условные события пропускают записи без условных эффектов.
@@ -75,7 +76,7 @@ var AD5EffectTurns_PreviousVersion = (typeof AD5EffectTurns!=='undefined' && AD5
 // silently shadow every newer fix.
 var AD5EffectTurns = (function () {
     'use strict';
-    var VERSION='1.6.28', SCRIPT='AD5 Effect Turns',MAX_FLAT_MODIFIER=10;
+    var VERSION='1.6.29', SCRIPT='AD5 Effect Turns',MAX_FLAT_MODIFIER=10;
     var runtimeLastGroup=Object.create(null);
     var BUFF_MARKER_NAME='420-Effect-Buff', DEBUFF_MARKER_NAME='419-Effect-Debuff';
     var markerCacheRaw=null, markerCacheByName=Object.create(null);
@@ -2042,12 +2043,14 @@ var AD5EffectTurns = (function () {
     // (Hypnotic Pattern). AutoDamage registers the spell name; !ad5fx shake <token> removes its effects.
     function registerShakeable(name){var r=root();r.shakeable=r.shakeable||{};if(name)r.shakeable[matchNorm(name)]=true;}
     // 1.6.16: «при движении …» fires only when the bearer moves during its own turn (a willing move).
+    // 1.6.29: lastRollText — кубы последнего броска (для краткого отчёта AutoDamage в чат).
+    var lastRollText='';
     function rollFormula(formula){
-        var total=0;String(formula||'').replace(/\s+/g,'').split(/(?=[+-])/).forEach(function(part){
+        var total=0,parts=[];String(formula||'').replace(/\s+/g,'').split(/(?=[+-])/).forEach(function(part){
             var sign=part.charAt(0)==='-'?-1:1,b=part.replace(/^[+-]/,''),m=/^(\d*)d(\d+)$/i.exec(b);
-            if(m){var n=Number(m[1]||1),sides=Number(m[2]);for(var i=0;i<n;i++)total+=sign*(typeof randomInteger==='function'?randomInteger(sides):1+Math.floor(Math.random()*sides));}
-            else if(/^\d+$/.test(b))total+=sign*Number(b);
-        });return Math.max(0,total);
+            if(m){var n=Number(m[1]||1),sides=Number(m[2]),got=[];for(var i=0;i<n;i++){var r=typeof randomInteger==='function'?randomInteger(sides):1+Math.floor(Math.random()*sides);got.push(r);total+=sign*r;}parts.push(n+'к'+sides+' ('+got.join(', ')+')');}
+            else if(/^\d+$/.test(b)){total+=sign*Number(b);parts.push(String(sign<0?'-':'')+b);}
+        });lastRollText=parts.join(' + ');return Math.max(0,total);
     }
     function moveDamageCheck(token){
         var rec=root().tokens[token.id];if(!rec)return;
@@ -2056,16 +2059,16 @@ var AD5EffectTurns = (function () {
         var order=[];try{order=JSON.parse(Campaign().get('turnorder')||'[]')||[];}catch(ignoreOrder){}
         if(!order.length||String(order[0].id)!==String(token.id))return;
         var after=snapshot(token.id);hits.forEach(function(h){delete after.effects[h.key];});writeRecord(token,after);
-        hits.forEach(function(h){var md=h.e.modifier,amount=rollFormula(md.formula),src=h.e.source||{};
+        hits.forEach(function(h){var md=h.e.modifier,amount=rollFormula(md.formula),rollText=lastRollText,src=h.e.source||{};
             if(typeof AD5!=='undefined'&&AD5&&AD5.reaction&&typeof AD5.reaction.damage==='function'){
-                try{AD5.reaction.damage(token.id,amount,md.damageType,(src.actionName||'Эффект')+' — движение',{sourceTokenId:src.sourceToken||null,actorId:src.actor||null,fixedDamage:true});}catch(err){sendChat(SCRIPT,'/w gm '+esc(err.message||err));}
+                try{AD5.reaction.damage(token.id,amount,md.damageType,(src.actionName||'Эффект')+' — движение',{sourceTokenId:src.sourceToken||null,actorId:src.actor||null,fixedDamage:true,rollText:rollText});}catch(err){sendChat(SCRIPT,'/w gm '+esc(err.message||err));}
             }
         });
     }
     // 1.6.16: Reality Break — d10 at the start of the bearer's turn.
     function realityBreakTurn(token,e){
         var r=typeof randomInteger==='function'?randomInteger(10):1+Math.floor(Math.random()*10),src=clone(e.source||{}),id=token.id,dc=Number(e.recovery&&e.recovery.dc)||15;
-        function hit(formula,type,label){var amount=rollFormula(formula);setTimeout(function(){try{AD5.reaction.damage(id,amount,type,'Разлом реальности — '+label,{sourceTokenId:src.sourceToken||null,fixedDamage:true});}catch(err){sendChat(SCRIPT,'/w gm '+esc(err.message||err));}},0);}
+        function hit(formula,type,label){var amount=rollFormula(formula),rollText=lastRollText;setTimeout(function(){try{AD5.reaction.damage(id,amount,type,'Разлом реальности — '+label,{rollText:rollText,sourceTokenId:src.sourceToken||null,fixedDamage:true});}catch(err){sendChat(SCRIPT,'/w gm '+esc(err.message||err));}},0);}
         function cond(text){setTimeout(function(){var live=getObj('graphic',id);if(live){try{applyCondition(live,text,src);}catch(err){sendChat(SCRIPT,'/w gm '+esc(err.message||err));}}},0);}
         var text;
         if(r<=2){text='Видение Дальнего Предела: 6d12 психического урона и ошеломление до конца хода';hit('6d12','психический','видение');cond('ошеломлён 1');}
