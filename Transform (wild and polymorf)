@@ -2,7 +2,9 @@
 if(typeof AD5Transform!=='undefined'&&AD5Transform) {
     log('AD5Transform: duplicate module skipped; keep one installed copy.');
 } else {
-/* AD5 Transform 1.2.9
+/* AD5 Transform 1.2.11
+ * 1.2.11: в атаках и способностях гибридного листа ссылки на лист формы заменяются на гибридный
+ *   лист — атака Дикого облика/Полиморфа идёт от гибрида (характеристики, владелец, шёпот).
  * Wild Shape / Polymorph support for the AD5 Roll20 automation stack.
  *
  * Ability-description directives:
@@ -26,7 +28,7 @@ if(typeof AD5Transform!=='undefined'&&AD5Transform) {
  */
 var AD5Transform=(function(){
     'use strict';
-    var VERSION='1.2.10', SCRIPT='AD5 Transform', SEQ=0;
+    var VERSION='1.2.11', SCRIPT='AD5 Transform', SEQ=0;
     var ABILITIES=['strength','dexterity','constitution','intelligence','wisdom','charisma'];
     var MENTAL={intelligence:true,wisdom:true,charisma:true};
     var SAVE_SHORT={strength:'str',dexterity:'dex',constitution:'con',intelligence:'int',wisdom:'wis',charisma:'cha'};
@@ -196,6 +198,10 @@ var AD5Transform=(function(){
             var name=String(a.get('name')||''),skip=false;if(/^repeating_npcaction-l_/i.test(name)||/^npc_legendary_actions$/i.test(name))skip=true;
             Object.keys(bad).some(function(p){if(name.indexOf(p)===0){skip=true;return true;}return false;});if(skip)return;
             var cur=a.get('current'),mx=a.get('max');
+            // 1.2.11: ссылки на лист формы (@{ФОРМА|…}, {{charid=ФОРМА}}, %{ФОРМА|…}) — на гибридный
+            // лист: атака идёт от гибрида (характеристики, владелец, шёпот), а не от листа зверя.
+            if(typeof cur==='string'&&cur.indexOf(formCid)>=0)cur=cur.split(formCid).join(tempCid);
+            if(typeof mx==='string'&&mx.indexOf(formCid)>=0)mx=mx.split(formCid).join(tempCid);
             if(/_rollbase(?:_[a-z]+)?$/i.test(name)){cur=String(cur||'').replace(/\s*{{\s*ad5source\s*=[\s\S]*?}}/gi,'').replace(/\s*{{\s*ad5sourcetoken\s*=[\s\S]*?}}/gi,'')+' {{ad5source='+tempCid+'}}';}
             createObj('attribute',{characterid:tempCid,name:name,current:cur==null?'':cur,max:mx==null?'':mx});
         });
@@ -226,7 +232,7 @@ var AD5Transform=(function(){
             // Control actions belong to the transformation instance, not to the
             // beast stat block.  Never inherit stale buttons from a form sheet.
             if(/^!ad5-transform\s+(?:end|return|конец)(?:\s|$)/i.test(action)||/^!ad5conc\s+endselected(?:\s|$)/i.test(action))return;
-            action=action.replace(/{{\s*ad5source\s*=[^{}]*}}/gi,'{{ad5source='+tempCid+'}}');
+            action=action.split(formCid).join(tempCid).replace(/{{\s*ad5source\s*=[^{}]*}}/gi,'{{ad5source='+tempCid+'}}');
             createObj('ability',{characterid:tempCid,name:a.get('istokenaction')?Array(21).join('\u200b')+name.replace(/^\u200b+/,''):name,action:action,istokenaction:!!a.get('istokenaction')});
         });
     }
