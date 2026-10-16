@@ -3,7 +3,8 @@ if(typeof AD5Reactions!=='undefined'&&AD5Reactions) {
     log('AD5Reactions: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Reactions v1.6.18 — Generic Resource Binding / Countershot / Sheet First
+ * AD5 Reactions v1.6.19 — Generic Resource Binding / Countershot / Sheet First
+ * 1.6.19: реакция «Щит» (NPC и игроков) защищает и от «Волшебной стрелы» до начала следующего хода.
  * 1.6.18: смена хода — через AD5 Turns (единая граница хода, записи трекера скриптами видны).
  * 1.6.17: все окна реакций (NPC и игроков: контрзаклинание, защита от заклинаний, реакции на
  *   попадание/урон, атаки по возможности, Падение пёрышком) пропускаются через 90 с без ответа.
@@ -52,7 +53,7 @@ if(typeof AD5Reactions!=='undefined'&&AD5Reactions) {
 var AD5Reactions = (function(){
     'use strict';
 
-    var VERSION='1.6.18', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
+    var VERSION='1.6.19', SCRIPT='AD5 Reactions', STATE_KEY='AD5NpcReactions';
     var opportunityPending=Object.create(null);
     var runtimePending=Object.create(null), seq=0, recentMove=Object.create(null), lastAreaCheck=null, movementHookRegistered=false, featherCollecting=Object.create(null), reactionRowCache=Object.create(null);
     // 1.4.2 Fast Fall: cache Feather Fall card discovery per character.
@@ -330,7 +331,7 @@ var AD5Reactions = (function(){
         // 1.6.16: бонус КД не от «Щита» (Парирование «КД +7») — против одной атаки: AD5 снимает
         // его после проверки попадания (consumeOneAttack). Щит — до начала хода владельца.
         var oneAttack=!/(?:^|\s)(?:щит|shield)(?:$|\s)/.test(norm(reaction&&reaction.name||''))&&!(reaction&&reaction.effect==='shield');
-        root().shields[token.id]={bonus:bonus,time:Date.now(),oneAttack:oneAttack,blocksMagicMissile:!!(reaction&&reaction.blocksMagicMissile),reactionName:String(reaction&&reaction.name||'Щит')};
+        root().shields[token.id]={bonus:bonus,time:Date.now(),oneAttack:oneAttack,blocksMagicMissile:!!(reaction&&reaction.blocksMagicMissile)||!oneAttack,reactionName:String(reaction&&reaction.name||'Щит')};
         return true;
     }
     // Страховка: ход владельца не начался (трекер изменён скриптом, токен не в трекере) —

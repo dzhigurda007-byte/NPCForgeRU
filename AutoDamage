@@ -73,6 +73,7 @@ hp листа используется однократно как началь�
 
 Замените старую версию AD5 этим файлом. Общая автоматическая миграция строк листа отключена; исключение — точечный loop-safe автопатч нативной Spellbook attack-строки для Target.
 4.3.163: классовые механики — атрибут листа ad5_features: КРИТ 19/18, КРИТ КОСТИ, ПЕРЕБРОС УРОНА, СКРЫТАЯ АТАКА, РАЗ В ХОД, УРОН ЗАКЛИНАНИЙ/ШКОЛЫ, ЛУЧ, ЛЕЧЕНИЕ ЗАКЛИНАНИЙ; ПОСЛЕ ПОПАДАНИЯ — кнопки с расходом ячейки или ресурса (!ad5 posthit). ЯРОСТЬ, НЕУДЕРЖИМАЯ ЯРОСТЬ (!ad5 relentless-reset), ПРИ УБИЙСТВЕ [ЗАКЛИНАНИЕМ]; метамагия (!ad5 meta: Усиленное, Продлённое, Удвоенное, Осторожное), ФОРМИРОВАНИЕ ЗАКЛИНАНИЙ; спасбросок может быть автоуспешным. Описание — docs/class-features.md.
+4.3.183: «Щит» против «Волшебной стрелы» по PHB 2014 — перед первым дротиком по цели проверяется активный Щит, иначе цели предлагается Щит; все дротики по цели со Щитом урона не наносят (СНРЩИТ: ДА/НЕТ — для других снарядов).
 4.3.182: краткий отчёт о бросках — только если источник персонаж игрока или NPC под его контролем; результаты лучей/снарядов NPC мастера — шёпотом мастеру.
 4.3.181: краткий отчёт в общий чат о бросках, сделанных скриптом (МУВ, периодический урон, урон реакций/эффектов, фазы областей), если участвует персонаж игрока: источник → получатель · кубы · урон / лечение / состояние.
 4.3.180: смена хода — через AD5 Turns (единая граница хода для всех модулей; выданные заклинания, лёгкие раны и счётчики «раз в ход» больше не срабатывают на правке трекера).
@@ -811,7 +812,7 @@ var AD5HealthView = (function () {
 var AD5 = (function () {
     'use strict';
     var CONFIG = { naturalHitRules: true, tempBar: 2, attackBar: 3, ttl: 120000 };
-    var VERSION = '4.3.182', diagnostics = [], debug = false;
+    var VERSION = '4.3.183', diagnostics = [], debug = false;
     var boundActors = Object.create(null), boundActorTokens = Object.create(null);
 
     // 4.3.24: remember the physical token that actually represents an actor.
@@ -6668,7 +6669,7 @@ var AD5 = (function () {
     function multiResolverPayloadDescription(lines){
         var out=[];
         lines.forEach(function(line){
-            if(/^\s*(?:МУЛЬТИ|MULTI|СНРКОЛ|СНРВЫШЕ|СНРПОП|СНРУРОН|СНРРАСПР|СНРОТДЕЛЬНО|ПУЛ|ПУЛВЫШЕ|ПУЛЗНАЧ|ПУЛПОРЯДОК|ПУЛЦЕЛИ|POOLTARGETS)\s*:/i.test(line))return;
+            if(/^\s*(?:МУЛЬТИ|MULTI|СНРКОЛ|СНРВЫШЕ|СНРПОП|СНРУРОН|СНРРАСПР|СНРОТДЕЛЬНО|СНРЩИТ|ПУЛ|ПУЛВЫШЕ|ПУЛЗНАЧ|ПУЛПОРЯДОК|ПУЛЦЕЛИ|POOLTARGETS)\s*:/i.test(line))return;
             var pm=/^\s*(?:ПУЛЭФФ|POOLEFFECT)\s*:\s*(.+)$/i.exec(line);if(pm){out.push(pm[1].trim());return;}
             out.push(line);
         });
@@ -6691,7 +6692,7 @@ var AD5 = (function () {
         if(!multiResolverSleepEffect(rawEffect))return {sleepStyle:false,payloadDescription:payload};
         var out=[],hasWakeOnDamage=false;
         lines.forEach(function(line){
-            if(/^\s*(?:МУЛЬТИ|MULTI|СНРКОЛ|СНРВЫШЕ|СНРПОП|СНРУРОН|СНРРАСПР|СНРОТДЕЛЬНО|ПУЛ|ПУЛВЫШЕ|ПУЛЗНАЧ|ПУЛПОРЯДОК|ПУЛЦЕЛИ|POOLTARGETS)\s*:/i.test(line))return;
+            if(/^\s*(?:МУЛЬТИ|MULTI|СНРКОЛ|СНРВЫШЕ|СНРПОП|СНРУРОН|СНРРАСПР|СНРОТДЕЛЬНО|СНРЩИТ|ПУЛ|ПУЛВЫШЕ|ПУЛЗНАЧ|ПУЛПОРЯДОК|ПУЛЦЕЛИ|POOLTARGETS)\s*:/i.test(line))return;
             if(/^\s*(?:ПУЛЭФФ|POOLEFFECT)\s*:/i.test(line)){out.push('Без сознания 10');return;}
             if(/^\s*СНЯТЬ\s*:\s*ЦЕЛЬ\s+(?:ПОЛУЧИЛА|ПОЛУЧИЛ)\s+УРОН\s*$/i.test(line))hasWakeOnDamage=true;
             out.push(line);
@@ -6831,7 +6832,7 @@ var AD5 = (function () {
         var body=groups.map(function(g){
             var rows=g.items.map(function(x){
                 if(x.missing)return 'Снаряд '+x.index+'/'+q.max+': бросок не выполнен';
-                if(x.missed)return 'Луч '+x.index+'/'+q.max+': <b>промах</b> ('+esc(x.attackText||'')+')';
+                if(x.missed)return /^Щит/.test(String(x.attackText||''))?'Снаряд '+x.index+'/'+q.max+': <b>поглощён Щитом</b>':'Луч '+x.index+'/'+q.max+': <b>промах</b> ('+esc(x.attackText||'')+')';
                 var formula=String(x.formula||'').replace(/[dDдД]/g,'д');
                 return (x.attackText?'Луч ':'Снаряд ')+x.index+'/'+q.max+': '+(x.attackText?esc(x.attackText)+' — ':'')+esc(formula)+' = <b>'+x.total+'</b>'+(x.type?' '+esc(x.type):'');
             });
@@ -6851,9 +6852,28 @@ var AD5 = (function () {
         if(!q||q.status!=='applied')return;
         var i=Number(q.projectileIndex)||0;if(i>=q.projectiles.length){q.processing=false;projectileReport(q);return;}
         var shot=q.projectiles[i],tok=getObj('graphic',shot.id);if(!tok){q.projectileResults[i]={targetId:shot.id,name:shot.name,status:'цель отсутствует'};q.projectileIndex=i+1;setTimeout(function(){projectileNext(q);},0);return;}
-        // 4.3.137 campaign rule: СНРПОП: АВТО never enters the attack/hit
-        // reaction pipeline. It ignores target AC and does not offer or consult
-        // Shield, including the old Magic Missile special bridge.
+        // СНРПОП: АВТО never enters the attack/hit reaction pipeline and ignores AC.
+        // 4.3.183 (PHB 2014): «Щит» — реакция, когда существо становится целью «Волшебной стрелы»:
+        // все дротики по нему не наносят урона, +5 КД до начала его следующего хода. Перед первым
+        // дротиком по цели проверяется активный Щит, иначе цели предлагается сотворить Щит.
+        if(q.resolverSpec.hit!=='attack'&&projectileShieldable(q)){
+            q.shieldState=q.shieldState||{};var ss=q.shieldState[tok.id];
+            if(!ss){
+                q.shieldState[tok.id]={pending:true};var qShieldTok=tok.id;
+                var resumeShield=function(blocked){var st=q.shieldState[qShieldTok];if(!st||!st.pending)return;q.shieldState[qShieldTok]={blocked:!!blocked};projectileNext(q);};
+                try{
+                    if(typeof AD5SpellEffects!=='undefined'&&AD5SpellEffects&&typeof AD5SpellEffects.missile==='function')AD5SpellEffects.missile({target:tok.id,source:q.sourceToken||null},resumeShield);
+                    else resumeShield(typeof AD5Reactions!=='undefined'&&AD5Reactions&&typeof AD5Reactions.blocksMagicMissile==='function'&&AD5Reactions.blocksMagicMissile(tok));
+                }catch(shieldErr){record('Щит: '+(shieldErr.message||shieldErr));resumeShield(false);}
+                return;
+            }
+            if(ss.pending)return;
+            if(ss.blocked){
+                q.projectileRolls=q.projectileRolls||[];q.projectileRolls[i]={formula:'',total:0,type:'',targetId:String(shot.id||''),name:String(shot.name||''),missed:true,attackText:'Щит — дротик поглощён'};
+                q.projectileResults[i]={targetId:shot.id,name:shot.name,status:'Щит — дротик поглощён, урона нет'};
+                q.projectileIndex=i+1;setTimeout(function(){projectileNext(q);},0);return;
+            }
+        }
         var beamFormula=String(q.resolverSpec.damage.formula||''),beamAttack=null;
         if(q.resolverSpec.hit==='attack'){
             beamAttack=projectileAttackRoll(q,shot,tok);
@@ -6875,6 +6895,12 @@ var AD5 = (function () {
         событиеAD5('СНАРЯД ПЕРЕД ПОПАДАНИЕМ',{игрокId:q.owner,источникПерсонажId:q.actor,источникТокенId:q.sourceToken,цельТокенId:shot.id,имяДействия:q.name,номер:i+1,всего:q.projectiles.length});
         событиеAD5('СНАРЯД ПОПАЛ',{игрокId:q.owner,источникПерсонажId:q.actor,источникТокенId:q.sourceToken,цельТокенId:shot.id,имяДействия:q.name,номер:i+1,всего:q.projectiles.length});
         processMessage(sm,{batch:q.id,tid:shot.id,reactionResume:true,multiProjectile:true});
+    }
+    // Снаряды, от которых защищает «Щит»: «Волшебная стрела» (Magic Missile) или строка «СНРЩИТ: ДА».
+    function projectileShieldable(q){
+        var desc=String(q.f&&(q.f.description!==undefined?q.f.description:q.f.desc)||'');
+        if(/(?:^|\n)\s*СНРЩИТ\s*[:：]\s*(?:нет|no)\b/i.test(desc))return false;
+        return /волшебн\S*\s+стрел|magic\s+missile/i.test(String(q.name||''))||/(?:^|\n)\s*СНРЩИТ\s*[:：]\s*(?:да|yes)\b/i.test(desc);
     }
     // 4.3.158: one spell attack roll per beam (СНРПОП: АТАКА).
     function projectileAttackRoll(q,shot,tok){
