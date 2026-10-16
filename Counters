@@ -3,7 +3,10 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
     log('AD5Counters: duplicate module skipped; keep one installed copy.');
 } else {
 /*
- * AD5 Counters 1.4.0 — счётчики-рамки на токенах (заряды способностей).
+ * AD5 Counters 1.4.1 — счётчики-рамки на токенах (заряды способностей).
+ *
+ * 1.4.1: рамка догоняет токен и после перемещений скриптами (толчок, притягивание, телепорт,
+ *   откат движения) — сверка через 60 мс после сообщения чата, перемещения или смены хода.
  *
  * Счётчик — кольцо из N делений вокруг токена (картинки 0…N из набора рамок).
  * Рамка лежит на слое карты под токеном и переезжает вместе с ним; цвет — тонированием.
@@ -85,7 +88,7 @@ if(typeof AD5Counters!=='undefined'&&AD5Counters) {
  */
 var AD5Counters=AD5Counters||(function(){
     'use strict';
-    var VERSION='1.4.0',SCRIPT='AD5 Счётчики';
+    var VERSION='1.4.1',SCRIPT='AD5 Счётчики';
     var COLORS={'фиолетовый':'#8a2be2','красный':'#d0312d','синий':'#2f6fdf','голубой':'#3fb6e8','зелёный':'#2fa84f','зеленый':'#2fa84f','жёлтый':'#e8c02f','желтый':'#e8c02f','оранжевый':'#ef7d1a','белый':'transparent','чёрный':'#222222','черный':'#222222','серый':'#8a8a8a','розовый':'#e85fa8'};
     var EVENTS={
         'НАЧАЛО ХОДА':{ev:'НАЧАЛО ХОДА',who:'bearerTurn'},'КОНЕЦ ХОДА':{ev:'КОНЕЦ ХОДА',who:'bearerTurn'},
@@ -660,11 +663,33 @@ var AD5Counters=AD5Counters||(function(){
         redraw(g.id);
     }
 
+    // 1.4.1: перемещения через API (толчок/притягивание, телепорт этажей, откат движения,
+    // обрезка о стену) событий не порождают. После любого события, которое могло их вызвать
+    // (сообщение чата, перемещение токена, смена хода), через 60 мс рамки сверяются с
+    // носителями — только позиция и страница, по числу носителей счётчиков (обычно единицы).
+    var followTimer=null;
+    function scheduleFollow(){
+        if(followTimer||!Object.keys(root().counters).length)return;
+        followTimer=setTimeout(function(){followTimer=null;try{followAll();}catch(e){log(SCRIPT+': рамки — '+(e.message||e));}},60);
+    }
+    function followAll(){
+        Object.keys(index().byBearer).forEach(function(bid){
+            var b=tok(bid);if(!b)return;
+            countersOf(bid).forEach(function(c,i){
+                var r=c.ring&&tok(c.ring);if(!r)return;
+                if(r.get('_pageid')!==b.get('_pageid')){drawRing(c,i);return;}
+                var geo=ringGeometry(b,i);
+                if(Math.abs(Number(r.get('left'))-geo.left)>0.5||Math.abs(Number(r.get('top'))-geo.top)>0.5)r.set({left:geo.left,top:geo.top});
+            });
+        });
+    }
     // 1.3.1: обработчик движения регистрируется при загрузке скрипта, а не в ready —
     // Roll20 вызывает обработчики по порядку регистрации, и рамка переставляется раньше,
     // чем отработают обработчики других модулей, зарегистрированные в их ready.
     var started=false;
-    on('change:graphic',function(g,prev){if(!started)return;try{graphicChanged(g,prev);}catch(e){log(SCRIPT+': '+e.message);}});
+    on('change:graphic',function(g,prev){if(!started)return;try{graphicChanged(g,prev);}catch(e){log(SCRIPT+': '+e.message);}scheduleFollow();});
+    on('chat:message',function(){if(started)scheduleFollow();});
+    on('change:campaign:turnorder',function(){if(started)scheduleFollow();});
     on('ready',function(){
         started=true;
         root();
